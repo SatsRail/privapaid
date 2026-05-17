@@ -161,6 +161,44 @@ describe("schemas", () => {
       const result = schema.safeParse({ channel_id: "abc", name: "My Video" });
       expect(result.success).toBe(false);
     });
+
+    it("accepts markdown content at the 500KB boundary", () => {
+      const result = schema.safeParse({
+        channel_id: "abc",
+        name: "My Article",
+        source_url: "a".repeat(500_000),
+        media_type: "article",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects source_url over 500KB", () => {
+      const result = schema.safeParse({
+        channel_id: "abc",
+        name: "My Article",
+        source_url: "a".repeat(500_001),
+        media_type: "article",
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe("mediaUpdate", () => {
+    const schema = schemas.mediaUpdate;
+
+    it("accepts markdown content at the 500KB boundary", () => {
+      const result = schema.safeParse({
+        source_url: "a".repeat(500_000),
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects source_url over 500KB", () => {
+      const result = schema.safeParse({
+        source_url: "a".repeat(500_001),
+      });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe("checkout", () => {

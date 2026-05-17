@@ -601,6 +601,11 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
               URLs are encrypted and never exposed to viewers without payment.
             </p>
           </div>
+        ) : mediaType === "article" ? (
+          <ArticleContentField
+            value={sourceUrl}
+            onChange={setSourceUrl}
+          />
         ) : (
           <Input
             label="Source URL"
@@ -763,6 +768,82 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
         </form>
       </Modal>
     </>
+  );
+}
+
+export const ARTICLE_MAX_BYTES = 500_000;
+
+export function ArticleContentField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileError, setFileError] = useState("");
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError("");
+    if (file.size > ARTICLE_MAX_BYTES) {
+      setFileError(`File too large (${Math.round(file.size / 1024)}KB). Max 500KB.`);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    const text = await file.text();
+    onChange(text);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  const isUrl = /^https?:\/\//i.test(value.trim());
+  const byteLen = new globalThis.Blob([value]).size;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="block text-sm font-medium text-[var(--theme-text)]">
+          Article content
+        </label>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="text-xs text-[var(--theme-primary)] hover:underline"
+        >
+          Upload .md file
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".md,.markdown,text/markdown,text/plain"
+          onChange={handleFile}
+          className="hidden"
+        />
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={14}
+        required
+        placeholder={"# My article\n\nWrite **markdown** here, or paste a URL to render as an external link card."}
+        className="block w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-2 font-mono text-xs text-[var(--theme-text)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+      />
+      {fileError && <p className="text-xs text-red-500">{fileError}</p>}
+      <div className="flex items-center justify-between text-xs text-[var(--theme-text-secondary)]">
+        <span>
+          {isUrl
+            ? "URL detected — will render as an external link card."
+            : "Markdown — renders inline after payment."}
+        </span>
+        <span className={byteLen > ARTICLE_MAX_BYTES ? "text-red-500" : ""}>
+          {(byteLen / 1024).toFixed(1)}KB / 500KB
+        </span>
+      </div>
+      <p className="text-xs text-[var(--theme-text-secondary)]">
+        Content is encrypted and never exposed to viewers without payment.
+      </p>
+    </div>
   );
 }
 

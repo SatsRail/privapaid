@@ -133,7 +133,7 @@ export const schemas = {
     channel_id: mongoId,
     name: z.string().min(1, "Name is required").max(200).transform((s) => s.trim()),
     description: z.string().max(5000).optional(),
-    source_url: z.string().min(1, "Source URL is required").transform((s) => s.trim()),
+    source_url: z.string().min(1, "Source URL is required").max(500_000, "Content too long (500KB max)").transform((s) => s.trim()),
     media_type: z.enum(["video", "audio", "article", "photo_set", "podcast"]).optional(),
     thumbnail_url: z.string().optional(),
     thumbnail_id: z.string().optional(),
@@ -144,7 +144,7 @@ export const schemas = {
   mediaUpdate: z.object({
     name: z.string().min(1).max(200).transform((s) => s.trim()).optional(),
     description: z.string().max(5000).optional(),
-    source_url: z.string().min(1).transform((s) => s.trim()).optional(),
+    source_url: z.string().min(1).max(500_000, "Content too long (500KB max)").transform((s) => s.trim()).optional(),
     media_type: z.enum(["video", "audio", "article", "photo_set", "podcast"]).optional(),
     thumbnail_url: z.string().optional(),
     thumbnail_id: z.string().optional(),

@@ -34,6 +34,7 @@
 
 import { useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { detectMimeType, bytesToUrl } from "@/lib/client-crypto";
 import * as Sentry from "@sentry/nextjs";
 import PhotoGallery from "@/components/PhotoGallery";
@@ -392,8 +393,13 @@ function ContentRendererDOM({
       };
       container.appendChild(audio);
     } else {
-      // Treat as HTML content — sanitize to prevent XSS, render in shadow DOM
-      const text = new TextDecoder().decode(decryptedBytes);
+      // Treat as HTML content — sanitize to prevent XSS, render in shadow DOM.
+      // For mediaType "article", the decrypted text is markdown — parse it first.
+      const rawText = new TextDecoder().decode(decryptedBytes);
+      const text =
+        mediaType === "article"
+          ? (marked.parse(rawText, { async: false, gfm: true, breaks: true }) as string)
+          : rawText;
       const shadow = container.attachShadow({ mode: "closed" });
 
       // Inject article styles so content is readable on dark backgrounds

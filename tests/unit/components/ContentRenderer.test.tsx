@@ -29,6 +29,13 @@ vi.mock("dompurify", () => ({
   },
 }));
 
+const mockMarkedParse = vi.fn((text: string) => `<MD>${text}</MD>`);
+vi.mock("marked", () => ({
+  marked: {
+    parse: (...args: unknown[]) => mockMarkedParse(...(args as [string])),
+  },
+}));
+
 import ContentRenderer from "@/components/ContentRenderer";
 
 // Helper: encode a string as Uint8Array
@@ -471,6 +478,62 @@ describe("ContentRenderer", () => {
       // The div should exist (shadow DOM won't be queryable from outside)
       const rendererDiv = container.querySelector("div.min-h-\\[200px\\]");
       expect(rendererDiv).toBeTruthy();
+    });
+  });
+
+  // -------------------------------------------------------
+  // Markdown article rendering
+  // -------------------------------------------------------
+  describe("markdown article rendering", () => {
+    it("parses markdown when mediaType is article and content is not a URL", () => {
+      mockDetectMimeType.mockReturnValue("text/html");
+      const markdown = "# Title\n\nSome **bold** text.";
+
+      render(
+        <ContentRenderer
+          decryptedBytes={toBytes(markdown)}
+          mediaType="article"
+        />
+      );
+
+      expect(mockMarkedParse).toHaveBeenCalledTimes(1);
+      expect(mockMarkedParse).toHaveBeenCalledWith(markdown, expect.objectContaining({
+        async: false,
+        gfm: true,
+        breaks: true,
+      }));
+    });
+
+    it("does not parse markdown for non-article mediaType when content is HTML", () => {
+      mockDetectMimeType.mockReturnValue("text/html");
+
+      render(
+        <ContentRenderer
+          decryptedBytes={toBytes("<p>raw html</p>")}
+          mediaType="video"
+        />
+      );
+
+      expect(mockMarkedParse).not.toHaveBeenCalled();
+    });
+
+    it("renders the existing link card for article URLs without invoking marked", () => {
+      // URL articles take the text/url branch, not the markdown path
+      mockDetectMimeType.mockReturnValue("text/url");
+      mockBytesToUrl.mockReturnValue("https://example.com/post");
+
+      const { container } = render(
+        <ContentRenderer
+          decryptedBytes={toBytes("https://example.com/post")}
+          mediaType="article"
+        />
+      );
+
+      expect(mockMarkedParse).not.toHaveBeenCalled();
+      // External link card includes an anchor with the article URL
+      const link = container.querySelector('a[href="https://example.com/post"]');
+      expect(link).toBeTruthy();
+      expect(link?.getAttribute("target")).toBe("_blank");
     });
   });
 
