@@ -22,6 +22,7 @@ vi.mock("@/lib/auth-helpers", () => ({
 vi.mock("@/lib/satsrail", () => ({ satsrail: {} }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue("sk_test_key") }));
 
+import { NextResponse } from "next/server";
 import { GET, PATCH } from "@/app/api/customer/profile/route";
 import { createCustomer } from "../../helpers/factories";
 
@@ -110,6 +111,38 @@ describe("Customer Profile API", () => {
 
       expect(res.status).toBe(200);
       expect(body.data.nickname).toBe("empty_update");
+    });
+
+    it("PATCH returns 401 when requireCustomerApi denies access", async () => {
+      mockRequireCustomerApi.mockResolvedValue(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      );
+      const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {
+        profile_image_id: "img",
+      });
+      const res = await PATCH(req);
+      expect(res.status).toBe(401);
+    });
+
+    it("PATCH returns 400 when validation fails", async () => {
+      const customer = await createCustomer({ nickname: "valfail" });
+      mockRequireCustomerApi.mockResolvedValue({ id: customer._id.toString(), name: "valfail" });
+
+      const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {
+        profile_image_id: 123, // not a string
+      });
+      const res = await PATCH(req);
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("auth gating", () => {
+    it("GET returns 401 when requireCustomerApi denies access", async () => {
+      mockRequireCustomerApi.mockResolvedValue(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      );
+      const res = await GET();
+      expect(res.status).toBe(401);
     });
   });
 });

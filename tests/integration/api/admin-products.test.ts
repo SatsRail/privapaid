@@ -19,6 +19,7 @@ vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue
 
 import { GET as listProducts, POST as createProduct } from "@/app/api/admin/products/route";
 import { PATCH as updateProduct, DELETE as deleteProduct } from "@/app/api/admin/products/[id]/route";
+import { getMerchantKey } from "@/lib/merchant-key";
 
 function jsonRequest(url: string, method: string, body?: Record<string, unknown>): NextRequest {
   const init: { method: string; headers: Record<string, string>; body?: string } = { method, headers: { "Content-Type": "application/json" } };
@@ -174,6 +175,96 @@ describe("Admin Products API", () => {
 
       expect(res.status).toBe(502);
       expect(body.error).toBe("Server error");
+    });
+
+    it("returns generic error message when SatsRail throws a non-Error value", async () => {
+      mockSatsrailClient.deleteProduct.mockRejectedValue("just a string");
+      const req = jsonRequest("http://localhost:3000/api/admin/products/prod_1", "DELETE");
+      const res = await deleteProduct(req, { params: Promise.resolve({ id: "prod_1" }) });
+      const body = await res.json();
+      expect(res.status).toBe(502);
+      expect(body.error).toBe("Failed to delete product");
+    });
+  });
+
+  describe("missing merchant key handling", () => {
+    afterEach(() => {
+      vi.mocked(getMerchantKey).mockResolvedValue("sk_test_key");
+    });
+
+    it("GET returns 422 when merchant key is missing", async () => {
+      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
+      const res = await listProducts();
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/Merchant API key/);
+    });
+
+    it("POST returns 422 when merchant key is missing", async () => {
+      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
+      const req = jsonRequest("http://localhost:3000/api/admin/products", "POST", {
+        name: "Anything",
+        price_cents: 100,
+        product_type_id: "pt_1",
+      });
+      const res = await createProduct(req);
+      expect(res.status).toBe(422);
+    });
+
+    it("PATCH returns 422 when merchant key is missing", async () => {
+      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
+      const req = jsonRequest("http://localhost:3000/api/admin/products/prod_1", "PATCH", {
+        name: "Anything",
+      });
+      const res = await updateProduct(req, { params: Promise.resolve({ id: "prod_1" }) });
+      expect(res.status).toBe(422);
+    });
+
+    it("DELETE returns 422 when merchant key is missing", async () => {
+      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
+      const req = jsonRequest("http://localhost:3000/api/admin/products/prod_1", "DELETE");
+      const res = await deleteProduct(req, { params: Promise.resolve({ id: "prod_1" }) });
+      expect(res.status).toBe(422);
+    });
+  });
+
+  describe("non-Error throw paths", () => {
+    it("GET returns generic error message when SatsRail throws non-Error", async () => {
+      mockSatsrailClient.listProducts.mockRejectedValue({ unexpected: true });
+      const res = await listProducts();
+      expect(res.status).toBe(502);
+      expect((await res.json()).error).toBe("Failed to list products");
+    });
+
+    it("POST returns generic error message when SatsRail throws non-Error", async () => {
+      mockSatsrailClient.createProduct.mockRejectedValue(42);
+      const req = jsonRequest("http://localhost:3000/api/admin/products", "POST", {
+        name: "X",
+        price_cents: 100,
+        product_type_id: "pt_1",
+      });
+      const res = await createProduct(req);
+      expect(res.status).toBe(502);
+      expect((await res.json()).error).toBe("Failed to create product");
+    });
+
+    it("PATCH returns generic error message when SatsRail throws non-Error", async () => {
+      mockSatsrailClient.updateProduct.mockRejectedValue(null);
+      const req = jsonRequest("http://localhost:3000/api/admin/products/prod_1", "PATCH", {
+        name: "X",
+      });
+      const res = await updateProduct(req, { params: Promise.resolve({ id: "prod_1" }) });
+      expect(res.status).toBe(502);
+      expect((await res.json()).error).toBe("Failed to update product");
+    });
+  });
+
+  describe("PATCH validation", () => {
+    it("returns 400 when payload has invalid field", async () => {
+      const req = jsonRequest("http://localhost:3000/api/admin/products/prod_1", "PATCH", {
+        price_cents: -50,
+      });
+      const res = await updateProduct(req, { params: Promise.resolve({ id: "prod_1" }) });
+      expect(res.status).toBe(400);
     });
   });
 });

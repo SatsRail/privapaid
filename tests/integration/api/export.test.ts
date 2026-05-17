@@ -228,6 +228,96 @@ describe("GET /api/admin/export", () => {
     expect(disposition).toMatch(/^attachment; filename="privapaid-export-\d{4}-\d{2}-\d{2}\.json"$/);
   });
 
+  it("uses null category_slug when channel has no category_id", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    await createChannel({ name: "Lone", slug: "lone-ch" });
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+    expect(body.channels[0].category_slug).toBeNull();
+  });
+
+  it("falls back to undefined external_ref when channel ref is missing on legacy ChannelProduct", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const ChannelProduct = (await import("@/models/ChannelProduct")).default;
+    const channel = await createChannel({ name: "RefMissing", slug: "ref-missing", ref: undefined });
+
+    await ChannelProduct.create({
+      channel_id: channel._id,
+      satsrail_product_id: "prod_legacy",
+      key_fingerprint: "fp_legacy",
+      encrypted_media: [],
+      product_name: "Legacy Channel Product",
+      product_price_cents: 500,
+    });
+
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+    expect(body.channels[0].product.external_ref).toBeUndefined();
+  });
+
+  it("applies default currency and zero price when ChannelProduct lacks them", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const ChannelProduct = (await import("@/models/ChannelProduct")).default;
+    const channel = await createChannel({ name: "Defaults", slug: "defaults-ch" });
+
+    await ChannelProduct.create({
+      channel_id: channel._id,
+      satsrail_product_id: "prod_def",
+      key_fingerprint: "fp_def",
+      encrypted_media: [],
+      product_name: "With Defaults",
+    });
+
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+    expect(body.channels[0].product.price_cents).toBe(0);
+    expect(body.channels[0].product.currency).toBe("USD");
+  });
+
+  it("omits product when ChannelProduct has no product_name", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const ChannelProduct = (await import("@/models/ChannelProduct")).default;
+    const channel = await createChannel({ name: "Nameless", slug: "nameless-ch" });
+    await ChannelProduct.create({
+      channel_id: channel._id,
+      satsrail_product_id: "prod_nameless",
+      key_fingerprint: "fp_nameless",
+      encrypted_media: [],
+    });
+
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+    expect(body.channels[0].product).toBeUndefined();
+  });
+
+  it("omits product when MediaProduct has no product_name", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const channel = await createChannel({ name: "NoNameMp", slug: "no-name-mp" });
+    const media = await createMedia(String(channel._id), {
+      name: "Plain",
+      source_url: "https://example.com/plain.mp4",
+    });
+    await MediaProduct.create({
+      media_id: media._id,
+      satsrail_product_id: "prod_blank",
+      encrypted_source_url: "blob",
+      key_fingerprint: "fp",
+    });
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+    expect(body.channels[0].media[0].product).toBeUndefined();
+  });
+
   it("excludes deleted channels and media", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },

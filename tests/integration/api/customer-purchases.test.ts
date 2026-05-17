@@ -150,6 +150,80 @@ describe("Customer Purchases routes", () => {
       expect(body.error).toBe("Validation failed");
     });
 
+    it("returns 404 when the customer no longer exists", async () => {
+      // No customer with this id in DB
+
+      const req = buildPostRequest({
+        order_id: "from_checkout",
+        product_id: "prod_missing_customer",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe("Customer not found");
+    });
+
+    it("returns 403 when SatsRail order is not paid", async () => {
+      await createCustomer({ _id: customerId, nickname: "buyer" });
+      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+
+      mockSatsrailClient.getOrder.mockResolvedValue({
+        id: "order_unpaid",
+        status: "pending",
+        total_cents: 1000,
+        currency: "USD",
+      });
+
+      const req = buildPostRequest({
+        order_id: "order_unpaid",
+        product_id: "prod_xyz",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toBe("Order not verified");
+    });
+
+    it("returns 403 when SatsRail returns a falsy order", async () => {
+      await createCustomer({ _id: customerId, nickname: "buyer" });
+      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+
+      mockSatsrailClient.getOrder.mockResolvedValue(null);
+
+      const req = buildPostRequest({
+        order_id: "order_missing",
+        product_id: "prod_xyz",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 502 when SatsRail verification throws", async () => {
+      await createCustomer({ _id: customerId, nickname: "buyer" });
+      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+
+      mockSatsrailClient.getOrder.mockRejectedValue(new Error("network down"));
+
+      const req = buildPostRequest({
+        order_id: "order_broken",
+        product_id: "prod_xyz",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(502);
+      expect((await res.json()).error).toBe("Failed to verify order");
+    });
+
+    it("skips order verification when no settings are configured", async () => {
+      await createCustomer({ _id: customerId, nickname: "buyer" });
+      // No Settings — should fall through and just record the purchase
+
+      const req = buildPostRequest({
+        order_id: "order_no_settings",
+        product_id: "prod_settings_missing",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(201);
+      expect(mockSatsrailClient.getOrder).not.toHaveBeenCalled();
+    });
+
     it("verifies order against SatsRail for non-checkout orders", async () => {
       await createCustomer({ _id: customerId, nickname: "buyer" });
       await createSettings({

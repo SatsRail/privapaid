@@ -670,6 +670,203 @@ describe("POST /api/admin/import", () => {
     );
   });
 
+  it("emits SSE error event when the outer flow throws", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const { connectDB } = await import("@/lib/mongodb");
+    vi.mocked(connectDB).mockRejectedValueOnce(new Error("db boom"));
+
+    const res = await POST(importRequest({ version: "1.0", categories: [] }));
+    const text = await res.text();
+    expect(text).toMatch(/event: error/);
+    expect(text).toMatch(/db boom/);
+  });
+
+  it("records per-category error when Category.create throws", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const spy = vi
+      .spyOn(Category, "create")
+      .mockRejectedValueOnce(new Error("cat create failed") as never);
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        categories: [{ slug: "broken", name: "Broken" }],
+      })
+    );
+    const body = await readSSEResult(res);
+    const cr = body.results.categories as { errors: { name: string; error: string }[] };
+    expect(cr.errors).toHaveLength(1);
+    expect(cr.errors[0].name).toBe("Broken");
+    expect(body.success).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("records per-channel error when Channel.create throws", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    mockCreateProductType.mockResolvedValue({ id: "pt_chfail" });
+    const spy = vi
+      .spyOn(Channel, "create")
+      .mockRejectedValueOnce(new Error("channel create failed") as never);
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [{ slug: "bad-ch", name: "Bad Channel" }],
+      })
+    );
+    const body = await readSSEResult(res);
+    const cr = body.results.channels as { errors: { name: string; error: string }[] };
+    expect(cr.errors).toHaveLength(1);
+    expect(cr.errors[0].name).toBe("Bad Channel");
+    spy.mockRestore();
+  });
+
+  it("treats unresolved category_slug as no category", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    mockCreateProductType.mockResolvedValue({ id: "pt_nocat" });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "orphan-cat-ch",
+            name: "Orphan",
+            category_slug: "does-not-exist",
+          },
+        ],
+      })
+    );
+    const body = await readSSEResult(res);
+    expect((body.results.channels as { created: number }).created).toBe(1);
+    const ch = await Channel.findOne({ slug: "orphan-cat-ch" }).lean();
+    expect(ch!.category_id == null).toBe(true);
+  });
+
+  it("skips SatsRail product creation when getMerchantKey returns null", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const merchantKeyMod = await import("@/lib/merchant-key");
+    vi.mocked(merchantKeyMod.getMerchantKey).mockResolvedValueOnce(null);
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "no-sk-ch",
+            name: "No SK",
+            media: [
+              { name: "Free", source_url: "https://example.com/free.mp4" },
+            ],
+          },
+        ],
+      })
+    );
+    const body = await readSSEResult(res);
+    expect((body.results.channels as { created: number }).created).toBe(1);
+    expect((body.results.media as { created: number }).created).toBe(1);
+    // No product type type was created because sk was null
+    expect(mockCreateProductType).not.toHaveBeenCalled();
+
+    const ch = await Channel.findOne({ slug: "no-sk-ch" }).lean();
+    expect(ch!.satsrail_product_type_id == null).toBe(true);
+  });
+
+  it("creates a channel access product (Phase 4) when chData.product is present", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const productKey = generateProductKey();
+    mockCreateProductType.mockResolvedValue({ id: "pt_ch_prod" });
+    mockCreateProduct.mockResolvedValue({ id: "prod_ch_access" });
+    mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_ch" });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "ch-with-product",
+            name: "Channel With Product",
+            product: {
+              name: "Channel Access",
+              price_cents: 999,
+              currency: "USD",
+              access_duration_seconds: 86400,
+              external_ref: "ch_custom_99",
+            },
+            media: [
+              { name: "Item", source_url: "https://example.com/x.mp4" },
+            ],
+          },
+        ],
+      })
+    );
+
+    const body = await readSSEResult(res);
+    const cp = body.results.channel_products as { created: number; errors: unknown[] };
+    expect(cp.created).toBe(1);
+    expect(cp.errors).toHaveLength(0);
+  });
+
+  it("creates a channel access product even when the channel has no media", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    const productKey = generateProductKey();
+    mockCreateProductType.mockResolvedValue({ id: "pt_ch_only" });
+    mockCreateProduct.mockResolvedValue({ id: "prod_ch_only" });
+    mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_ch_only" });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "ch-no-media",
+            name: "Ch No Media",
+            product: { name: "Just Access", price_cents: 100 },
+          },
+        ],
+      })
+    );
+
+    const body = await readSSEResult(res);
+    expect((body.results.channels as { created: number }).created).toBe(1);
+    const cp = body.results.channel_products as { created: number };
+    expect(cp.created).toBe(1);
+  });
+
+  it("skips Phase 4 entirely when no channels declare a product", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    mockCreateProductType.mockResolvedValue({ id: "pt_skip4" });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          { slug: "no-prod-ch", name: "No Prod" },
+        ],
+      })
+    );
+    const body = await readSSEResult(res);
+    const cp = body.results.channel_products as { created: number; errors: unknown[] };
+    expect(cp.created).toBe(0);
+    expect(cp.errors).toHaveLength(0);
+  });
+
   it("creates product type for existing channel when importing media with products", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },

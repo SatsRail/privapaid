@@ -40,8 +40,9 @@ vi.mock("@/lib/auth-helpers", () => ({
   }),
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GET, PATCH, DELETE } from "@/app/api/admin/categories/[id]/route";
+import { requireAdminApi } from "@/lib/auth-helpers";
 import { createCategory } from "../../helpers/factories";
 
 function buildRequest(
@@ -144,6 +145,72 @@ describe("Admin Categories [id] routes", () => {
       const res = await DELETE(req, ctx);
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("PATCH branch coverage", () => {
+    it("updates slug, position, and active in one call", async () => {
+      const category = await createCategory({ name: "Multi", slug: "multi", position: 1, active: true });
+      const [req, ctx] = buildRequest("PATCH", category._id.toString(), {
+        slug: "multi-updated",
+        position: 9,
+        active: false,
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.slug).toBe("multi-updated");
+      expect(body.data.position).toBe(9);
+      expect(body.data.active).toBe(false);
+    });
+
+    it("returns 400 when payload fails validation", async () => {
+      const category = await createCategory({ name: "Vfail", slug: "vfail" });
+      const [req, ctx] = buildRequest("PATCH", category._id.toString(), {
+        slug: "INVALID UPPER",
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("auth gating", () => {
+    afterEach(() => {
+      vi.mocked(requireAdminApi).mockResolvedValue({
+        id: "admin-1",
+        email: "admin@test.com",
+        role: "owner",
+      });
+    });
+
+    it("GET returns NextResponse from requireAdminApi when unauthorized", async () => {
+      vi.mocked(requireAdminApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      );
+      const fakeId = new mongoose.Types.ObjectId().toString();
+      const [req, ctx] = buildRequest("GET", fakeId);
+      const res = await GET(req, ctx);
+      expect(res.status).toBe(403);
+    });
+
+    it("PATCH returns NextResponse from requireAdminApi when unauthorized", async () => {
+      vi.mocked(requireAdminApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      );
+      const fakeId = new mongoose.Types.ObjectId().toString();
+      const [req, ctx] = buildRequest("PATCH", fakeId, { name: "X" });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(403);
+    });
+
+    it("DELETE returns NextResponse from requireAdminApi when unauthorized", async () => {
+      vi.mocked(requireAdminApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      );
+      const fakeId = new mongoose.Types.ObjectId().toString();
+      const [req, ctx] = buildRequest("DELETE", fakeId);
+      const res = await DELETE(req, ctx);
+      expect(res.status).toBe(403);
     });
   });
 });

@@ -30,7 +30,11 @@ vi.mock("@/lib/auth-helpers", () => ({
   }),
 }));
 
+import { NextResponse } from "next/server";
 import { GET } from "@/app/api/customer/comments/route";
+import { requireCustomerApi } from "@/lib/auth-helpers";
+import Channel from "@/models/Channel";
+import Media from "@/models/Media";
 import Comment from "@/models/Comment";
 import { createChannel, createMedia } from "../../helpers/factories";
 
@@ -144,5 +148,48 @@ describe("GET /api/customer/comments", () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0].body).toBe("Comment on deleted media");
     expect(body.data[0].media).toBeNull();
+  });
+
+  it("returns 401 when requireCustomerApi denies access", async () => {
+    vi.mocked(requireCustomerApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const res = await GET();
+    expect(res.status).toBe(401);
+  });
+
+  it("renders null channel info when media has no channel populated", async () => {
+    const orphanChannelId = new Types.ObjectId();
+    // Insert media whose channel_id points at no real channel
+    const media = await Media.collection.insertOne({
+      ref: 9001,
+      channel_id: orphanChannelId,
+      name: "Orphan media",
+      source_url: "https://example.com/o.mp4",
+      media_type: "video",
+      position: 1,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await Comment.create({
+      media_id: media.insertedId,
+      customer_id: customerId,
+      nickname: "testuser",
+      body: "orphan",
+    });
+
+    const res = await GET();
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    const comment = body.data.find((c: { body: string }) => c.body === "orphan");
+    expect(comment).toBeTruthy();
+    expect(comment.media.channel_slug).toBeNull();
+    expect(comment.media.channel_name).toBeNull();
+  });
+
+  // Touch Channel import so tsc doesn't strip it; also keeps mongoose connection live
+  it("auxiliary: Channel model is registered", () => {
+    expect(Channel.modelName).toBe("Channel");
   });
 });

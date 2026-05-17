@@ -51,8 +51,10 @@ vi.mock("@/config/instance", () => ({
   clearConfigCache: vi.fn(),
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GET, PUT } from "@/app/api/admin/settings/route";
+import { requireOwnerApi } from "@/lib/auth-helpers";
+import Settings from "@/models/Settings";
 import { createSettings } from "../../helpers/factories";
 
 function buildPutRequest(body: unknown): NextRequest {
@@ -120,6 +122,55 @@ describe("Admin Settings routes", () => {
 
       expect(res.status).toBe(404);
       expect(body.error).toBe("Settings not found");
+    });
+
+    it("returns 400 when payload has no recognized fields", async () => {
+      await createSettings({ instance_name: "x" });
+      const req = buildPutRequest({});
+      const res = await PUT(req);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/No valid fields/);
+    });
+
+    it("returns 400 when payload fails schema validation", async () => {
+      await createSettings({ instance_name: "x" });
+      const req = buildPutRequest({ theme_primary: "not-a-color" });
+      const res = await PUT(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 500 when Settings.findOneAndUpdate throws", async () => {
+      await createSettings({ instance_name: "x" });
+      const spy = vi
+        .spyOn(Settings, "findOneAndUpdate")
+        .mockImplementationOnce(() => {
+          throw new Error("mongo offline");
+        });
+
+      const req = buildPutRequest({ instance_name: "Anything" });
+      const res = await PUT(req);
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe("Failed to update settings");
+      spy.mockRestore();
+    });
+  });
+
+  describe("auth gating", () => {
+    it("GET returns NextResponse from requireOwnerApi when unauthorized", async () => {
+      vi.mocked(requireOwnerApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      );
+      const res = await GET();
+      expect(res.status).toBe(403);
+    });
+
+    it("PUT returns NextResponse from requireOwnerApi when unauthorized", async () => {
+      vi.mocked(requireOwnerApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      );
+      const req = buildPutRequest({ instance_name: "x" });
+      const res = await PUT(req);
+      expect(res.status).toBe(403);
     });
   });
 });

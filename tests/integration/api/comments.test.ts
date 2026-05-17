@@ -263,4 +263,149 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
     expect(res.status).toBe(404);
     expect(resBody.error).toBe("Media not found");
   });
+
+  it("returns the rate-limit response when limit is hit", async () => {
+    const { mediaId } = await seedWithProduct();
+    const { rateLimit } = await import("@/lib/rate-limit");
+    vi.mocked(rateLimit).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Too Many Requests" }), {
+        status: 429,
+      }) as unknown as Response
+    );
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
+      body: "rate limited",
+    });
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(429);
+  });
+
+  it("returns 400 when validation fails (missing body)", async () => {
+    const { mediaId } = await seedWithProduct();
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {});
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("uses submitted nickname over customer nickname when provided", async () => {
+    const { mediaId, productId } = await seedWithProduct();
+
+    const customer = await Customer.create({
+      nickname: "realname",
+      password_hash: "hashed",
+      purchases: [
+        {
+          satsrail_order_id: "ord_n",
+          satsrail_product_id: productId,
+          purchased_at: new Date(),
+        },
+      ],
+    });
+
+    mockAuth.mockResolvedValue({
+      user: { id: String(customer._id), name: "realname", role: "customer" },
+    });
+
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
+      body: "Hi there",
+      nickname: "aliasName",
+    });
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(201);
+    expect((await res.json()).customer.nickname).toBe("aliasName");
+  });
+});
+
+describe("Comments API — GET fallback nickname rendering", () => {
+  let channelId: string;
+  let mediaId: string;
+
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
+  afterEach(async () => {
+    await clearCollections();
+    vi.clearAllMocks();
+  });
+
+  it("falls back to 'Anonymous' when neither nickname nor populated customer is available", async () => {
+    const channel = await Channel.create({
+      ref: 99,
+      slug: "ch-anon",
+      name: "Anon Channel",
+    });
+    channelId = String(channel._id);
+
+    const media = await Media.create({
+      ref: 555,
+      channel_id: channelId,
+      name: "Anon Video",
+      source_url: "https://example.com/a.mp4",
+      media_type: "video",
+      position: 1,
+    });
+    mediaId = String(media._id);
+
+    // Insert directly bypassing schema validation (nickname is normally required)
+    await Comment.collection.insertOne({
+      media_id: new mongoose.Types.ObjectId(mediaId),
+      body: "lonely comment",
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${mediaId}/comments`,
+      "GET"
+    );
+    const res = await getComments(req, {
+      params: Promise.resolve({ id: mediaId }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toHaveLength(1);
+    expect(body[0].customer.nickname).toBe("Anonymous");
+  });
+
+  it("uses customer.nickname populated via customer_id when comment.nickname is blank", async () => {
+    const channel = await Channel.create({
+      ref: 100,
+      slug: "ch-pop",
+      name: "Populated Channel",
+    });
+    const media = await Media.create({
+      ref: 556,
+      channel_id: String(channel._id),
+      name: "Pop Video",
+      source_url: "https://example.com/p.mp4",
+      media_type: "video",
+      position: 1,
+    });
+    const customer = await Customer.create({
+      nickname: "populated",
+      password_hash: "hashed",
+    });
+
+    await Comment.collection.insertOne({
+      media_id: media._id,
+      customer_id: customer._id,
+      body: "from customer",
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${media._id}/comments`,
+      "GET"
+    );
+    const res = await getComments(req, {
+      params: Promise.resolve({ id: String(media._id) }),
+    });
+    const body = await res.json();
+    expect(body[0].customer.nickname).toBe("populated");
+  });
 });

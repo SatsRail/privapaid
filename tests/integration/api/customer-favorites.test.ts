@@ -46,8 +46,9 @@ vi.mock("@/lib/auth-helpers", () => ({
   }),
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GET, POST, DELETE } from "@/app/api/customer/favorites/route";
+import { requireCustomerApi } from "@/lib/auth-helpers";
 import { createCustomer, createChannel } from "../../helpers/factories";
 
 function buildRequest(method: string, body?: unknown): NextRequest {
@@ -113,6 +114,54 @@ describe("Customer Favorites routes", () => {
     const getRes = await GET();
     const getBody = await getRes.json();
     expect(getBody.favorite_channel_ids).toHaveLength(1);
+  });
+
+  it("GET returns empty array when customer record is missing", async () => {
+    // No customer in DB — session id points to nothing
+    const res = await GET();
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.favorite_channel_ids).toEqual([]);
+  });
+
+  it("GET returns NextResponse from requireCustomerApi when unauthenticated", async () => {
+    vi.mocked(requireCustomerApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const res = await GET();
+    expect(res.status).toBe(401);
+  });
+
+  it("POST returns 401 when requireCustomerApi denies access", async () => {
+    vi.mocked(requireCustomerApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const req = buildRequest("POST", { channel_id: "anything" });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+  });
+
+  it("POST returns 400 when body is invalid", async () => {
+    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const req = buildRequest("POST", {});
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it("DELETE returns 401 when requireCustomerApi denies access", async () => {
+    vi.mocked(requireCustomerApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const req = buildRequest("DELETE", { channel_id: "anything" });
+    const res = await DELETE(req);
+    expect(res.status).toBe(401);
+  });
+
+  it("DELETE returns 400 when body is invalid", async () => {
+    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const req = buildRequest("DELETE", {});
+    const res = await DELETE(req);
+    expect(res.status).toBe(400);
   });
 
   it("DELETE removes a favorite", async () => {

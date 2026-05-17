@@ -113,4 +113,53 @@ describe("POST /api/customer/signup", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("returns the rate-limit response when limited", async () => {
+    const { rateLimit } = await import("@/lib/rate-limit");
+    vi.mocked(rateLimit).mockResolvedValueOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Response(JSON.stringify({ error: "Too Many Requests" }), { status: 429 }) as any
+    );
+
+    const req = signupRequest({
+      nickname: "ratelimited",
+      password: "MySecurePass123!",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(429);
+
+    // Verify rate-limit short-circuit ran before DB insert
+    const count = await Customer.countDocuments({ nickname: "ratelimited" });
+    expect(count).toBe(0);
+  });
+
+  it("returns 409 when MongoDB raises a duplicate key error during create", async () => {
+    const spy = vi
+      .spyOn(Customer, "create")
+      .mockRejectedValueOnce({ code: 11000, message: "E11000 duplicate key" } as never);
+
+    const req = signupRequest({
+      nickname: "racey",
+      password: "MySecurePass123!",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already taken/);
+    spy.mockRestore();
+  });
+
+  it("returns 500 when Customer.create throws a non-duplicate error", async () => {
+    const spy = vi
+      .spyOn(Customer, "create")
+      .mockRejectedValueOnce(new Error("mongo down") as never);
+
+    const req = signupRequest({
+      nickname: "broken",
+      password: "MySecurePass123!",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/Internal server error/i);
+    spy.mockRestore();
+  });
 });
