@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/SatsRail/privapaid_app/actions/workflows/codeql.yml/badge.svg)](https://github.com/SatsRail/privapaid_app/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/SatsRail/privapaid_app/branch/main/graph/badge.svg)](https://codecov.io/gh/SatsRail/privapaid_app)
 
-Open-source, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photo sets, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
+Open-source, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
 
 All content is encrypted at rest. The server never stores plaintext, never decrypts content, and never touches customer funds. Decryption happens entirely in the buyer's browser after payment. SatsRail manages encryption keys and payment verification but never sees your content.
 
@@ -58,7 +58,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for EC2, Docker, and other deployment options
 ## What You Get
 
 - **Channels** — each creator gets their own page with a dedicated SatsRail product type for revenue grouping
-- **Any media type** — video, audio, articles, photo sets, podcasts
+- **Five media types** — see [Media Types](#media-types) below
 - **Lightning payments** — customers pay with Bitcoin, funds go directly to your wallet
 - **Encryption at rest** — all content encrypted with AES-256-GCM before it touches the database
 - **Payment-gated access** — three-state gating (unavailable → locked → unlocked) with no unencrypted fallback
@@ -69,6 +69,25 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for EC2, Docker, and other deployment options
 - **Pseudonymous customers** — sign up with a nickname, no email required
 - **Admin dashboard** — manage channels, media, and categories
 - **NSFW toggle** — enable or disable adult content categories per instance
+
+## Media Types
+
+Every media item has a `media_type` that controls how content is stored, encrypted, and rendered. All five types share the same payment flow and per-product encryption — only the storage shape differs.
+
+| Type | What `source_url` holds | Viewer renders | Notes |
+|------|-------------------------|----------------|-------|
+| `video` | Direct file URL (`.mp4`/`.webm`/HLS) or embed URL (YouTube, Vimeo, Twitch, Bunny Stream, Cloudflare Stream, Mux, Dailymotion) | `<video>` for direct files; `<iframe>` for known hosts | URL itself is encrypted; the host stores the bytes. |
+| `audio` | Direct audio file URL (`.mp3`/`.wav`/`.flac`/`.aac`) | `<audio>` player with optional artwork from the thumbnail | URL itself is encrypted. |
+| `article` | Markdown text *or* a URL | Markdown rendered inline (GFM, sanitized via DOMPurify in a closed shadow root); URLs render as an "Open article" external link card | Auto-detects URL vs markdown. Max 500KB. Links open in a new tab with `rel="noopener noreferrer"`. |
+| `photo` | GridFS pointer to the encrypted bytes | `<img>` after client-side decryption | **Encrypted at rest in our own GridFS.** Envelope encryption: a random per-photo DEK encrypts the bytes once; the DEK is encrypted under each product key. Upload through [`/api/admin/photos`](#) (multipart, 5MB cap, JPEG/PNG/WebP/GIF, EXIF stripped). Photos cannot be added via JSON import — bytes must be uploaded to encrypt. |
+| `podcast` | Audio URL | Same as `audio` plus podcast-style metadata in JSON-LD | Treated like audio at render time. |
+
+### How encryption maps to each type
+
+- For `video`, `audio`, `article`, `podcast` the *URL or text* is encrypted into `MediaProduct.encrypted_source_url` (or `ChannelProduct.encrypted_media[].encrypted_source_url`) under the SatsRail product key. The viewer decrypts client-side after payment.
+- For `photo`, the *bytes themselves* live encrypted in GridFS, and `MediaProduct.encrypted_source_url` holds the encrypted DEK (envelope). The viewer unwraps the DEK with the product key, fetches the ciphertext from `/api/photos/[id]`, and decrypts in the browser.
+
+In every case the SatsRail Portal holds the encryption keys and never sees content; the Stream app holds the content and never sees plaintext keys at rest.
 
 ## Content Import
 
@@ -142,7 +161,7 @@ Add media to an existing channel at **Admin > Channels > [channel] > Import**. T
 }
 ```
 
-Supported media types: `video`, `audio`, `article`, `photo_set`, `podcast`.
+Importable `media_type` values: `video`, `audio`, `article`, `podcast`. The `photo` type is **not** importable via JSON — photo bytes must be uploaded through the admin UI (`/api/admin/photos`) so the encrypted GridFS file and DEK envelope can be created. See [Media Types](#media-types) for full details on each type.
 
 Each media item can include a `product` with pricing — the import automatically creates the corresponding SatsRail product and encrypts the source URL. Imports are idempotent: re-importing with the same slugs or refs updates existing records.
 
