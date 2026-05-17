@@ -48,7 +48,7 @@ export interface MediaFormData {
   name: string;
   description?: string;
   source_url: string;
-  media_type: "video" | "audio" | "article" | "photo_set" | "podcast";
+  media_type: "video" | "audio" | "article" | "photo" | "podcast";
   thumbnail_url?: string;
   position?: number;
 }

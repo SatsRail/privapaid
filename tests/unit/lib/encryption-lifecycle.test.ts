@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { randomBytes } from "crypto";
 import { encryptSecretKey, decryptSecretKey } from "@/lib/encryption";
-import { encryptSourceUrl, decryptSourceUrl } from "@/lib/content-encryption";
+import {
+  encryptSourceUrl,
+  decryptSourceUrl,
+  encryptBytes,
+  decryptBytes,
+} from "@/lib/content-encryption";
 
 /**
  * End-to-end encryption lifecycle tests.
@@ -338,6 +343,119 @@ describe("Encryption Lifecycle", () => {
       const tampered = parts.join(":");
 
       expect(() => decryptSecretKey(tampered)).toThrow();
+    });
+  });
+
+  // -------------------------------------------------------
+  // Envelope encryption — full photo lifecycle
+  // -------------------------------------------------------
+  describe("Photo envelope encryption lifecycle", () => {
+    function generateDek(): Buffer {
+      return randomBytes(32);
+    }
+
+    function dekToBase64url(dek: Buffer): string {
+      return dek
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+    }
+
+    function base64urlToDek(s: string): Buffer {
+      let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4) b64 += "=";
+      return Buffer.from(b64, "base64");
+    }
+
+    it("full lifecycle: upload → wrap → fetch → unwrap → decrypt → view", () => {
+      // 1. UPLOAD (server-side, /api/admin/photos)
+      const photoBytes = Buffer.from("the actual JPEG bytes — sensitive!");
+      const dek = generateDek();
+      const ciphertext = encryptBytes(photoBytes, dek); // → goes to GridFS
+
+      // 2. CREATE-PRODUCT (server wraps the DEK with the SatsRail product key)
+      const productKey = generateProductKey();
+      const wrappedDek = encryptSourceUrl(dekToBase64url(dek), productKey, PRODUCT_A);
+      // After this point, the server has discarded the DEK from memory.
+      // At rest we have: { gridFs: ciphertext, MediaProduct.encrypted_source_url: wrappedDek }
+
+      // 3. VIEWER unwraps DEK (after payment delivers productKey)
+      const recoveredDekBase64url = decryptSourceUrl(wrappedDek, productKey, PRODUCT_A);
+      const recoveredDek = base64urlToDek(recoveredDekBase64url);
+      expect(recoveredDek.equals(dek)).toBe(true);
+
+      // 4. VIEWER fetches ciphertext from GridFS and decrypts with the DEK
+      const decrypted = decryptBytes(ciphertext, recoveredDek);
+      expect(decrypted.equals(photoBytes)).toBe(true);
+    });
+
+    it("re-wrap: same photo bytes can be added to a SECOND product without re-upload", () => {
+      const photoBytes = Buffer.from("one and only photo");
+      const dek = generateDek();
+      const ciphertext = encryptBytes(photoBytes, dek);
+
+      // First product wraps the DEK
+      const keyA = generateProductKey();
+      const wrappedForA = encryptSourceUrl(dekToBase64url(dek), keyA, PRODUCT_A);
+
+      // ---- some time later ----
+      // To add the photo to a second product, server recovers the DEK from
+      // the first envelope, then re-wraps under product B's key.
+      const recoveredDek = base64urlToDek(decryptSourceUrl(wrappedForA, keyA, PRODUCT_A));
+      const keyB = generateProductKey();
+      const wrappedForB = encryptSourceUrl(dekToBase64url(recoveredDek), keyB, PRODUCT_B);
+
+      // Both envelopes recover the same DEK
+      const fromA = base64urlToDek(decryptSourceUrl(wrappedForA, keyA, PRODUCT_A));
+      const fromB = base64urlToDek(decryptSourceUrl(wrappedForB, keyB, PRODUCT_B));
+      expect(fromA.equals(fromB)).toBe(true);
+
+      // Viewer with EITHER product key recovers the photo
+      expect(decryptBytes(ciphertext, fromA).equals(photoBytes)).toBe(true);
+      expect(decryptBytes(ciphertext, fromB).equals(photoBytes)).toBe(true);
+
+      // Different envelopes for the same DEK look different on disk (random IV)
+      expect(wrappedForA).not.toBe(wrappedForB);
+    });
+
+    it("cross-product isolation: product A's key cannot unwrap product B's envelope", () => {
+      const photoBytes = Buffer.from("locked content");
+      const dek = generateDek();
+      encryptBytes(photoBytes, dek);
+
+      const keyA = generateProductKey();
+      const keyB = generateProductKey();
+      const wrappedForA = encryptSourceUrl(dekToBase64url(dek), keyA, PRODUCT_A);
+
+      // Wrong key — should fail
+      expect(() => decryptSourceUrl(wrappedForA, keyB, PRODUCT_A)).toThrow();
+      // Wrong productId AAD — should fail even with the right key
+      expect(() => decryptSourceUrl(wrappedForA, keyA, PRODUCT_B)).toThrow();
+    });
+
+    it("tampered ciphertext fails GCM auth and surfaces as a decrypt error", () => {
+      const photoBytes = Buffer.from("don't change me");
+      const dek = generateDek();
+      const ciphertext = encryptBytes(photoBytes, dek);
+
+      // Attacker swaps a byte in the GridFS bytes
+      ciphertext[20] = ciphertext[20] ^ 0xff;
+      expect(() => decryptBytes(ciphertext, dek)).toThrow();
+    });
+
+    it("lost DEK = unrecoverable photo (no fallback path)", () => {
+      // This test documents the load-bearing assumption: if the server
+      // discards the DEK before wrapping (e.g. all MediaProducts deleted),
+      // there is NO way to recover the photo. Production code must prevent
+      // photo Media creation without at least one product wrap.
+      const photoBytes = Buffer.from("forgotten");
+      const dek = generateDek();
+      const ciphertext = encryptBytes(photoBytes, dek);
+
+      // Throw away the DEK — try with another random key, must fail.
+      const otherKey = randomBytes(32);
+      expect(() => decryptBytes(ciphertext, otherKey)).toThrow();
     });
   });
 });

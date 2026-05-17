@@ -17,12 +17,6 @@ vi.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-vi.mock("@/components/PhotoGallery", () => ({
-  default: ({ images }: { images: Array<{ url: string; caption?: string }> }) => (
-    <div data-testid="photo-gallery">{images.length} images</div>
-  ),
-}));
-
 vi.mock("dompurify", () => ({
   default: {
     sanitize: (html: string) => html,
@@ -52,70 +46,6 @@ describe("ContentRenderer", () => {
     // Reset URL.createObjectURL / revokeObjectURL
     global.URL.createObjectURL = vi.fn().mockReturnValue("blob:fake-url");
     global.URL.revokeObjectURL = vi.fn();
-  });
-
-  // -------------------------------------------------------
-  // Photo set branch
-  // -------------------------------------------------------
-  describe("photo_set mediaType", () => {
-    it("renders PhotoGallery for valid photo_set manifest", () => {
-      const manifest = JSON.stringify({
-        type: "photo_set",
-        images: [
-          { url: "https://example.com/1.jpg", caption: "First" },
-          { url: "https://example.com/2.jpg" },
-        ],
-      });
-      render(
-        <ContentRenderer decryptedBytes={toBytes(manifest)} mediaType="photo_set" />
-      );
-      expect(screen.getByTestId("photo-gallery")).toBeInTheDocument();
-      expect(screen.getByText("2 images")).toBeInTheDocument();
-    });
-
-    it("filters out invalid images in manifest", () => {
-      const manifest = JSON.stringify({
-        type: "photo_set",
-        images: [
-          { url: "https://example.com/1.jpg" },
-          null,
-          "not-an-object",
-          { noUrl: true },
-        ],
-      });
-      render(
-        <ContentRenderer decryptedBytes={toBytes(manifest)} mediaType="photo_set" />
-      );
-      expect(screen.getByTestId("photo-gallery")).toBeInTheDocument();
-      expect(screen.getByText("1 images")).toBeInTheDocument();
-    });
-
-    it("falls back to DOM renderer for invalid JSON manifest", () => {
-      mockDetectMimeType.mockReturnValue("text/html");
-      render(
-        <ContentRenderer decryptedBytes={toBytes("not json")} mediaType="photo_set" />
-      );
-      // Should render the DOM-based container div instead of gallery
-      expect(screen.queryByTestId("photo-gallery")).not.toBeInTheDocument();
-    });
-
-    it("falls back to DOM renderer when type is not photo_set in JSON", () => {
-      const manifest = JSON.stringify({ type: "other", images: [] });
-      mockDetectMimeType.mockReturnValue("text/html");
-      render(
-        <ContentRenderer decryptedBytes={toBytes(manifest)} mediaType="photo_set" />
-      );
-      expect(screen.queryByTestId("photo-gallery")).not.toBeInTheDocument();
-    });
-
-    it("falls back to DOM renderer when images array is empty", () => {
-      const manifest = JSON.stringify({ type: "photo_set", images: [] });
-      mockDetectMimeType.mockReturnValue("text/html");
-      render(
-        <ContentRenderer decryptedBytes={toBytes(manifest)} mediaType="photo_set" />
-      );
-      expect(screen.queryByTestId("photo-gallery")).not.toBeInTheDocument();
-    });
   });
 
   // -------------------------------------------------------
@@ -550,17 +480,6 @@ describe("ContentRenderer", () => {
       const rendererDiv = container.querySelector("div.min-h-\\[200px\\]");
       expect(rendererDiv).toBeTruthy();
       expect(rendererDiv?.children.length).toBe(0);
-    });
-
-    it("skips photo_set parsing for non photo_set mediaType", () => {
-      // Even if the bytes are valid JSON, if mediaType isn't photo_set, it should not parse
-      const manifest = JSON.stringify({ type: "photo_set", images: [{ url: "a.jpg" }] });
-      mockDetectMimeType.mockReturnValue("text/html");
-
-      render(
-        <ContentRenderer decryptedBytes={toBytes(manifest)} mediaType="video" />
-      );
-      expect(screen.queryByTestId("photo-gallery")).not.toBeInTheDocument();
     });
 
     it("handles toEmbedUrl with invalid URL gracefully", () => {

@@ -31,6 +31,7 @@ export async function POST(
     currency,
     access_duration_seconds,
     image_url,
+    dek, // optional — required when media_type === "photo" (envelope encryption)
   } = body;
   if (!name || !price_cents) {
     return NextResponse.json(
@@ -43,6 +44,16 @@ export async function POST(
   const media = await Media.findById(mediaId);
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
+  }
+
+  // Photo media uses envelope encryption: the plaintext we wrap with the
+  // product key is the per-photo DEK, not the source_url. The client must
+  // supply the DEK from the upload response — we never persist it server-side.
+  if (media.media_type === "photo" && !dek) {
+    return NextResponse.json(
+      { error: "dek is required for photo media" },
+      { status: 422 }
+    );
   }
 
   const channel = await Channel.findById(media.channel_id);
@@ -80,8 +91,12 @@ export async function POST(
     // 3. Fetch the encryption key (includes SHA-256 fingerprint for verification)
     const { key, key_fingerprint } = await satsrail.getProductKey(skLive, product.id);
 
-    // 4. Encrypt the source URL
-    const encryptedSourceUrl = encryptSourceUrl(media.source_url, key, product.id);
+    // 4. Encrypt the content payload
+    //    - For photo media: wrap the per-photo DEK (envelope encryption).
+    //      `media.source_url` holds the GridFS pointer to the ciphertext.
+    //    - For everything else: encrypt the source_url itself.
+    const plaintext = media.media_type === "photo" ? (dek as string) : media.source_url;
+    const encryptedSourceUrl = encryptSourceUrl(plaintext, key, product.id);
 
     // 5. Create MediaProduct with key fingerprint and cached metadata
     const mediaProduct = await MediaProduct.create({

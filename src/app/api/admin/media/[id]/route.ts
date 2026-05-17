@@ -9,6 +9,8 @@ import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
+import { getEncryptedPhotosBucket } from "@/lib/gridfs";
+import { ObjectId } from "mongodb";
 
 async function reEncryptBlobs(
   mediaDocId: string,
@@ -176,6 +178,24 @@ export async function DELETE(
     await Channel.findByIdAndUpdate(media.channel_id, {
       $inc: { media_count: -1 },
     });
+  }
+
+  // For photo media, clean up the encrypted GridFS file so we don't leak
+  // storage. The bytes are useless without a DEK envelope (which we just
+  // deleted along with MediaProduct), but they still occupy space.
+  if (media.media_type === "photo" && media.source_url) {
+    try {
+      if (ObjectId.isValid(media.source_url)) {
+        const bucket = await getEncryptedPhotosBucket();
+        await bucket.delete(new ObjectId(media.source_url));
+      }
+    } catch (err) {
+      console.error(
+        `media.delete: failed to remove encrypted photo bytes ${media.source_url}:`,
+        err
+      );
+      // Continue — orphaned bytes are a soft failure, not a blocking one
+    }
   }
 
   // Hard-delete the media row. SatsRail keeps the transaction history; the

@@ -45,7 +45,7 @@ describe("Media model", () => {
 
   it("accepts all valid media types", async () => {
     const channel = await createChannel();
-    const types = ["video", "audio", "article", "photo_set", "podcast"] as const;
+    const types = ["video", "audio", "article", "photo", "podcast"] as const;
     for (const type of types) {
       const media = await createMedia(channel._id.toString(), {
         media_type: type,

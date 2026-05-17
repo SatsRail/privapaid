@@ -247,12 +247,12 @@ describe("MediaCard", () => {
     expect(screen.getByText("ARTICLE")).toBeInTheDocument();
   });
 
-  it("renders photo_set type badge", () => {
-    const photoMedia = { ...defaultMedia, media_type: "photo_set" };
+  it("renders photo type badge", () => {
+    const photoMedia = { ...defaultMedia, media_type: "photo" };
     render(
       <MediaCard channelSlug="test-channel" media={photoMedia} />
     );
-    expect(screen.getByText("PHOTOS")).toBeInTheDocument();
+    expect(screen.getByText("PHOTO")).toBeInTheDocument();
   });
 
   it("renders podcast type badge", () => {

@@ -409,6 +409,18 @@ export async function createNewMedia(
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
+  // Photo media is unsupported in JSON import flow: photos require uploading
+  // raw bytes through /api/admin/photos (which generates the per-photo DEK
+  // and writes ciphertext to GridFS). A URL-based import has no way to
+  // produce the encrypted GridFS file or the DEK envelope, so the imported
+  // row would be unviewable. Throwing here surfaces as an entry in
+  // results.errors (route catches via try/catch).
+  if (mData.media_type === "photo") {
+    throw new Error(
+      "Photo media cannot be imported from JSON — upload via /api/admin/photos to encrypt the bytes."
+    );
+  }
+
   const ref = await getNextRef("media");
 
   await onStatus?.("Saving media record...");

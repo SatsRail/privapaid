@@ -33,16 +33,14 @@ describe("MediaHeader", () => {
   });
 
   it("shows no price pill when there are no products", () => {
-    const { container } = render(<MediaHeader {...baseProps} />);
-    const spans = container.querySelectorAll(".rounded-full");
-    expect(spans.length).toBe(0);
+    render(<MediaHeader {...baseProps} />);
+    expect(screen.queryByText(/^\$/)).not.toBeInTheDocument();
   });
 
   it("shows no price pill when products lack prices", () => {
     const products = [makeProduct({ priceCents: undefined })];
-    const { container } = render(<MediaHeader {...baseProps} products={products} />);
-    const spans = container.querySelectorAll(".rounded-full");
-    expect(spans.length).toBe(0);
+    render(<MediaHeader {...baseProps} products={products} />);
+    expect(screen.queryByText(/^\$/)).not.toBeInTheDocument();
   });
 
   it("shows formatted price for a single product", () => {
@@ -98,5 +96,37 @@ describe("MediaHeader", () => {
     const products = [makeProduct({ accessDurationSeconds: 86400 })];
     render(<MediaHeader {...baseProps} products={products} remainingSeconds={null} />);
     expect(screen.queryByText(/viewer\.media\.access_label/)).not.toBeInTheDocument();
+  });
+
+  describe("Lifetime tag", () => {
+    it("renders the Lifetime tag when a product has no accessDurationSeconds", () => {
+      const products = [makeProduct({ priceCents: 100 })];
+      render(<MediaHeader {...baseProps} products={products} />);
+      expect(screen.getByTestId("lifetime-tag")).toBeInTheDocument();
+      expect(screen.getByTestId("lifetime-tag")).toHaveTextContent("viewer.payment.lifetime");
+    });
+
+    it("does not render the Lifetime tag when there are no products", () => {
+      render(<MediaHeader {...baseProps} />);
+      expect(screen.queryByTestId("lifetime-tag")).not.toBeInTheDocument();
+    });
+
+    it("does not render the Lifetime tag when any product is time-gated", () => {
+      const products = [
+        makeProduct({ productId: "p1", accessDurationSeconds: 86400 }),
+        makeProduct({ productId: "p2" }), // lifetime
+      ];
+      render(<MediaHeader {...baseProps} products={products} remainingSeconds={3600} />);
+      expect(screen.queryByTestId("lifetime-tag")).not.toBeInTheDocument();
+      // Timer takes precedence
+      expect(screen.getByText(/viewer\.media\.access_label/)).toBeInTheDocument();
+    });
+
+    it("renders Lifetime tag alongside the price pill for a lifetime product", () => {
+      const products = [makeProduct({ priceCents: 500, currency: "USD" })];
+      render(<MediaHeader {...baseProps} products={products} />);
+      expect(screen.getByTestId("lifetime-tag")).toBeInTheDocument();
+      expect(screen.getByText("$5")).toBeInTheDocument();
+    });
   });
 });

@@ -24,21 +24,15 @@
  *    `URL.createObjectURL()` which returns a URL that must be revoked on
  *    cleanup. This lifecycle is simpler with imperative DOM than React refs.
  *
- * The PhotoGallery branch (photo_set) safely uses React because photo set data
- * is a structured JSON manifest containing only image URLs — no arbitrary HTML.
- * URLs rendered as `<img src>` attributes are sandboxed by the browser.
- *
  * The `:host` styles in the shadow DOM style block are inline because external
  * stylesheets (including Tailwind) cannot penetrate a closed shadow root.
  */
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { detectMimeType, bytesToUrl } from "@/lib/client-crypto";
 import * as Sentry from "@sentry/nextjs";
-import PhotoGallery from "@/components/PhotoGallery";
-import type { PhotoItem } from "@/components/PhotoGallery";
 
 // Article-only markdown instance. Custom link renderer adds target="_blank" and
 // rel="noopener noreferrer" so external links don't navigate the host page away
@@ -59,25 +53,6 @@ const articleMarkdown = new Marked({
 interface ContentRendererProps {
   decryptedBytes: Uint8Array;
   mediaType: string;
-}
-
-/** Try to parse decrypted bytes as a photo_set JSON manifest */
-function parsePhotoSetManifest(bytes: Uint8Array): PhotoItem[] | null {
-  try {
-    const text = new TextDecoder().decode(bytes);
-    const parsed = JSON.parse(text);
-    if (parsed?.type === "photo_set" && Array.isArray(parsed.images)) {
-      return parsed.images
-        .filter((img: unknown) => typeof img === "object" && img !== null && typeof (img as { url?: unknown }).url === "string")
-        .map((img: { url: string; caption?: string }) => ({
-          url: img.url,
-          caption: img.caption,
-        }));
-    }
-  } catch {
-    // Not JSON or not a photo_set manifest
-  }
-  return null;
 }
 
 /** Check if a URL points to a known embeddable video host or streaming service */
@@ -214,17 +189,6 @@ export default function ContentRenderer({
   decryptedBytes,
   mediaType,
 }: ContentRendererProps) {
-  // Check for photo_set JSON manifest (rendered via React, not DOM manipulation)
-  const photoSetImages = useMemo(
-    () => (mediaType === "photo_set" ? parsePhotoSetManifest(decryptedBytes) : null),
-    [decryptedBytes, mediaType]
-  );
-
-  // If this is a photo_set with a valid manifest, render the gallery via React
-  if (photoSetImages && photoSetImages.length > 0) {
-    return <PhotoGallery images={photoSetImages} />;
-  }
-
   return <ContentRendererDOM decryptedBytes={decryptedBytes} mediaType={mediaType} />;
 }
 
@@ -291,8 +255,8 @@ function ContentRendererDOM({
           });
         };
         container.appendChild(audio);
-      } else if (mediaType === "photo_set" || mediaType === "image") {
-        // Single image URL for photo_set or image media types
+      } else if (mediaType === "image") {
+        // Single image URL (e.g. legacy URL-based image media)
         const img = document.createElement("img");
         img.src = url;
         img.alt = "Content";

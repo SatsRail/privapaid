@@ -566,43 +566,38 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(media!.thumbnail_url).toBe("https://picsum.photos/seed/article/640/360");
     });
 
-    it("imports photo_set with thumbnail and preview_image_urls", async () => {
+    it("rejects photo media in JSON imports (must use /api/admin/photos)", async () => {
       mockAuth.mockResolvedValue(authSession);
-      const channel = await createChannel({ slug: "mt-photos", name: "Photos Channel" });
-
-      const previewUrls = [
-        "https://picsum.photos/seed/g1/1920/1080",
-        "https://picsum.photos/seed/g2/1920/1080",
-        "https://picsum.photos/seed/g3/1920/1080",
-        "https://picsum.photos/seed/g4/1920/1080",
-        "https://picsum.photos/seed/g5/1920/1080",
-        "https://picsum.photos/seed/g6/1920/1080",
-      ];
+      const channel = await createChannel({ slug: "mt-photo-reject", name: "Photos Channel" });
 
       const [req, ctx] = channelImportRequest(String(channel._id), {
         version: "1.0",
         media: [{
           ref: 1,
-          name: "Test Gallery",
+          name: "Photo Attempt",
           source_url: "https://picsum.photos/seed/main/1920/1080",
-          media_type: "photo_set",
-          thumbnail_url: "https://picsum.photos/seed/gallery/640/360",
-          preview_image_urls: previewUrls,
+          media_type: "photo",
+          thumbnail_url: "https://picsum.photos/seed/photo/640/360",
           position: 1,
         }],
       });
       const res = await POST(req, ctx);
       const body = await readSSEResult(res);
 
-      expect(body.success).toBe(true);
+      // The import completes successfully but the photo row is NOT created;
+      // the entity is recorded as an error in the per-entity results.
+      const mediaR = body.results.media as { created: number; errors?: Array<{ error: string }> };
+      expect(mediaR.created).toBe(0);
+      expect(mediaR.errors?.length ?? 0).toBeGreaterThan(0);
+      const errorTexts = (mediaR.errors ?? []).map((e) => e.error).join(" ");
+      expect(errorTexts).toMatch(/photo/i);
+      expect(errorTexts).toMatch(/admin\/photos|encrypt/i);
+
       const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
-      expect(media!.media_type).toBe("photo_set");
-      expect(media!.thumbnail_url).toBe("https://picsum.photos/seed/gallery/640/360");
-      expect(media!.preview_image_urls).toHaveLength(6);
-      expect(media!.preview_image_urls).toEqual(previewUrls);
+      expect(media).toBeNull();
     });
 
-    it("imports all five media types in a single batch", async () => {
+    it("imports the four supported media types in a single batch (skipping photo)", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-all", name: "All Types Channel" });
 
@@ -613,7 +608,6 @@ describe("POST /api/admin/channels/[id]/import", () => {
           { ref: 2, name: "Audio Item", source_url: "https://example.com/a.mp3", media_type: "audio", thumbnail_url: "https://example.com/a.jpg" },
           { ref: 3, name: "Podcast Item", source_url: "https://example.com/p.mp3", media_type: "podcast", thumbnail_url: "https://example.com/p.jpg" },
           { ref: 4, name: "Article Item", source_url: "https://example.com/article.pdf", media_type: "article", thumbnail_url: "https://example.com/ar.jpg" },
-          { ref: 5, name: "Photo Set Item", source_url: "https://example.com/main.jpg", media_type: "photo_set", thumbnail_url: "https://example.com/ps.jpg", preview_image_urls: ["https://example.com/1.jpg", "https://example.com/2.jpg"] },
         ],
       });
       const res = await POST(req, ctx);
@@ -621,13 +615,12 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
       expect(body.success).toBe(true);
       const mediaR = body.results.media as { created: number };
-      expect(mediaR.created).toBe(5);
+      expect(mediaR.created).toBe(4);
 
       const allMedia = await Media.find({ channel_id: channel._id }).sort({ ref: 1 }).lean();
-      expect(allMedia).toHaveLength(5);
-      expect(allMedia.map((m) => m.media_type)).toEqual(["video", "audio", "podcast", "article", "photo_set"]);
+      expect(allMedia).toHaveLength(4);
+      expect(allMedia.map((m) => m.media_type)).toEqual(["video", "audio", "podcast", "article"]);
       expect(allMedia.every((m) => m.thumbnail_url)).toBe(true);
-      expect(allMedia[4].preview_image_urls).toHaveLength(2);
     });
 
     it("updates thumbnail_url on re-import", async () => {

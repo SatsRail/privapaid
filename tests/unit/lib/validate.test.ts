@@ -183,6 +183,41 @@ describe("schemas", () => {
     });
   });
 
+  describe("mediaCreate media_type enum", () => {
+    const schema = schemas.mediaCreate;
+
+    it("accepts the new 'photo' media_type", () => {
+      const result = schema.safeParse({
+        channel_id: "abc",
+        name: "X",
+        source_url: "gridfs:abc",
+        media_type: "photo",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects the removed 'photo_set' media_type", () => {
+      const result = schema.safeParse({
+        channel_id: "abc",
+        name: "X",
+        source_url: "https://example.com",
+        media_type: "photo_set",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts an optional dek string (for photo envelope encryption)", () => {
+      const result = schema.safeParse({
+        channel_id: "abc",
+        name: "X",
+        source_url: "gridfs:abc",
+        media_type: "photo",
+        dek: "base64url-key-here",
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe("mediaUpdate", () => {
     const schema = schemas.mediaUpdate;
 
@@ -704,7 +739,7 @@ describe("schemas", () => {
         allMedia.map((m: { media_type: string }) => m.media_type)
       );
       expect(mediaTypes).toEqual(
-        new Set(["video", "audio", "article", "photo_set", "podcast"])
+        new Set(["video", "audio", "article", "photo", "podcast"])
       );
 
       expect(

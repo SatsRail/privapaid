@@ -272,6 +272,93 @@ describe("SatsRailClient", () => {
     });
   });
 
+  describe("Lifetime normalization", () => {
+    function jsonOk(value: unknown) {
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(value),
+      };
+    }
+
+    it("createProduct strips access_duration_seconds when it is 0 (lifetime)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_lifetime" }));
+
+      await satsrail.createProduct(secretKey, {
+        name: "Lifetime Article",
+        price_cents: 100,
+        currency: "USD",
+        access_duration_seconds: 0,
+        product_type_id: "pt_1",
+      });
+
+      const body = JSON.parse(
+        (mockFetch.mock.calls[0][1] as { body: string }).body
+      );
+      expect(body.product).not.toHaveProperty("access_duration_seconds");
+      expect(body.product.name).toBe("Lifetime Article");
+      expect(body.product.product_type_id).toBe("pt_1");
+    });
+
+    it("createProduct strips access_duration_seconds when null", async () => {
+      mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_2" }));
+
+      await satsrail.createProduct(secretKey, {
+        name: "X",
+        price_cents: 100,
+        access_duration_seconds: null as unknown as number,
+      });
+
+      const body = JSON.parse(
+        (mockFetch.mock.calls[0][1] as { body: string }).body
+      );
+      expect(body.product).not.toHaveProperty("access_duration_seconds");
+    });
+
+    it("createProduct preserves positive access_duration_seconds", async () => {
+      mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_3" }));
+
+      await satsrail.createProduct(secretKey, {
+        name: "Time-Gated",
+        price_cents: 100,
+        access_duration_seconds: 3600,
+      });
+
+      const body = JSON.parse(
+        (mockFetch.mock.calls[0][1] as { body: string }).body
+      );
+      expect(body.product.access_duration_seconds).toBe(3600);
+    });
+
+    it("updateProduct strips access_duration_seconds when it is 0", async () => {
+      mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_1" }));
+
+      await satsrail.updateProduct(secretKey, "prod_1", {
+        name: "Now lifetime",
+        access_duration_seconds: 0,
+      });
+
+      const body = JSON.parse(
+        (mockFetch.mock.calls[0][1] as { body: string }).body
+      );
+      expect(body.product).not.toHaveProperty("access_duration_seconds");
+      expect(body.product.name).toBe("Now lifetime");
+    });
+
+    it("updateProduct preserves positive access_duration_seconds", async () => {
+      mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_1" }));
+
+      await satsrail.updateProduct(secretKey, "prod_1", {
+        access_duration_seconds: 86400,
+      });
+
+      const body = JSON.parse(
+        (mockFetch.mock.calls[0][1] as { body: string }).body
+      );
+      expect(body.product.access_duration_seconds).toBe(86400);
+    });
+  });
+
   describe("deleteProduct", () => {
     it("deletes a product", async () => {
       mockFetch.mockResolvedValueOnce({

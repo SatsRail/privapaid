@@ -42,7 +42,7 @@ const defaultChannels = [
 
 const defaultMediaItems = [
   { _id: "m1", name: "Song 1", description: "A song", media_type: "audio", thumbnail_url: "/t1.jpg", comments_count: 0, channel_id: "ch1" },
-  { _id: "m2", name: "Painting 1", description: "A painting", media_type: "photo_set", thumbnail_url: "/t2.jpg", comments_count: 3, channel_id: "ch2" },
+  { _id: "m2", name: "Painting 1", description: "A painting", media_type: "photo", thumbnail_url: "/t2.jpg", comments_count: 3, channel_id: "ch2" },
 ];
 
 describe("HomeContent", () => {

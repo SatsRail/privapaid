@@ -61,11 +61,24 @@ export async function POST(req: NextRequest) {
 
   await connectDB();
 
-  const { channel_id, name, source_url, media_type } = result;
+  const { channel_id, name, source_url, media_type, dek } = result;
 
   const channel = await Channel.findById(channel_id);
   if (!channel) {
     return NextResponse.json({ error: "Channel not found" }, { status: 404 });
+  }
+
+  // For photo media added to a channel with existing ChannelProducts, we MUST
+  // have the DEK in hand to wrap it under each product key — there's no other
+  // way to recover the per-photo DEK on the server.
+  if (media_type === "photo") {
+    const existingChannelProducts = await ChannelProduct.countDocuments({ channel_id });
+    if (existingChannelProducts > 0 && !dek) {
+      return NextResponse.json(
+        { error: "dek is required for photo media when the channel already has products" },
+        { status: 422 }
+      );
+    }
   }
 
   // Auto-set position
@@ -114,7 +127,10 @@ export async function POST(req: NextRequest) {
             sk,
             cp.satsrail_product_id
           );
-          const encrypted_source_url = encryptSourceUrl(source_url, key, cp.satsrail_product_id);
+          // For photo media (envelope encryption), wrap the per-photo DEK
+          // rather than the source_url (which is just a GridFS pointer).
+          const plaintext = media_type === "photo" ? (dek as string) : source_url;
+          const encrypted_source_url = encryptSourceUrl(plaintext, key, cp.satsrail_product_id);
           await ChannelProduct.updateOne(
             { _id: cp._id },
             {

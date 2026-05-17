@@ -125,10 +125,10 @@ export function buildMediaSchema(
           name: channel.name,
         },
       };
-    case "photo_set":
+    case "photo":
       return {
         "@context": "https://schema.org",
-        "@type": "ImageGallery",
+        "@type": "ImageObject",
         ...shared,
         ...(imageUrl && { image: imageUrl }),
       };

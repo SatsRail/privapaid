@@ -41,6 +41,14 @@ export default function MediaHeader({
   })();
 
   const hasTimeGated = products.some((p) => p.accessDurationSeconds != null);
+  // A product with no `accessDurationSeconds` (null/undefined) is lifetime-access.
+  // Show the Lifetime tag when at least one product offers lifetime AND no
+  // product imposes a time gate — otherwise the running clock from the
+  // time-gated product takes precedence.
+  const hasLifetime =
+    products.length > 0 &&
+    !hasTimeGated &&
+    products.some((p) => p.accessDurationSeconds == null);
 
   return (
     <div className="mb-6">
@@ -48,6 +56,26 @@ export default function MediaHeader({
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {hasTimeGated && remainingSeconds != null && (
           <AccessTimerPill serverSeconds={remainingSeconds} locale={locale} />
+        )}
+        {hasLifetime && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-3 py-1 text-sm font-medium text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200"
+            data-testid="lifetime-tag"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.27 5.79 22l2.39-8.15L2 9.36h7.61z" />
+            </svg>
+            {t(locale, "viewer.payment.lifetime")}
+          </span>
         )}
         {pricePill}
       </div>

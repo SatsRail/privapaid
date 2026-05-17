@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import Channel from "@/models/Channel";
 import Media from "@/models/Media";
+import { Types } from "mongoose";
 import ChannelProduct from "@/models/ChannelProduct";
+import MediaProduct from "@/models/MediaProduct";
 import { getMerchantKey } from "@/lib/merchant-key";
-import { encryptSourceUrl } from "@/lib/content-encryption";
+import { encryptSourceUrl, decryptSourceUrl } from "@/lib/content-encryption";
 import { satsrail } from "@/lib/satsrail";
 
 /**
@@ -82,15 +84,51 @@ export async function POST(
       product.id
     );
 
-    // 3. Encrypt all media source URLs
+    // 3. Encrypt the per-media payload under the new channel product key.
+    //    - Non-photo media: encrypt the plaintext source_url.
+    //    - Photo media (envelope encryption): recover the per-photo DEK by
+    //      decrypting an existing MediaProduct.encrypted_source_url with the
+    //      *other* product's key, then re-wrap the DEK under THIS product's
+    //      key. Photo bytes never need to be touched.
     const mediaItems = await Media.find({ channel_id: channelId })
-      .select("_id source_url")
+      .select("_id source_url media_type")
       .lean();
 
-    const encrypted_media = mediaItems.map((m) => ({
-      media_id: m._id,
-      encrypted_source_url: encryptSourceUrl(m.source_url, key, product.id),
-    }));
+    const encrypted_media: Array<{ media_id: Types.ObjectId; encrypted_source_url: string }> = [];
+    for (const m of mediaItems) {
+      const mediaId = m._id as Types.ObjectId;
+      if (m.media_type === "photo") {
+        // Find any existing MediaProduct for this photo so we can recover the DEK.
+        const existing = await MediaProduct.findOne({ media_id: mediaId });
+        if (!existing) {
+          return NextResponse.json(
+            {
+              error: `Cannot include photo media ${mediaId} in channel product: no existing product to recover DEK from. Create a per-media product for this photo first.`,
+            },
+            { status: 422 }
+          );
+        }
+        // Fetch the OTHER product's key so we can decrypt its encrypted DEK.
+        const { key: otherKey } = await satsrail.getProductKey(
+          skLive,
+          existing.satsrail_product_id
+        );
+        const dek = decryptSourceUrl(
+          existing.encrypted_source_url,
+          otherKey,
+          existing.satsrail_product_id
+        );
+        encrypted_media.push({
+          media_id: mediaId,
+          encrypted_source_url: encryptSourceUrl(dek, key, product.id),
+        });
+        continue;
+      }
+      encrypted_media.push({
+        media_id: mediaId,
+        encrypted_source_url: encryptSourceUrl(m.source_url, key, product.id),
+      });
+    }
 
     // 4. Store the ChannelProduct with cached metadata
     const channelProduct = await ChannelProduct.create({

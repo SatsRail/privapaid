@@ -42,6 +42,7 @@ export default function MediaLayout({
         storedProductIds={storedProductIds}
         thumbnailUrl={thumbSrc}
         mediaType={media.media_type}
+        photoGridFsId={media.photo_gridfs_id}
         merchantLogo={instanceConfig.theme.logo}
         merchantName={instanceConfig.name}
         onRemainingSeconds={setRemainingSeconds}

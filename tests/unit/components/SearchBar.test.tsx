@@ -353,7 +353,7 @@ describe("SearchBar", () => {
       { type: "media", id: "1", name: "Vid", slug: "v", channelSlug: "c", mediaType: "video" },
       { type: "media", id: "2", name: "Aud", slug: "a", channelSlug: "c", mediaType: "audio" },
       { type: "media", id: "3", name: "Art", slug: "r", channelSlug: "c", mediaType: "article" },
-      { type: "media", id: "4", name: "Pho", slug: "p", channelSlug: "c", mediaType: "photo_set" },
+      { type: "media", id: "4", name: "Pho", slug: "p", channelSlug: "c", mediaType: "photo" },
       { type: "media", id: "5", name: "Pod", slug: "d", channelSlug: "c", mediaType: "podcast" },
     ];
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

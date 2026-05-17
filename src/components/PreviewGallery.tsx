@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 interface PreviewGalleryProps {
   images: string[]; // resolved URLs (GridFS or direct)
   locked?: boolean; // when true, disable lightbox (viewer hasn't paid)
-  compact?: boolean; // smaller tiles, 5 per row (photo_set teasers)
+  compact?: boolean; // smaller tiles, 5 per row (photo teasers)
 }
 
 export default function PreviewGallery({ images, locked, compact }: PreviewGalleryProps) {
@@ -72,7 +72,7 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
 
   return (
     <>
-      {/* Inline viewer for compact mode (photo_set) */}
+      {/* Inline viewer for compact mode (photo) */}
       {compact && selectedIndex !== null && (
         <div className="relative mb-4 overflow-hidden rounded-lg border border-[var(--theme-border)] bg-black">
           {/* Navigation arrows */}

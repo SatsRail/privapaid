@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model, Types } from "mongoose";
 
-export type MediaType = "video" | "audio" | "article" | "photo_set" | "podcast";
+export type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
 
 export interface IMedia extends Document {
   ref: number;
@@ -50,7 +50,7 @@ const MediaSchema = new Schema<IMedia>(
     media_type: {
       type: String,
       required: true,
-      enum: ["video", "audio", "article", "photo_set", "podcast"],
+      enum: ["video", "audio", "article", "photo", "podcast"],
       default: "video",
     },
     thumbnail_url: {

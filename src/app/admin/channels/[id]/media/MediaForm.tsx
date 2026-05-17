@@ -272,23 +272,17 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
     initialData?.preview_image_ids || []
   );
 
-  // Photo set state — parse existing manifest if editing a photo_set
-  const [photoUrls, setPhotoUrls] = useState<{ url: string; caption: string }[]>(() => {
-    if (initialData?.media_type === "photo_set" && initialData.source_url) {
-      try {
-        const parsed = JSON.parse(initialData.source_url);
-        if (parsed?.type === "photo_set" && Array.isArray(parsed.images)) {
-          return parsed.images.map((img: { url: string; caption?: string }) => ({
-            url: img.url || "",
-            caption: img.caption || "",
-          }));
-        }
-      } catch { /* not a manifest, treat as raw URL */ }
-    }
-    return [{ url: "", caption: "" }];
-  });
-  const [bulkPasteMode, setBulkPasteMode] = useState(false);
-  const [bulkText, setBulkText] = useState("");
+  // Photo upload state: holds the GridFS ID + DEK returned by /api/admin/photos.
+  // For an existing photo media item being edited, source_url is the GridFS ID;
+  // the DEK is unrecoverable from here (lives only in MediaProduct.encrypted_source_url),
+  // so editing means re-uploading.
+  const [photoDek, setPhotoDek] = useState<string | null>(null);
+  const [photoGridFsId, setPhotoGridFsId] = useState<string | null>(
+    initialData?.media_type === "photo" ? initialData.source_url : null
+  );
+  const [photoMime, setPhotoMime] = useState<string | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -324,6 +318,9 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
           price_cents: Math.round(parseFloat(price) * 100),
           access_duration_seconds: accessDuration,
           product_type_id: effectiveProductTypeId,
+          // Envelope encryption: the server wraps the DEK under the product key.
+          // Only present for photo media; ignored otherwise.
+          ...(mediaType === "photo" && photoDek ? { dek: photoDek } : {}),
         }),
       }
     );
@@ -341,22 +338,24 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
     setError("");
     setProductError("");
 
-    // For photo_set, serialize image URLs into a JSON manifest
+    // For photo media, source_url is the GridFS ID returned from /api/admin/photos.
     let effectiveSourceUrl = sourceUrl;
-    if (mediaType === "photo_set") {
-      const validImages = photoUrls.filter((p) => p.url.trim());
-      if (validImages.length === 0) {
-        setError("Add at least one photo URL");
+    if (mediaType === "photo") {
+      if (!photoGridFsId) {
+        setError("Upload a photo before saving");
         setLoading(false);
         return;
       }
-      effectiveSourceUrl = JSON.stringify({
-        type: "photo_set",
-        images: validImages.map((p) => ({
-          url: p.url.trim(),
-          ...(p.caption.trim() && { caption: p.caption.trim() }),
-        })),
-      });
+      // Creating a new photo media requires also creating a product so the DEK
+      // gets wrapped under a product key. Without that, the photo is unrecoverable.
+      if (!isEditing && (!createProduct || !photoDek || !price)) {
+        setError(
+          "New photo media must also create a SatsRail product (the DEK is only available right now)."
+        );
+        setLoading(false);
+        return;
+      }
+      effectiveSourceUrl = photoGridFsId;
     }
 
     const payload = {
@@ -368,6 +367,10 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
       thumbnail_url: thumbnailUrl,
       thumbnail_id: thumbnailId,
       preview_image_ids: previewImageIds,
+      // For photo media added to a channel with existing channel products, the
+      // server needs the DEK to wrap under each channel product key. For a brand
+      // new photo (no existing products), the server skips this branch.
+      ...(mediaType === "photo" && photoDek ? { dek: photoDek } : {}),
     };
 
     const url = isEditing
@@ -488,7 +491,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
             { value: "video", label: "Video" },
             { value: "audio", label: "Audio" },
             { value: "article", label: "Article" },
-            { value: "photo_set", label: "Photo Set" },
+            { value: "photo", label: "Photo" },
             { value: "podcast", label: "Podcast" },
           ]}
         />
@@ -508,99 +511,20 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
             className="block w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-2 text-sm text-[var(--theme-text)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
           />
         </div>
-        {mediaType === "photo_set" ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-[var(--theme-text)]">
-                Photo URLs ({photoUrls.filter((p) => p.url.trim()).length} / 50)
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  if (bulkPasteMode) {
-                    // Parse bulk text into URL list
-                    const lines = bulkText.split("\n").filter((l) => l.trim());
-                    if (lines.length > 0) {
-                      setPhotoUrls(lines.slice(0, 50).map((url) => ({ url: url.trim(), caption: "" })));
-                    }
-                    setBulkPasteMode(false);
-                  } else {
-                    // Convert current URLs to bulk text
-                    setBulkText(photoUrls.filter((p) => p.url.trim()).map((p) => p.url).join("\n"));
-                    setBulkPasteMode(true);
-                  }
-                }}
-                className="text-xs text-[var(--theme-primary)] hover:underline"
-              >
-                {bulkPasteMode ? "Switch to list" : "Bulk paste"}
-              </button>
-            </div>
-
-            {bulkPasteMode ? (
-              <div className="space-y-1">
-                <textarea
-                  value={bulkText}
-                  onChange={(e) => setBulkText(e.target.value)}
-                  rows={10}
-                  placeholder={"Paste one URL per line (max 50)\nhttps://example.com/photo1.jpg\nhttps://example.com/photo2.jpg"}
-                  className="block w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-2 font-mono text-xs text-[var(--theme-text)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
-                />
-                <p className="text-xs text-[var(--theme-text-secondary)]">
-                  {bulkText.split("\n").filter((l) => l.trim()).length} URLs detected
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {photoUrls.map((photo, i) => (
-                  <div key={i} className="flex gap-2 items-start">
-                    <div className="flex-1 space-y-1">
-                      <input
-                        value={photo.url}
-                        onChange={(e) => {
-                          const updated = [...photoUrls];
-                          updated[i] = { ...updated[i], url: e.target.value };
-                          setPhotoUrls(updated);
-                        }}
-                        placeholder="https://example.com/photo.jpg"
-                        className="block w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-1.5 text-sm text-[var(--theme-text)] focus:outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
-                      />
-                      <input
-                        value={photo.caption}
-                        onChange={(e) => {
-                          const updated = [...photoUrls];
-                          updated[i] = { ...updated[i], caption: e.target.value };
-                          setPhotoUrls(updated);
-                        }}
-                        placeholder="Caption (optional)"
-                        className="block w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-1 text-xs text-[var(--theme-text-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
-                      />
-                    </div>
-                    {photoUrls.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setPhotoUrls(photoUrls.filter((_, j) => j !== i))}
-                        className="mt-1.5 text-xs text-red-400 hover:text-red-300"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {photoUrls.length < 50 && (
-                  <button
-                    type="button"
-                    onClick={() => setPhotoUrls([...photoUrls, { url: "", caption: "" }])}
-                    className="text-xs text-[var(--theme-primary)] hover:underline"
-                  >
-                    + Add photo
-                  </button>
-                )}
-              </div>
-            )}
-            <p className="text-xs text-[var(--theme-text-secondary)]">
-              URLs are encrypted and never exposed to viewers without payment.
-            </p>
-          </div>
+        {mediaType === "photo" ? (
+          <PhotoUploadField
+            gridFsId={photoGridFsId}
+            previewUrl={photoPreviewUrl}
+            mime={photoMime}
+            isEditing={isEditing}
+            onUploaded={({ gridFsId, dek, mime, previewUrl }) => {
+              setPhotoGridFsId(gridFsId);
+              setPhotoDek(dek);
+              setPhotoMime(mime);
+              setPhotoPreviewUrl(previewUrl);
+              if (!isEditing && !createProduct) setCreateProduct(true);
+            }}
+          />
         ) : mediaType === "article" ? (
           <ArticleContentField
             value={sourceUrl}
@@ -768,6 +692,135 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
         </form>
       </Modal>
     </>
+  );
+}
+
+export const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5MB — matches /api/images cap
+
+interface PhotoUploadFieldProps {
+  gridFsId: string | null;
+  previewUrl: string | null;
+  mime: string | null;
+  isEditing: boolean;
+  onUploaded: (payload: {
+    gridFsId: string;
+    dek: string;
+    mime: string;
+    previewUrl: string;
+  }) => void;
+}
+
+export function PhotoUploadField({
+  gridFsId,
+  previewUrl,
+  isEditing,
+  onUploaded,
+}: PhotoUploadFieldProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+      setError("Photo must be JPEG, PNG, WebP, or GIF");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      setError(`Photo too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 5MB.`);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/photos", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Upload failed");
+        return;
+      }
+      // Show a local preview from the just-selected file (the GridFS bytes are
+      // ciphertext, so we can't display them directly).
+      const localPreview = URL.createObjectURL(file);
+      onUploaded({
+        gridFsId: data.gridFsId,
+        dek: data.dek,
+        mime: data.mime,
+        previewUrl: localPreview,
+      });
+    } catch (err) {
+      console.error("Photo upload failed", err);
+      setError("Upload failed");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-[var(--theme-text)]">
+        Photo
+      </label>
+
+      {previewUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={previewUrl}
+          alt="Photo preview"
+          className="max-h-80 rounded-md border border-[var(--theme-border)]"
+        />
+      ) : gridFsId ? (
+        <div className="flex h-40 items-center justify-center rounded-md border border-dashed border-[var(--theme-border)] text-xs text-[var(--theme-text-secondary)]">
+          Photo is stored encrypted. Re-upload to replace.
+        </div>
+      ) : (
+        <div className="flex h-40 items-center justify-center rounded-md border border-dashed border-[var(--theme-border)] text-xs text-[var(--theme-text-secondary)]">
+          No photo uploaded yet
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        onChange={handleFile}
+        className="hidden"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-1.5 text-sm text-[var(--theme-text)] hover:bg-[var(--theme-bg-secondary)] disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : gridFsId ? "Replace photo" : "Upload photo"}
+        </button>
+        <span className="text-xs text-[var(--theme-text-secondary)]">
+          JPEG / PNG / WebP / GIF — max 5MB
+        </span>
+      </div>
+
+      {error && <p className="text-xs text-red-500">{error}</p>}
+
+      <p className="text-xs text-[var(--theme-text-secondary)]">
+        Bytes are encrypted at rest. The decryption key is wrapped under each
+        SatsRail product key and never persisted on the server.
+        {!isEditing && (
+          <>
+            {" "}
+            You must also create a product before saving — the key is lost
+            otherwise.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 

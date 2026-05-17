@@ -104,6 +104,47 @@ export async function decryptBlob(
   return new Uint8Array(decrypted);
 }
 
+/**
+ * Decrypt an AES-256-GCM blob with a raw 32-byte key, no AAD.
+ *
+ * Used for envelope-encrypted photo content: the per-photo DEK is unwrapped
+ * via {@link decryptBlob} (which uses productId AAD), then this helper applies
+ * the DEK to the GridFS ciphertext. Photo bytes aren't bound to a product at
+ * the byte layer — that binding lives in the outer DEK envelope.
+ *
+ * Blob layout matches server-side encryptBytes(): IV[12] || ciphertext || authTag[16]
+ */
+export async function decryptBytesWithKey(
+  blob: Uint8Array,
+  keyBytes: Uint8Array
+): Promise<Uint8Array> {
+  if (keyBytes.length !== 32) {
+    throw new Error(`Key must be 32 bytes, got ${keyBytes.length}`);
+  }
+  if (blob.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+    throw new Error("Blob too short");
+  }
+
+  const iv = blob.slice(0, IV_LENGTH);
+  const ciphertextWithTag = blob.slice(IV_LENGTH);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyBytes.buffer as ArrayBuffer,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"]
+  );
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    ciphertextWithTag
+  );
+
+  return new Uint8Array(decrypted);
+}
+
 export function detectMimeType(bytes: Uint8Array): string {
   // Check magic bytes
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {

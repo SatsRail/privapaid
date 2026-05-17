@@ -25,13 +25,19 @@ vi.mock("@/lib/auth-helpers", () => ({
 vi.mock("@/lib/satsrail", () => ({ satsrail: mockSatsrailClient }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: mockGetMerchantKey }));
 
+const { mockEncryptSourceUrl, mockDecryptSourceUrl } = vi.hoisted(() => ({
+  mockEncryptSourceUrl: vi.fn().mockReturnValue("encrypted_blob_123"),
+  mockDecryptSourceUrl: vi.fn().mockReturnValue("dek-recovered-base64url"),
+}));
 vi.mock("@/lib/content-encryption", () => ({
-  encryptSourceUrl: vi.fn().mockReturnValue("encrypted_blob_123"),
+  encryptSourceUrl: mockEncryptSourceUrl,
+  decryptSourceUrl: mockDecryptSourceUrl,
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/admin/channels/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
+import MediaProduct from "@/models/MediaProduct";
 
 function buildRequest(
   channelId: string,
@@ -181,5 +187,159 @@ describe("Admin Channel Create Product", () => {
 
     expect(res.status).toBe(500);
     expect(body.error).toBe("Failed to create channel product");
+  });
+
+  // -------------------------------------------------------
+  // Photo media — envelope encryption: DEK recovery + re-wrap
+  // -------------------------------------------------------
+  describe("photo media in channel product (envelope re-wrap)", () => {
+    it("returns 422 when a photo has no existing MediaProduct to recover the DEK from", async () => {
+      const channel = await createChannel({
+        slug: "ch-photo-no-mp",
+        satsrail_product_type_id: "pt_1",
+        ref: 999,
+      });
+      await createMedia(channel._id.toString(), {
+        media_type: "photo",
+        source_url: "gridfs:photo-orphan",
+      });
+
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_channel",
+        name: "Channel",
+        price_cents: 1000,
+        slug: "channel",
+        access_duration_seconds: null,
+        status: "active",
+      });
+      mockSatsrailClient.getProductKey.mockResolvedValue({
+        key: "channel-product-key",
+        key_fingerprint: "fp_ch",
+      });
+
+      const [req, ctx] = buildRequest(channel._id.toString(), {
+        name: "Channel",
+        price_cents: 1000,
+      });
+      const res = await POST(req, ctx);
+      const body = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(body.error).toContain("no existing product to recover DEK from");
+      // No decrypt or rewrap should have been attempted
+      expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
+    });
+
+    it("recovers the DEK from an existing MediaProduct and re-wraps under the new product key", async () => {
+      const channel = await createChannel({
+        slug: "ch-photo-rewrap",
+        satsrail_product_type_id: "pt_1",
+        ref: 1001,
+      });
+      const photoMedia = await createMedia(channel._id.toString(), {
+        media_type: "photo",
+        source_url: "gridfs:photo-bytes-id",
+      });
+
+      // Seed an existing MediaProduct so the server has a DEK envelope to unwrap.
+      await MediaProduct.create({
+        media_id: photoMedia._id,
+        satsrail_product_id: "prod_existing",
+        encrypted_source_url: "encrypted-dek-for-prod_existing",
+        key_fingerprint: "fp_existing",
+      });
+
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_new_channel",
+        name: "Channel",
+        price_cents: 1000,
+        slug: "channel",
+        access_duration_seconds: null,
+        status: "active",
+      });
+      mockSatsrailClient.getProductKey
+        // First call: fetch the new channel product's key
+        .mockResolvedValueOnce({ key: "new-channel-key", key_fingerprint: "fp_new" })
+        // Second call: fetch the OTHER product's key (so we can decrypt its DEK)
+        .mockResolvedValueOnce({ key: "existing-product-key", key_fingerprint: "fp_existing" });
+
+      mockDecryptSourceUrl.mockReturnValueOnce("photo-dek-base64url");
+      mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-dek-blob");
+
+      const [req, ctx] = buildRequest(channel._id.toString(), {
+        name: "Channel",
+        price_cents: 1000,
+      });
+      const res = await POST(req, ctx);
+      expect(res.status).toBe(201);
+
+      // The recovered DEK must be re-encrypted with the NEW channel key, not
+      // the existing product key. Otherwise viewers of the new channel product
+      // can't decrypt.
+      expect(mockDecryptSourceUrl).toHaveBeenCalledWith(
+        "encrypted-dek-for-prod_existing",
+        "existing-product-key",
+        "prod_existing"
+      );
+      expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
+        "photo-dek-base64url",
+        "new-channel-key",
+        "prod_new_channel"
+      );
+    });
+
+    it("mixes photo and non-photo media in the same channel correctly", async () => {
+      const channel = await createChannel({
+        slug: "ch-mixed",
+        satsrail_product_type_id: "pt_1",
+        ref: 1002,
+      });
+      const videoMedia = await createMedia(channel._id.toString(), {
+        media_type: "video",
+        source_url: "https://example.com/v.mp4",
+      });
+      const photoMedia = await createMedia(channel._id.toString(), {
+        media_type: "photo",
+        source_url: "gridfs:photo-id",
+      });
+      await MediaProduct.create({
+        media_id: photoMedia._id,
+        satsrail_product_id: "prod_existing_mixed",
+        encrypted_source_url: "existing-dek-blob",
+        key_fingerprint: "fp_e",
+      });
+
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_mixed_channel",
+        name: "Mixed",
+        price_cents: 1000,
+        slug: "mixed",
+        access_duration_seconds: null,
+        status: "active",
+      });
+      mockSatsrailClient.getProductKey
+        .mockResolvedValueOnce({ key: "mixed-channel-key", key_fingerprint: "fp_m" })
+        .mockResolvedValueOnce({ key: "existing-product-key", key_fingerprint: "fp_e" });
+      mockDecryptSourceUrl.mockReturnValue("recovered-dek");
+
+      const [req, ctx] = buildRequest(channel._id.toString(), {
+        name: "Mixed",
+        price_cents: 1000,
+      });
+      const res = await POST(req, ctx);
+      expect(res.status).toBe(201);
+
+      // Video gets URL-encrypted; photo gets DEK-encrypted. Both go under
+      // the same channel key + product ID.
+      const calls = mockEncryptSourceUrl.mock.calls;
+      const plaintexts = calls.map((c) => c[0]);
+      expect(plaintexts).toContain(videoMedia.source_url); // URL
+      expect(plaintexts).toContain("recovered-dek"); // DEK
+      // All encrypt calls share the channel key + new product id
+      for (const [, key, productId] of calls) {
+        expect(key).toBe("mixed-channel-key");
+        expect(productId).toBe("prod_mixed_channel");
+      }
+    });
   });
 });

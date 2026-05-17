@@ -21,6 +21,11 @@ vi.mock("@/lib/content-encryption", () => ({
   decryptSourceUrl: vi.fn().mockReturnValue("https://example.com/video.mp4"),
 }));
 
+const { mockGridFsDelete } = vi.hoisted(() => ({ mockGridFsDelete: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/gridfs", () => ({
+  getEncryptedPhotosBucket: vi.fn().mockResolvedValue({ delete: mockGridFsDelete }),
+}));
+
 import { GET as listMedia, POST as createMedia } from "@/app/api/admin/media/route";
 import { GET as getMedia, PATCH as updateMedia, DELETE as deleteMedia } from "@/app/api/admin/media/[id]/route";
 import { getMerchantKey } from "@/lib/merchant-key";
@@ -412,6 +417,101 @@ describe("Admin Media API", () => {
       expect(res.status).toBe(200);
 
       expect(mockSatsrailClient.deleteProduct).not.toHaveBeenCalled();
+    });
+
+    it("removes the encrypted GridFS file when deleting photo media", async () => {
+      const chId = await seedChannel();
+      const gridFsId = new mongoose.Types.ObjectId();
+      const photoMedia = await Media.create({
+        ref: 999,
+        channel_id: chId,
+        name: "Photo",
+        description: "",
+        source_url: gridFsId.toString(),
+        media_type: "photo",
+        position: 1,
+        comments_count: 0,
+        flags_count: 0,
+      });
+
+      const req = jsonRequest(
+        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        "DELETE"
+      );
+      const res = await deleteMedia(req, {
+        params: Promise.resolve({ id: photoMedia._id.toString() }),
+      });
+      expect(res.status).toBe(200);
+
+      // GridFS cleanup happened with the right ObjectId
+      expect(mockGridFsDelete).toHaveBeenCalledTimes(1);
+      const arg = mockGridFsDelete.mock.calls[0][0];
+      expect(arg.toString()).toBe(gridFsId.toString());
+    });
+
+    it("non-photo media delete does NOT touch the encrypted GridFS bucket", async () => {
+      const chId = await seedChannel();
+      const mediaId = await seedMedia(chId);
+
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "DELETE");
+      await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
+
+      expect(mockGridFsDelete).not.toHaveBeenCalled();
+    });
+
+    it("photo media delete tolerates GridFS errors (logs, does not fail the request)", async () => {
+      const chId = await seedChannel();
+      const gridFsId = new mongoose.Types.ObjectId();
+      const photoMedia = await Media.create({
+        ref: 1000,
+        channel_id: chId,
+        name: "PhotoBroken",
+        description: "",
+        source_url: gridFsId.toString(),
+        media_type: "photo",
+        position: 1,
+        comments_count: 0,
+        flags_count: 0,
+      });
+
+      mockGridFsDelete.mockRejectedValueOnce(new Error("gridfs unavailable"));
+
+      const req = jsonRequest(
+        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        "DELETE"
+      );
+      const res = await deleteMedia(req, {
+        params: Promise.resolve({ id: photoMedia._id.toString() }),
+      });
+      // The DELETE still succeeds — orphan bytes are a soft failure
+      expect(res.status).toBe(200);
+      const stillThere = await Media.findById(photoMedia._id);
+      expect(stillThere).toBeNull();
+    });
+
+    it("photo media with non-ObjectId source_url is skipped without error", async () => {
+      const chId = await seedChannel();
+      const photoMedia = await Media.create({
+        ref: 1001,
+        channel_id: chId,
+        name: "PhotoLegacy",
+        description: "",
+        source_url: "legacy-non-objectid-string",
+        media_type: "photo",
+        position: 1,
+        comments_count: 0,
+        flags_count: 0,
+      });
+
+      const req = jsonRequest(
+        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        "DELETE"
+      );
+      const res = await deleteMedia(req, {
+        params: Promise.resolve({ id: photoMedia._id.toString() }),
+      });
+      expect(res.status).toBe(200);
+      expect(mockGridFsDelete).not.toHaveBeenCalled();
     });
   });
 });

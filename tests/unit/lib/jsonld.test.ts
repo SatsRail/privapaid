@@ -143,10 +143,10 @@ describe("buildMediaSchema", () => {
     expect(author.name).toBe("Creator");
   });
 
-  it("builds ImageGallery for photo_set type", () => {
-    const media = { ...baseMedia, media_type: "photo_set" as const };
+  it("builds ImageObject for photo type", () => {
+    const media = { ...baseMedia, media_type: "photo" as const };
     const result = buildMediaSchema(media, channel, config);
-    expect(result["@type"]).toBe("ImageGallery");
+    expect(result["@type"]).toBe("ImageObject");
   });
 
   it("falls back to CreativeWork for unknown type", () => {

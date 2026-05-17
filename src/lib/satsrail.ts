@@ -128,6 +128,24 @@ interface CheckoutStatus {
   order_number?: string;
 }
 
+/**
+ * The Stream UI uses `0` to represent "Lifetime" access; the SatsRail Portal
+ * represents it as a `null`/absent field and rejects `0` with a validation
+ * error (must be > 0). Strip `access_duration_seconds: 0` before sending so
+ * Portal treats the product as lifetime-access.
+ */
+export function normalizeLifetime<T extends { access_duration_seconds?: number | null }>(
+  data: T
+): T {
+  if (data.access_duration_seconds === 0 || data.access_duration_seconds === null) {
+    // Drop the field entirely — Portal interprets absence as lifetime
+    const { access_duration_seconds: _drop, ...rest } = data;
+    void _drop;
+    return rest as T;
+  }
+  return data;
+}
+
 class SatsRailClient {
   private baseUrl: string;
 
@@ -183,7 +201,7 @@ class SatsRailClient {
     return this.request<SatsRailProduct>("/m/products", {
       method: "POST",
       secretKey,
-      body: { product: data },
+      body: { product: normalizeLifetime(data) },
     });
   }
 
@@ -256,7 +274,7 @@ class SatsRailClient {
     return this.request<SatsRailProduct>(`/m/products/${productId}`, {
       method: "PATCH",
       secretKey,
-      body: { product: data },
+      body: { product: normalizeLifetime(data) },
     });
   }
 

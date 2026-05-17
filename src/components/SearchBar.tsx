@@ -229,7 +229,7 @@ export default function SearchBar({ placeholder }: SearchBarProps) {
                   {result.mediaType === "video" && "\u25B6"}
                   {result.mediaType === "audio" && "\u266B"}
                   {result.mediaType === "article" && "\uD83D\uDCC4"}
-                  {result.mediaType === "photo_set" && "\uD83D\uDDBC"}
+                  {result.mediaType === "photo" && "\uD83D\uDDBC"}
                   {result.mediaType === "podcast" && "\uD83C\uDF99"}
                 </div>
               )}

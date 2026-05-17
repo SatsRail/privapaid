@@ -8,7 +8,6 @@ import { cookies } from "next/headers";
 import config, { getInstanceConfig } from "@/config/instance";
 import { COOKIE_NAME, getStoredProductIds } from "@/lib/macaroon-cookie";
 import ViewerShell from "@/components/ViewerShell";
-import PhotoSetLayout from "@/components/layout/PhotoSetLayout";
 import MediaLayout from "@/components/layout/MediaLayout";
 import { resolveImageUrl } from "@/lib/images";
 import { buildMediaSchema, buildBreadcrumbSchema } from "@/lib/jsonld";
@@ -205,6 +204,9 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       thumbnail_id: media.thumbnail_id,
       views_count: media.views_count,
       comments_count: media.comments_count,
+      // For photo media, surface the GridFS pointer to the client so it can
+      // fetch the encrypted bytes after unwrapping the DEK.
+      photo_gridfs_id: media.media_type === "photo" ? media.source_url : undefined,
     },
     channel: { name: channel.name, slug: channel.slug },
     products,
@@ -222,9 +224,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify([mediaJsonLd, breadcrumbJsonLd]) }}
       />
-      {media.media_type === "photo_set"
-        ? <PhotoSetLayout {...pageData} />
-        : <MediaLayout {...pageData} />}
+      <MediaLayout {...pageData} />
     </ViewerShell>
   );
 }

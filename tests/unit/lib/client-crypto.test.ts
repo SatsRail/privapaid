@@ -8,6 +8,7 @@ import {
   computeKeyFingerprint,
   verifyKeyFingerprint,
   decryptBlob,
+  decryptBytesWithKey,
 } from "@/lib/client-crypto";
 
 describe("client-crypto utilities", () => {
@@ -306,6 +307,67 @@ describe("client-crypto Web Crypto functions", () => {
       await expect(
         decryptBlob(encryptedBase64, keyBase64url, "prod-456")
       ).rejects.toThrow("Decryption failed");
+    });
+  });
+
+  describe("decryptBytesWithKey", () => {
+    it("decrypts raw bytes using a 32-byte key, with no AAD", async () => {
+      const iv = new Uint8Array(12).fill(0x05);
+      const ciphertextWithTag = new Uint8Array(40).fill(0x06);
+      const combined = new Uint8Array(iv.length + ciphertextWithTag.length);
+      combined.set(iv, 0);
+      combined.set(ciphertextWithTag, iv.length);
+
+      const keyBytes = new Uint8Array(32).fill(0xcc);
+
+      const fakeCryptoKey = { type: "secret" } as CryptoKey;
+      mockImportKey.mockResolvedValue(fakeCryptoKey);
+      const decryptedContent = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      mockDecrypt.mockResolvedValue(decryptedContent.buffer);
+
+      const result = await decryptBytesWithKey(combined, keyBytes);
+
+      expect(mockImportKey).toHaveBeenCalledWith(
+        "raw",
+        expect.any(ArrayBuffer),
+        { name: "AES-GCM" },
+        false,
+        ["decrypt"]
+      );
+
+      // Critically: no `additionalData` field in the decrypt call. The DEK
+      // envelope binds the photo to a product, so the photo bytes themselves
+      // carry no AAD — adding one would break envelope reuse across products.
+      expect(mockDecrypt).toHaveBeenCalledWith(
+        { name: "AES-GCM", iv: expect.any(Uint8Array) },
+        fakeCryptoKey,
+        expect.any(Uint8Array)
+      );
+      const decryptCall = mockDecrypt.mock.calls[0];
+      expect(decryptCall[0]).not.toHaveProperty("additionalData");
+      expect(decryptCall[0].iv).toEqual(iv);
+
+      expect(result).toEqual(decryptedContent);
+    });
+
+    it("throws if the key is not 32 bytes", async () => {
+      const blob = new Uint8Array(40);
+      const shortKey = new Uint8Array(16);
+      await expect(decryptBytesWithKey(blob, shortKey)).rejects.toThrow(/32 bytes/);
+    });
+
+    it("throws if the blob is shorter than IV + auth tag", async () => {
+      const tinyBlob = new Uint8Array(10);
+      const key = new Uint8Array(32);
+      await expect(decryptBytesWithKey(tinyBlob, key)).rejects.toThrow(/too short/i);
+    });
+
+    it("propagates Web Crypto decrypt errors (tamper / wrong key)", async () => {
+      const blob = new Uint8Array(40);
+      const key = new Uint8Array(32);
+      mockImportKey.mockResolvedValue({ type: "secret" } as CryptoKey);
+      mockDecrypt.mockRejectedValue(new DOMException("Decryption failed"));
+      await expect(decryptBytesWithKey(blob, key)).rejects.toThrow("Decryption failed");
     });
   });
 });

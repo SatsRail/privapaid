@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
-import { decryptBlob, verifyKeyFingerprint } from "@/lib/client-crypto";
+import {
+  base64urlToBytes,
+  decryptBlob,
+  decryptBytesWithKey,
+  verifyKeyFingerprint,
+} from "@/lib/client-crypto";
 import * as Sentry from "@sentry/nextjs";
 import CheckoutOverlay from "@/components/CheckoutOverlay";
 import ContentRenderer from "@/components/ContentRenderer";
@@ -44,6 +49,8 @@ interface PaymentWallProps {
   storedProductIds?: string[];
   thumbnailUrl?: string;
   mediaType: string;
+  /** For media_type === "photo" only: GridFS ID of the encrypted bytes. */
+  photoGridFsId?: string;
   merchantLogo?: string;
   merchantName?: string;
   onRemainingSeconds?: (seconds: number) => void;
@@ -59,6 +66,7 @@ export default function PaymentWall({
   storedProductIds,
   thumbnailUrl,
   mediaType,
+  photoGridFsId,
   merchantLogo,
   merchantName,
   onRemainingSeconds,
@@ -83,6 +91,30 @@ export default function PaymentWall({
   const [verifyFailure, setVerifyFailure] = useState<{ failedAt: number } | null>(null);
   const [referenceCopied, setReferenceCopied] = useState(false);
   const lastKeyRef = useRef<string | null>(null);
+
+  // Unwrap encrypted content into displayable bytes. For non-photo media this
+  // is a single AES-GCM decrypt. For photo media the encrypted blob holds a
+  // DEK (envelope encryption): unwrap the DEK with the product key, fetch
+  // the ciphertext from GridFS, then decrypt with the DEK.
+  const resolveContent = useCallback(
+    async (encryptedBlob: string, key: string, productId: string): Promise<Uint8Array> => {
+      const inner = await decryptBlob(encryptedBlob, key, productId);
+      if (mediaType !== "photo") return inner;
+      if (!photoGridFsId) {
+        throw new Error("Photo media is missing its GridFS pointer");
+      }
+      // `inner` is the UTF-8 bytes of the base64url DEK; decode it back to 32 raw bytes.
+      const dekBase64url = new TextDecoder().decode(inner);
+      const dekBytes = base64urlToBytes(dekBase64url);
+      const res = await fetch(`/api/photos/${photoGridFsId}`);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch encrypted photo: ${res.status}`);
+      }
+      const ciphertext = new Uint8Array(await res.arrayBuffer());
+      return decryptBytesWithKey(ciphertext, dekBytes);
+    },
+    [mediaType, photoGridFsId]
+  );
 
   // On mount: only verify products that the server confirmed have stored macaroons
   useEffect(() => {
@@ -125,8 +157,8 @@ export default function PaymentWall({
             continue;
           }
 
-          // Valid macaroon — decrypt content
-          const bytes = await decryptBlob(product.encryptedBlob, data.key, product.productId);
+          // Valid macaroon — decrypt content (photo media also unwraps DEK + fetches bytes)
+          const bytes = await resolveContent(product.encryptedBlob, data.key, product.productId);
           lastKeyRef.current = data.key;
           setDecryptedBytes(bytes);
           setActiveProductId(product.productId);
@@ -149,7 +181,7 @@ export default function PaymentWall({
           if (product) {
             const fingerprint = data.key_fingerprint || product.keyFingerprint;
             if (await verifyKeyFingerprint(data.key, fingerprint)) {
-              const bytes = await decryptBlob(data.encrypted_blob, data.key, data.product_id);
+              const bytes = await resolveContent(data.encrypted_blob, data.key, data.product_id);
               lastKeyRef.current = data.key;
               setDecryptedBytes(bytes);
               setActiveProductId(product.productId);
@@ -304,7 +336,7 @@ export default function PaymentWall({
             recordFailure();
             return;
           }
-          const bytes = await decryptBlob(product.encryptedBlob, data.key, product.productId);
+          const bytes = await resolveContent(product.encryptedBlob, data.key, product.productId);
           lastKeyRef.current = data.key;
           setDecryptedBytes(bytes);
           setCheckoutToken(null);
@@ -324,7 +356,7 @@ export default function PaymentWall({
           const unlockData = await unlockRes.json();
           const fingerprint = unlockData.key_fingerprint || product.keyFingerprint;
           if (await verifyKeyFingerprint(unlockData.key, fingerprint)) {
-            const bytes = await decryptBlob(unlockData.encrypted_blob, unlockData.key, unlockData.product_id);
+            const bytes = await resolveContent(unlockData.encrypted_blob, unlockData.key, unlockData.product_id);
             lastKeyRef.current = unlockData.key;
             setDecryptedBytes(bytes);
             setCheckoutToken(null);
@@ -359,7 +391,7 @@ export default function PaymentWall({
 
       try {
         if (!(await verifyKeyFingerprint(key, product.keyFingerprint))) return;
-        const bytes = await decryptBlob(product.encryptedBlob, key, product.productId);
+        const bytes = await resolveContent(product.encryptedBlob, key, product.productId);
         lastKeyRef.current = key;
         setDecryptedBytes(bytes);
       } catch {
@@ -594,8 +626,8 @@ export default function PaymentWall({
   return (
     <div className="mb-6">
       <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
-        {mediaType === "photo_set" ? (
-          // Photo set: black canvas with centered buttons
+        {mediaType === "photo" ? (
+          // Single photo: black canvas with centered buttons
           <div className="flex flex-col items-center justify-center bg-black px-4 py-12 min-h-[320px]">
             {cardContent}
           </div>

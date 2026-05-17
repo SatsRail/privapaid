@@ -31,7 +31,7 @@ const TYPE_LABELS: Record<string, string> = {
   video: "VIDEO",
   audio: "AUDIO",
   article: "ARTICLE",
-  photo_set: "PHOTOS",
+  photo: "PHOTO",
   podcast: "PODCAST",
 };
 
@@ -39,7 +39,7 @@ const TYPE_ICONS: Record<string, string> = {
   video: "\u25B6",
   audio: "\u266B",
   article: "\uD83D\uDCC4",
-  photo_set: "\uD83D\uDDBC",
+  photo: "\uD83D\uDDBC",
   podcast: "\uD83C\uDF99",
 };
 

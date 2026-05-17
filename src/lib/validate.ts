@@ -134,10 +134,14 @@ export const schemas = {
     name: z.string().min(1, "Name is required").max(200).transform((s) => s.trim()),
     description: z.string().max(5000).optional(),
     source_url: z.string().min(1, "Source URL is required").max(500_000, "Content too long (500KB max)").transform((s) => s.trim()),
-    media_type: z.enum(["video", "audio", "article", "photo_set", "podcast"]).optional(),
+    media_type: z.enum(["video", "audio", "article", "photo", "podcast"]).optional(),
     thumbnail_url: z.string().optional(),
     thumbnail_id: z.string().optional(),
     position: z.number().int().nonnegative().optional(),
+    // For photo media (envelope encryption): the per-photo DEK from the
+    // /api/admin/photos upload response. Required when channel already has
+    // ChannelProducts that must wrap this photo's DEK under their key.
+    dek: z.string().optional(),
   }),
 
   // Media update
@@ -145,7 +149,7 @@ export const schemas = {
     name: z.string().min(1).max(200).transform((s) => s.trim()).optional(),
     description: z.string().max(5000).optional(),
     source_url: z.string().min(1).max(500_000, "Content too long (500KB max)").transform((s) => s.trim()).optional(),
-    media_type: z.enum(["video", "audio", "article", "photo_set", "podcast"]).optional(),
+    media_type: z.enum(["video", "audio", "article", "photo", "podcast"]).optional(),
     thumbnail_url: z.string().optional(),
     thumbnail_id: z.string().optional(),
     preview_image_ids: z.array(z.string()).max(6).optional(),
@@ -287,7 +291,7 @@ export const schemas = {
     description: z.string().max(5000).optional().default(""),
     source_url: z.string().min(1),
     media_type: z
-      .enum(["video", "audio", "article", "photo_set", "podcast"])
+      .enum(["video", "audio", "article", "photo", "podcast"])
       .optional()
       .default("video"),
     thumbnail_url: z.string().optional().default(""),
@@ -314,7 +318,7 @@ export const schemas = {
           description: z.string().max(5000).optional().default(""),
           source_url: z.string().min(1),
           media_type: z
-            .enum(["video", "audio", "article", "photo_set", "podcast"])
+            .enum(["video", "audio", "article", "photo", "podcast"])
             .optional()
             .default("video"),
           thumbnail_url: z.string().optional().default(""),
@@ -376,7 +380,7 @@ export const schemas = {
                 description: z.string().max(5000).optional().default(""),
                 source_url: z.string().min(1),
                 media_type: z
-                  .enum(["video", "audio", "article", "photo_set", "podcast"])
+                  .enum(["video", "audio", "article", "photo", "podcast"])
                   .optional()
                   .default("video"),
                 thumbnail_url: z.string().optional().default(""),
