@@ -267,10 +267,9 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
   it("returns the rate-limit response when limit is hit", async () => {
     const { mediaId } = await seedWithProduct();
     const { rateLimit } = await import("@/lib/rate-limit");
+    const { NextResponse } = await import("next/server");
     vi.mocked(rateLimit).mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: "Too Many Requests" }), {
-        status: 429,
-      }) as unknown as Response
+      NextResponse.json({ error: "Too Many Requests" }, { status: 429 })
     );
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
       body: "rate limited",

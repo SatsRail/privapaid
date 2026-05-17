@@ -1,12 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-interface MongooseCache {
-  conn: unknown;
-  promise: Promise<unknown> | null;
-}
-declare global {
-  var mongoose: MongooseCache | undefined;
-}
+import type mongooseType from "mongoose";
 
 const originalUri = process.env.MONGODB_URI;
 
@@ -20,17 +13,26 @@ const { connectMock, mongooseModule } = vi.hoisted(() => {
 
 vi.mock("mongoose", () => mongooseModule);
 
+// `lib/mongodb` already declares `global.mongoose` with the MongooseCache type;
+// reuse that declaration rather than redeclaring it here.
+type MutableGlobal = typeof globalThis & {
+  mongoose?: {
+    conn: typeof mongooseType | null;
+    promise: Promise<typeof mongooseType> | null;
+  };
+};
+
 describe("connectDB (lib/mongodb)", () => {
   beforeEach(() => {
     vi.resetModules();
-    global.mongoose = undefined;
+    (globalThis as MutableGlobal).mongoose = undefined;
     connectMock.mockReset();
     process.env.MONGODB_URI = "mongodb://localhost:27017/test";
   });
 
   afterEach(() => {
     process.env.MONGODB_URI = originalUri;
-    global.mongoose = undefined;
+    (globalThis as MutableGlobal).mongoose = undefined;
   });
 
   it("throws when MONGODB_URI is not set", async () => {
@@ -41,7 +43,7 @@ describe("connectDB (lib/mongodb)", () => {
   });
 
   it("returns the cached connection on subsequent calls", async () => {
-    const fakeConn = { connection: { id: 1 } };
+    const fakeConn = { connection: { id: 1 } } as unknown as typeof mongooseType;
     connectMock.mockResolvedValue(fakeConn);
 
     const { connectDB } = await import("@/lib/mongodb");
@@ -60,7 +62,7 @@ describe("connectDB (lib/mongodb)", () => {
     await expect(connectDB()).rejects.toThrow("connect failed");
 
     // Second call retries (promise was nulled on failure)
-    const fakeConn = { connection: { id: 2 } };
+    const fakeConn = { connection: { id: 2 } } as unknown as typeof mongooseType;
     connectMock.mockResolvedValueOnce(fakeConn);
     const result = await connectDB();
     expect(result).toBe(fakeConn);
@@ -68,8 +70,8 @@ describe("connectDB (lib/mongodb)", () => {
   });
 
   it("reuses the global mongoose cache across imports", async () => {
-    const fakeConn = { connection: { id: 3 } };
-    global.mongoose = { conn: fakeConn, promise: null };
+    const fakeConn = { connection: { id: 3 } } as unknown as typeof mongooseType;
+    (globalThis as MutableGlobal).mongoose = { conn: fakeConn, promise: null };
 
     const { connectDB } = await import("@/lib/mongodb");
     const result = await connectDB();

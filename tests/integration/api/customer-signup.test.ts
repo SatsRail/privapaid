@@ -116,9 +116,9 @@ describe("POST /api/customer/signup", () => {
 
   it("returns the rate-limit response when limited", async () => {
     const { rateLimit } = await import("@/lib/rate-limit");
+    const { NextResponse } = await import("next/server");
     vi.mocked(rateLimit).mockResolvedValueOnce(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      new Response(JSON.stringify({ error: "Too Many Requests" }), { status: 429 }) as any
+      NextResponse.json({ error: "Too Many Requests" }, { status: 429 })
     );
 
     const req = signupRequest({

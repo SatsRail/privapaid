@@ -179,7 +179,9 @@ describe("Admin Categories [id] routes", () => {
       vi.mocked(requireAdminApi).mockResolvedValue({
         id: "admin-1",
         email: "admin@test.com",
+        name: "Admin",
         role: "owner",
+        type: "admin",
       });
     });
 
