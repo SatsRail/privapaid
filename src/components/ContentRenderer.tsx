@@ -34,11 +34,27 @@
 
 import { useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
-import { marked } from "marked";
+import { Marked } from "marked";
 import { detectMimeType, bytesToUrl } from "@/lib/client-crypto";
 import * as Sentry from "@sentry/nextjs";
 import PhotoGallery from "@/components/PhotoGallery";
 import type { PhotoItem } from "@/components/PhotoGallery";
+
+// Article-only markdown instance. Custom link renderer adds target="_blank" and
+// rel="noopener noreferrer" so external links don't navigate the host page away
+// from the article when clicked inside the closed shadow root.
+const articleMarkdown = new Marked({
+  gfm: true,
+  breaks: true,
+  async: false,
+  renderer: {
+    link({ href, title, tokens }) {
+      const text = this.parser.parseInline(tokens);
+      const titleAttr = title ? ` title="${title.replace(/"/g, "&quot;")}"` : "";
+      return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    },
+  },
+});
 
 interface ContentRendererProps {
   decryptedBytes: Uint8Array;
@@ -398,7 +414,7 @@ function ContentRendererDOM({
       const rawText = new TextDecoder().decode(decryptedBytes);
       const text =
         mediaType === "article"
-          ? (marked.parse(rawText, { async: false, gfm: true, breaks: true }) as string)
+          ? (articleMarkdown.parse(rawText) as string)
           : rawText;
       const shadow = container.attachShadow({ mode: "closed" });
 
@@ -451,7 +467,9 @@ function ContentRendererDOM({
       shadow.appendChild(style);
 
       const wrapper = document.createElement("div");
-      wrapper.innerHTML = DOMPurify.sanitize(text);
+      // ADD_ATTR: ["target"] keeps the target="_blank" attribute the marked
+      // renderer adds to links; DOMPurify strips it by default.
+      wrapper.innerHTML = DOMPurify.sanitize(text, { ADD_ATTR: ["target"] });
       shadow.appendChild(wrapper);
     }
 

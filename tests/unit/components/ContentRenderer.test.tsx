@@ -29,12 +29,15 @@ vi.mock("dompurify", () => ({
   },
 }));
 
-const mockMarkedParse = vi.fn((text: string) => `<MD>${text}</MD>`);
-vi.mock("marked", () => ({
-  marked: {
-    parse: (...args: unknown[]) => mockMarkedParse(...(args as [string])),
-  },
+const { mockMarkedParse } = vi.hoisted(() => ({
+  mockMarkedParse: vi.fn((text: string) => `<MD>${text}</MD>`),
 }));
+vi.mock("marked", () => {
+  class Marked {
+    parse = mockMarkedParse;
+  }
+  return { Marked };
+});
 
 import ContentRenderer from "@/components/ContentRenderer";
 
@@ -497,11 +500,7 @@ describe("ContentRenderer", () => {
       );
 
       expect(mockMarkedParse).toHaveBeenCalledTimes(1);
-      expect(mockMarkedParse).toHaveBeenCalledWith(markdown, expect.objectContaining({
-        async: false,
-        gfm: true,
-        breaks: true,
-      }));
+      expect(mockMarkedParse).toHaveBeenCalledWith(markdown);
     });
 
     it("does not parse markdown for non-article mediaType when content is HTML", () => {

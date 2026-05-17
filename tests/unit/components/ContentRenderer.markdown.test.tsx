@@ -123,4 +123,31 @@ describe("ContentRenderer markdown path (real marked + DOMPurify)", () => {
     const { output } = lastSanitizeCall();
     expect(output.toLowerCase()).not.toContain("javascript:");
   });
+
+  it("opens markdown links in a new tab with rel=noopener noreferrer", () => {
+    render(
+      <ContentRenderer
+        decryptedBytes={toBytes("[example](https://example.com)")}
+        mediaType="article"
+      />
+    );
+
+    const { output } = lastSanitizeCall();
+    expect(output).toContain('href="https://example.com"');
+    expect(output).toContain('target="_blank"');
+    expect(output).toContain('rel="noopener noreferrer"');
+  });
+
+  it("preserves the link title attribute when provided", () => {
+    render(
+      <ContentRenderer
+        decryptedBytes={toBytes('[hi](https://example.com "Example site")')}
+        mediaType="article"
+      />
+    );
+
+    const { output } = lastSanitizeCall();
+    expect(output).toContain('title="Example site"');
+    expect(output).toContain('target="_blank"');
+  });
 });
