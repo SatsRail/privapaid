@@ -244,12 +244,36 @@ Requires Node.js and MongoDB (local or Atlas).
 ## Commands
 
 ```bash
-npm run dev       # Dev server with hot reload
-npm run build     # Production build
-npm run start     # Start production server
-npm run lint      # ESLint
-npx tsc --noEmit  # Type-check
+npm run dev                          # Dev server with hot reload
+npm run build                        # Production build
+npm run start                        # Start production server
+npm run lint                         # ESLint
+npx tsc --noEmit                     # Type-check
+npm run cleanup:orphan-photos        # Delete unreferenced encrypted-photo blobs
 ```
+
+### Orphan photo cleanup
+
+The photo upload flow writes an encrypted blob to GridFS *before* the admin commits to creating the Media row + first product. If the admin abandons the flow, the bytes sit forever — unrecoverable (DEK is gone) but consuming storage. Run the cleanup on a schedule to reclaim them.
+
+```bash
+# Defaults: 1-hour grace period, real deletes
+npm run cleanup:orphan-photos
+
+# Report only — no deletes
+npm run cleanup:orphan-photos -- --dry-run
+
+# Delete every unreferenced blob regardless of age (use with care)
+npm run cleanup:orphan-photos -- --grace 0
+```
+
+Outputs a single JSON object summarising the run. Exits 0 on success, 2 if any individual delete failed.
+
+**Scheduling:**
+- **Railway / Render:** add a cron service (e.g. daily at 03:00 UTC) running `npm run cleanup:orphan-photos`.
+- **systemd:** a simple `OnCalendar=daily` timer.
+- **Kubernetes:** `CronJob` pointing at the same container image.
+- **On-demand:** `POST /api/admin/photos/cleanup` (owner-only) accepts `{ graceSeconds?, dryRun? }` and returns the same stats — useful for ad-hoc cleanups from the admin dashboard.
 
 ## License
 

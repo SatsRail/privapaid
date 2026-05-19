@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
-    "deploy": "bash scripts/deploy-demo.sh"
+    "deploy": "bash scripts/deploy-demo.sh",
+    "cleanup:orphan-photos": "tsx scripts/cleanup-orphan-photos.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
