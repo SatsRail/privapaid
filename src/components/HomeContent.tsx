@@ -12,6 +12,7 @@ interface MediaItem {
   media_type: string;
   thumbnail_url: string;
   thumbnail_id?: string;
+  preview_image_ids?: string[];
   comments_count: number;
   channel_id: string;
 }

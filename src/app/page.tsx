@@ -82,6 +82,7 @@ export default async function HomePage() {
     media_type: m.media_type,
     thumbnail_url: m.thumbnail_url,
     thumbnail_id: m.thumbnail_id,
+    preview_image_ids: m.preview_image_ids || [],
     comments_count: m.comments_count,
     channel_id: m.channel_id.toString(),
   }));

@@ -13,6 +13,7 @@ interface MediaCardProps {
     media_type: string;
     thumbnail_url: string;
     thumbnail_id?: string;
+    preview_image_ids?: string[];
     comments_count: number;
     views_count?: number;
   };
@@ -51,7 +52,10 @@ export default function MediaCard({
   media,
   price,
 }: MediaCardProps) {
-  const thumbnailSrc = resolveImageUrl(media.thumbnail_id, media.thumbnail_url);
+  const previewFallbackId = media.preview_image_ids?.[0];
+  const thumbnailSrc =
+    resolveImageUrl(media.thumbnail_id, media.thumbnail_url) ||
+    (previewFallbackId ? `/api/images/${previewFallbackId}` : "");
   const avatarSrc = channelAvatarId || channelAvatarUrl
     ? resolveImageUrl(channelAvatarId, channelAvatarUrl || "")
     : null;
