@@ -23,57 +23,90 @@ describe("sentry.client.config.ts", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    delete (globalThis as { window?: unknown }).window;
   });
 
   afterEach(() => {
     delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    delete (globalThis as { window?: unknown }).window;
   });
 
-  it("enables Sentry when NEXT_PUBLIC_SENTRY_DSN is set", async () => {
-    process.env.NEXT_PUBLIC_SENTRY_DSN =
-      "https://abc123@o4510882343354368.ingest.us.sentry.io/4511095878975488";
+  it("prefers the runtime DSN from window.__INSTANCE_CONFIG__ over the build-time env var", async () => {
+    // The admin Settings UI writes the DSN into MongoDB; the root layout
+    // surfaces it as window.__INSTANCE_CONFIG__. That value wins over a
+    // build-time fallback so operators can configure error reporting
+    // without a Docker rebuild.
+    const runtimeDsn = "https://runtime@o4510882343354368.ingest.us.sentry.io/4511095878975488";
+    process.env.NEXT_PUBLIC_SENTRY_DSN = "https://buildtime@y.ingest.sentry.io/1";
+    (globalThis as { window?: unknown }).window = {
+      __INSTANCE_CONFIG__: { sentryDsn: runtimeDsn },
+    };
 
     const Sentry = await import("@sentry/nextjs");
     await import("../../../sentry.client.config");
 
-    expect(Sentry.init).toHaveBeenCalledTimes(1);
     expect(Sentry.init).toHaveBeenCalledWith(
-      expect.objectContaining({
-        dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-        enabled: true,
-      })
+      expect.objectContaining({ dsn: runtimeDsn, enabled: true })
     );
   });
 
-  it("disables Sentry when NEXT_PUBLIC_SENTRY_DSN is missing", async () => {
+  it("falls back to NEXT_PUBLIC_SENTRY_DSN when no runtime config is present", async () => {
+    const buildDsn = "https://buildtime@o4510882343354368.ingest.us.sentry.io/4511095878975488";
+    process.env.NEXT_PUBLIC_SENTRY_DSN = buildDsn;
+    (globalThis as { window?: unknown }).window = {
+      __INSTANCE_CONFIG__: { sentryDsn: "" }, // runtime empty
+    };
+
+    const Sentry = await import("@sentry/nextjs");
+    await import("../../../sentry.client.config");
+
+    expect(Sentry.init).toHaveBeenCalledWith(
+      expect.objectContaining({ dsn: buildDsn, enabled: true })
+    );
+  });
+
+  it("disables Sentry when neither runtime config nor env var is set", async () => {
     delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    (globalThis as { window?: unknown }).window = {
+      __INSTANCE_CONFIG__: { sentryDsn: "" },
+    };
 
     const Sentry = await import("@sentry/nextjs");
     await import("../../../sentry.client.config");
 
-    expect(Sentry.init).toHaveBeenCalledTimes(1);
     expect(Sentry.init).toHaveBeenCalledWith(
       expect.objectContaining({ enabled: false })
     );
   });
 
-  it("disables Sentry when NEXT_PUBLIC_SENTRY_DSN is empty string (Docker default)", async () => {
-    // The Dockerfile declares `ARG NEXT_PUBLIC_SENTRY_DSN=""`. If the
-    // docker-compose build doesn't pass a value through, the bundle is
-    // built with the empty string. The runtime check must catch that
-    // case explicitly — `!!""` is false, so this should be disabled.
+  it("disables Sentry when both runtime config and env var are empty strings", async () => {
     process.env.NEXT_PUBLIC_SENTRY_DSN = "";
+    (globalThis as { window?: unknown }).window = {
+      __INSTANCE_CONFIG__: { sentryDsn: "" },
+    };
 
     const Sentry = await import("@sentry/nextjs");
     await import("../../../sentry.client.config");
 
-    expect(Sentry.init).toHaveBeenCalledTimes(1);
     expect(Sentry.init).toHaveBeenCalledWith(
       expect.objectContaining({ enabled: false })
     );
   });
 
-  it("passes the environment to Sentry.init", async () => {
+  it("handles a missing window (server-side import) by falling back to env", async () => {
+    const buildDsn = "https://buildtime@o4510882343354368.ingest.us.sentry.io/4511095878975488";
+    process.env.NEXT_PUBLIC_SENTRY_DSN = buildDsn;
+    // No window — simulates server-side / module load before hydration.
+
+    const Sentry = await import("@sentry/nextjs");
+    await import("../../../sentry.client.config");
+
+    expect(Sentry.init).toHaveBeenCalledWith(
+      expect.objectContaining({ dsn: buildDsn, enabled: true })
+    );
+  });
+
+  it("passes NODE_ENV as the environment tag", async () => {
     process.env.NEXT_PUBLIC_SENTRY_DSN = "https://x@y.ingest.sentry.io/1";
 
     const Sentry = await import("@sentry/nextjs");

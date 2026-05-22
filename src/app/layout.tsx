@@ -90,6 +90,17 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         style={themeVars}
       >
+        {/*
+          Public-safe runtime config emitted before any other script runs.
+          Lets sentry.client.config.ts pick up a DB-backed Sentry DSN
+          (configured via /admin/settings) without a Docker rebuild.
+          Only include public-safe values here — never secrets.
+        */}
+        <Script id="instance-config" strategy="beforeInteractive">
+          {`window.__INSTANCE_CONFIG__=${JSON.stringify({
+            sentryDsn: instanceConfig.sentryDsn || "",
+          })};`}
+        </Script>
         {gaId && (
           <>
             <Script
