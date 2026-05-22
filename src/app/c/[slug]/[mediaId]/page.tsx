@@ -83,8 +83,12 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
+  // We fetch source_url (no exclusion) because for photo media it holds the
+  // GridFS pointer the client needs to download encrypted bytes. The pointer
+  // is safe to expose (bytes are useless without the DEK). For non-photo
+  // media source_url is the plaintext content URL — we keep it server-side
+  // by only surfacing it via `photo_gridfs_id` below when media_type === "photo".
   const media = await Media.findOne({ _id: mediaId, channel_id: channel._id })
-    .select("-source_url")
     .lean();
   if (!media) notFound();
 

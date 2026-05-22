@@ -13,8 +13,11 @@ import CheckoutOverlay from "@/components/CheckoutOverlay";
 import ContentRenderer from "@/components/ContentRenderer";
 import HeartbeatManager from "@/components/HeartbeatManager";
 import ExchangeModal from "@/components/ExchangeModal";
+import UnlockFailureCard from "@/components/UnlockFailureCard";
+import VerifyFailureCard from "@/components/VerifyFailureCard";
 import { useLocale } from "@/i18n/useLocale";
-import type { TranslatorFn } from "@/i18n";
+import { formatPrice, formatDuration } from "@/lib/format";
+import { checkStoredMacaroonAccess } from "@/lib/stored-macaroon-access";
 
 interface Product {
   productId: string;
@@ -25,22 +28,6 @@ interface Product {
   currency?: string;
   accessDurationSeconds?: number;
   status?: string;
-}
-
-function formatPrice(cents: number, currency: string, locale: string): string {
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
-  }).format(cents / 100);
-}
-
-function formatDuration(seconds: number, t: TranslatorFn): string {
-  if (seconds <= 0) return t("viewer.payment.lifetime");
-  if (seconds < 3600) return t("viewer.payment.min", { n: Math.round(seconds / 60) });
-  if (seconds < 86400) return t("viewer.payment.hr", { n: Math.round(seconds / 3600) });
-  const days = Math.round(seconds / 86400);
-  return t("viewer.payment.day", { n: days, count: days });
 }
 
 interface PaymentWallProps {
@@ -89,8 +76,37 @@ export default function PaymentWall({
   // checkAccess can't unlock content (transient verify, network failure, etc).
   // Different from unlockFailure (which only fires on a fresh checkout).
   const [verifyFailure, setVerifyFailure] = useState<{ failedAt: number } | null>(null);
-  const [referenceCopied, setReferenceCopied] = useState(false);
   const lastKeyRef = useRef<string | null>(null);
+
+  // Every failure report in this component shares the same identity envelope
+  // (mediaId, activeProductId, mediaType). These wrappers fold the boilerplate
+  // so adding instrumentation is a one-liner. No-ops when Sentry is disabled.
+  const reportException = useCallback(
+    (context: string, err: unknown, extra: Record<string, unknown> = {}) => {
+      Sentry.captureException(err, {
+        tags: { context, mediaType },
+        extra: { mediaId, activeProductId, mediaType, ...extra },
+      });
+    },
+    [mediaId, activeProductId, mediaType]
+  );
+
+  const reportMessage = useCallback(
+    (
+      context: string,
+      message: string,
+      level: "error" | "warning" | "info" = "error",
+      extra: Record<string, unknown> = {},
+      extraTags: Record<string, string> = {}
+    ) => {
+      Sentry.captureMessage(message, {
+        level,
+        tags: { context, mediaType, ...extraTags },
+        extra: { mediaId, activeProductId, mediaType, ...extra },
+      });
+    },
+    [mediaId, activeProductId, mediaType]
+  );
 
   // Unwrap encrypted content into displayable bytes. For non-photo media this
   // is a single AES-GCM decrypt. For photo media the encrypted blob holds a
@@ -116,103 +132,33 @@ export default function PaymentWall({
     [mediaType, photoGridFsId]
   );
 
-  // On mount: only verify products that the server confirmed have stored macaroons
+  // On mount: ask the access library whether this visitor already has a
+  // stored macaroon for any of the products covering this media. The
+  // library encapsulates the two-step verify-then-fall-back-to-unlock
+  // flow; this effect just dispatches its outcome.
   useEffect(() => {
-    async function checkAccess() {
-      // 1. Try stored macaroons — only for products the server found in the cookie
-      const stored = storedProductIds ?? [];
-      const candidateProducts = stored.length > 0
-        ? products.filter((p) => stored.includes(p.productId))
-        : [];
-
-      // Track whether we saw a TRANSIENT failure signal (502, network, or
-      // surprising response shape). On a transient, the user's stored
-      // macaroon is likely still valid — show a "couldn't verify" card so
-      // they don't think they need to re-pay. Definitive rejections (410)
-      // mean the cookie was cleaned server-side; fall through to pay buttons.
-      let sawTransient = false;
-
-      for (const product of candidateProducts) {
-        try {
-          const res = await fetch("/api/macaroons", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ product_id: product.productId }),
-          });
-
-          if (!res.ok) {
-            if (res.status === 502) sawTransient = true;
-            // 410 = definitive rejection — cookie cleaned, fall through to pay buttons
-            continue;
-          }
-
-          const data = await res.json();
-
-          // Verify key authenticity before decryption
-          const fingerprint = data.key_fingerprint || product.keyFingerprint;
-          if (!(await verifyKeyFingerprint(data.key, fingerprint))) {
-            // Key fingerprint mismatch despite valid macaroon — wrong key
-            // delivered or key rotation in progress. Treat as transient.
-            sawTransient = true;
-            continue;
-          }
-
-          // Valid macaroon — decrypt content (photo media also unwraps DEK + fetches bytes)
-          const bytes = await resolveContent(product.encryptedBlob, data.key, product.productId);
-          lastKeyRef.current = data.key;
-          setDecryptedBytes(bytes);
-          setActiveProductId(product.productId);
-          if (data.remaining_seconds != null) {
-            onRemainingSeconds?.(data.remaining_seconds);
-          }
-          return;
-        } catch {
-          // Network error inside macaroon flow — treat as transient
-          sawTransient = true;
+    let cancelled = false;
+    checkStoredMacaroonAccess({
+      mediaId,
+      products,
+      storedProductIds: storedProductIds ?? [],
+      resolveContent,
+    }).then((outcome) => {
+      if (cancelled) return;
+      if (outcome.kind === "unlocked") {
+        setDecryptedBytes(outcome.bytes);
+        setActiveProductId(outcome.productId);
+        if (outcome.remainingSeconds != null) {
+          onRemainingSeconds?.(outcome.remainingSeconds);
         }
-      }
-
-      // 2. Fall back to direct unlock (also macaroon-gated server-side)
-      try {
-        const unlockRes = await fetch(`/api/media/${mediaId}/unlock`);
-        if (unlockRes.ok) {
-          const data = await unlockRes.json();
-          const product = products.find((p) => p.encryptedBlob === data.encrypted_blob) || products[0];
-          if (product) {
-            const fingerprint = data.key_fingerprint || product.keyFingerprint;
-            if (await verifyKeyFingerprint(data.key, fingerprint)) {
-              const bytes = await resolveContent(data.encrypted_blob, data.key, data.product_id);
-              lastKeyRef.current = data.key;
-              setDecryptedBytes(bytes);
-              setActiveProductId(product.productId);
-              if (data.remaining_seconds != null) {
-                onRemainingSeconds?.(data.remaining_seconds);
-              }
-              return;
-            } else {
-              sawTransient = true;
-            }
-          }
-        } else if (unlockRes.status >= 500) {
-          sawTransient = true;
-        }
-      } catch (err) {
-        // Direct unlock not available — show payment wall
-        Sentry.captureException(err, { tags: { context: "PaymentWall.directUnlock" }, extra: { mediaId } });
-        sawTransient = true;
-      }
-
-      // Surface a "couldn't verify" card only when there's an actual signal
-      // that something transient went wrong. Otherwise pay buttons render
-      // as the default — including the case where the cookie was cleaned
-      // due to a definitive rejection earlier in this same flow.
-      if (sawTransient) {
+      } else if (outcome.kind === "transient_failure") {
         setVerifyFailure({ failedAt: Date.now() });
       }
-    }
-
-    checkAccess();
-  }, [mediaId, products, storedProductIds]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaId, products, storedProductIds, resolveContent, onRemainingSeconds]);
 
   // Clear any stale failure state if decryption succeeds via any path
   useEffect(() => {
@@ -268,7 +214,22 @@ export default function PaymentWall({
 
       const orderNumber = data.order_number ?? null;
       const orderId = data.order_id ?? null;
-      const recordFailure = () => {
+      // One Sentry event per customer-visible failure, tagged with the branch
+      // (`reason`) and the order ids so we can cross-reference the Lightning
+      // payment. The reason rides on the tag so Sentry filters can pivot on it.
+      const recordFailure = (reason: string) => {
+        reportMessage(
+          "PaymentWall.recordFailure",
+          "PaymentWall.recordFailure",
+          "error",
+          {
+            orderId,
+            orderNumber,
+            hadKey: !!data.key,
+            hadMacaroon: !!data.macaroon,
+          },
+          { reason }
+        );
         setUnlockFailure({ orderNumber, orderId, failedAt: Date.now() });
         setError("");
         setCheckoutToken(null);
@@ -279,7 +240,7 @@ export default function PaymentWall({
       // locks content immediately. Skip if the portal returned an empty token.
       if (data.macaroon) {
         try {
-          await fetch("/api/macaroons", {
+          const macRes = await fetch("/api/macaroons", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -287,20 +248,32 @@ export default function PaymentWall({
               macaroon: data.macaroon,
             }),
           });
+          if (!macRes.ok) {
+            // Non-2xx macaroon storage breaks the heartbeat path silently —
+            // a future page reload finds no cookie and the user sees pay
+            // buttons again instead of unlocked content. Surface to Sentry
+            // so this exact symptom is debuggable.
+            reportMessage(
+              "PaymentWall.macaroonStore",
+              "Failed to store macaroon (non-2xx)",
+              "error",
+              { status: macRes.status }
+            );
+          }
           // Notify sibling components (e.g. CommentSection) that access is now available
           window.dispatchEvent(new CustomEvent("privapaid:unlocked"));
         } catch (err) {
-          console.error("Failed to store macaroon:", err);
+          reportException("PaymentWall.macaroonStore", err);
         }
       } else {
-        Sentry.captureMessage("Checkout completed with empty macaroon", {
-          level: "warning",
-          tags: { context: "PaymentWall.checkout" },
-          extra: { mediaId, activeProductId, hasKey: !!data.key },
-        });
+        reportMessage(
+          "PaymentWall.checkout",
+          "Checkout completed with empty macaroon",
+          "warning",
+          { hasKey: !!data.key }
+        );
       }
 
-      // Record purchase if customer is logged in
       if (session?.user?.role === "customer") {
         fetch("/api/customer/purchases", {
           method: "POST",
@@ -312,28 +285,26 @@ export default function PaymentWall({
         }).catch((err) => console.error("Failed to record purchase:", err));
       }
 
-      // Verify key authenticity and decrypt content
       const product = products.find((p) => p.productId === activeProductId);
       if (!product) {
-        Sentry.captureMessage("Checkout completed but product missing in PaymentWall", {
-          level: "error",
-          tags: { context: "PaymentWall.missingProduct" },
-          extra: { mediaId, activeProductId },
-        });
-        recordFailure();
+        reportMessage(
+          "PaymentWall.missingProduct",
+          "Checkout completed but product missing in PaymentWall",
+          "error"
+        );
+        recordFailure("missingProduct");
         return;
       }
 
-      // If the portal returned a key, try direct decryption
       if (data.key) {
         try {
           if (!(await verifyKeyFingerprint(data.key, product.keyFingerprint))) {
-            Sentry.captureMessage("Key fingerprint mismatch after payment", {
-              level: "error",
-              tags: { context: "PaymentWall.fingerprint" },
-              extra: { mediaId, activeProductId },
-            });
-            recordFailure();
+            reportMessage(
+              "PaymentWall.fingerprint",
+              "Key fingerprint mismatch after payment",
+              "error"
+            );
+            recordFailure("fingerprintMismatch");
             return;
           }
           const bytes = await resolveContent(product.encryptedBlob, data.key, product.productId);
@@ -344,7 +315,14 @@ export default function PaymentWall({
           window.dispatchEvent(new CustomEvent("privapaid:unlocked"));
           return;
         } catch (err) {
-          Sentry.captureException(err, { tags: { context: "PaymentWall.decrypt" }, extra: { mediaId, activeProductId } });
+          // Capture the decrypt error with full context — message + stack go
+          // to Sentry, and the `mediaType` tag lets us filter article vs photo
+          // failures separately. This is the most diagnostic line in the file.
+          reportException("PaymentWall.decrypt", err, {
+            errorMessage: err instanceof Error ? err.message : String(err),
+            encryptedBlobLength: product.encryptedBlob?.length,
+            keyLength: data.key?.length,
+          });
         }
       }
 
@@ -365,12 +343,12 @@ export default function PaymentWall({
           }
         }
       } catch (err) {
-        Sentry.captureException(err, { tags: { context: "PaymentWall.unlockFallback" }, extra: { mediaId, activeProductId } });
+        reportException("PaymentWall.unlockFallback", err);
       }
 
-      recordFailure();
+      recordFailure(data.key ? "decryptFailed" : "noKeyAndFallbackFailed");
     },
-    [activeProductId, products, session, mediaId]
+    [activeProductId, products, session, mediaId, mediaType, resolveContent, reportException, reportMessage]
   );
 
   const handleExpired = useCallback(() => {
@@ -398,14 +376,13 @@ export default function PaymentWall({
         // Key might have changed — content will re-render next heartbeat
       }
     },
-    [activeProductId, products]
+    [activeProductId, products, resolveContent]
   );
 
   const handleRemainingSeconds = useCallback((seconds: number) => {
     onRemainingSeconds?.(seconds);
   }, [onRemainingSeconds]);
 
-  // Content is unlocked
   if (decryptedBytes) {
     return (
       <div className="mb-6">
@@ -476,151 +453,26 @@ export default function PaymentWall({
     </div>
   );
 
-  const referenceText = unlockFailure
-    ? [unlockFailure.orderNumber, unlockFailure.orderId].filter(Boolean).join(" / ")
-    : "";
+  const reload = () => window.location.reload();
+  const reportCopyError = (err: unknown) =>
+    Sentry.captureException(err, { tags: { context: "PaymentWall.copyReference" } });
 
-  async function handleCopyReference() {
-    if (!referenceText) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(referenceText);
-      } else {
-        // Fallback for older browsers / non-secure contexts: select via a temporary element
-        const ta = document.createElement("textarea");
-        ta.value = referenceText;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand?.("copy");
-        document.body.removeChild(ta);
-        if (!ok) throw new Error("execCommand copy failed");
-      }
-      setReferenceCopied(true);
-      setTimeout(() => setReferenceCopied(false), 2000);
-    } catch (err) {
-      Sentry.captureException(err, { tags: { context: "PaymentWall.copyReference" } });
-      // Show a brief error inline using the existing error string slot
-      setError(t("viewer.payment.unlock_failed.copy_failed"));
-      setTimeout(() => setError(""), 2500);
-    }
-  }
-
-  function handleReload() {
-    window.location.reload();
-  }
-
-  const errorCard = unlockFailure ? (
-    <div className="flex w-full max-w-md flex-col items-center gap-4 px-2 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-          <line x1="12" y1="9" x2="12" y2="13" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-      </div>
-
-      <div className="flex flex-col items-center gap-1">
-        <h3 className="text-lg font-semibold text-white">
-          {t("viewer.payment.unlock_failed.title")}
-        </h3>
-        <p className="text-sm text-zinc-300">
-          {t("viewer.payment.unlock_failed.body")}
-        </p>
-      </div>
-
-      <div className="w-full rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 text-left">
-        <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-wide text-zinc-400">
-          <span>{t("viewer.payment.unlock_failed.timestamp_label")}</span>
-          <span className="font-mono text-[11px] tabular-nums text-zinc-300 normal-case">
-            {new Date(unlockFailure.failedAt).toLocaleString(locale)}
-          </span>
-        </div>
-        <div className="text-xs uppercase tracking-wide text-zinc-400">
-          {t("viewer.payment.unlock_failed.reference_label")}
-        </div>
-        <div className="mt-1 break-all font-mono text-sm text-amber-300">
-          {unlockFailure.orderNumber || unlockFailure.orderId || t("viewer.payment.unlock_failed.no_reference")}
-        </div>
-        {unlockFailure.orderNumber && unlockFailure.orderId && (
-          <div className="mt-1 break-all font-mono text-[11px] text-zinc-500">
-            {unlockFailure.orderId}
-          </div>
-        )}
-      </div>
-
-      <p className="text-sm text-zinc-300">
-        {merchantName
-          ? t("viewer.payment.unlock_failed.contact", { merchant: merchantName })
-          : t("viewer.payment.unlock_failed.contact_generic")}
-      </p>
-
-      <div className="flex w-full flex-col gap-2 sm:flex-row">
-        {referenceText && (
-          <button
-            onClick={handleCopyReference}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
-          >
-            {referenceCopied
-              ? t("viewer.payment.unlock_failed.copied")
-              : t("viewer.payment.unlock_failed.copy_reference")}
-          </button>
-        )}
-        <button
-          onClick={handleReload}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-black transition-colors"
-        >
-          {t("viewer.payment.unlock_failed.reload")}
-        </button>
-      </div>
-    </div>
-  ) : null;
-
-  const verifyCard = verifyFailure ? (
-    <div className="flex w-full max-w-md flex-col items-center gap-4 px-2 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="8" x2="12" y2="12" />
-          <line x1="12" y1="16" x2="12.01" y2="16" />
-        </svg>
-      </div>
-
-      <div className="flex flex-col items-center gap-1">
-        <h3 className="text-lg font-semibold text-white">
-          {t("viewer.payment.verify_failed.title")}
-        </h3>
-        <p className="text-sm text-zinc-300">
-          {t("viewer.payment.verify_failed.body")}
-        </p>
-      </div>
-
-      <div className="w-full rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 text-left">
-        <div className="flex items-center justify-between text-xs uppercase tracking-wide text-zinc-400">
-          <span>{t("viewer.payment.unlock_failed.timestamp_label")}</span>
-          <span className="font-mono text-[11px] tabular-nums text-zinc-300 normal-case">
-            {new Date(verifyFailure.failedAt).toLocaleString(locale)}
-          </span>
-        </div>
-      </div>
-
-      <p className="text-sm text-zinc-300">
-        {merchantName
-          ? t("viewer.payment.unlock_failed.contact", { merchant: merchantName })
-          : t("viewer.payment.unlock_failed.contact_generic")}
-      </p>
-
-      <button
-        onClick={handleReload}
-        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-black transition-colors"
-      >
-        {t("viewer.payment.unlock_failed.reload")}
-      </button>
-    </div>
-  ) : null;
-
-  const cardContent = unlockFailure ? errorCard : verifyFailure ? verifyCard : productButtons;
+  const cardContent = unlockFailure ? (
+    <UnlockFailureCard
+      orderNumber={unlockFailure.orderNumber}
+      orderId={unlockFailure.orderId}
+      failedAt={unlockFailure.failedAt}
+      merchantName={merchantName}
+      onCopyError={reportCopyError}
+      onReload={reload}
+    />
+  ) : verifyFailure ? (
+    <VerifyFailureCard
+      failedAt={verifyFailure.failedAt}
+      merchantName={merchantName}
+      onReload={reload}
+    />
+  ) : productButtons;
 
   // Payment wall
   return (

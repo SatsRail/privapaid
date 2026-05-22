@@ -249,8 +249,13 @@ npm run build                        # Production build
 npm run start                        # Start production server
 npm run lint                         # ESLint
 npx tsc --noEmit                     # Type-check
+npm test                             # Full test suite
+npm run test:decryption              # Decryption end-to-end specs only (fast)
+npm run verify:sentry-dsn            # Confirm production build inlines NEXT_PUBLIC_SENTRY_DSN
 npm run cleanup:orphan-photos        # Delete unreferenced encrypted-photo blobs
 ```
+
+The decryption test suite is documented in [`tests/integration/decryption-e2e/README.md`](tests/integration/decryption-e2e/README.md) — read it before changing anything in `src/lib/content-encryption.ts`, `src/lib/client-crypto.ts`, or `src/components/PaymentWall.tsx`.
 
 ### Orphan photo cleanup
 

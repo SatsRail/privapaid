@@ -1,6 +1,16 @@
 # Production overrides — use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 services:
   app:
+    build:
+      context: .
+      # Public-safe build args inlined into the client bundle by `next build`.
+      # NEXT_PUBLIC_SENTRY_DSN MUST be passed here — otherwise the production
+      # bundle embeds an empty DSN and sentry.client.config.ts disables itself
+      # via `enabled: !!process.env.NEXT_PUBLIC_SENTRY_DSN`, leaving every
+      # post-payment decryption failure invisible.
+      args:
+        NEXT_PUBLIC_INSTANCE_NAME: ${NEXT_PUBLIC_INSTANCE_NAME:-}
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
     ports: []  # No direct exposure — sits behind reverse proxy
     deploy:
       resources:

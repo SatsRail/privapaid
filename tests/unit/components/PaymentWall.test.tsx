@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { mockFetch } from "../../helpers/fetch";
 
 // --- Mocks ---
 
@@ -129,6 +130,32 @@ const defaultProps = {
   thumbnailUrl: "https://example.com/thumb.jpg",
   mediaType: "video",
 };
+
+/**
+ * The post-payment journey for a fresh visitor has the same fetch surface
+ * across many tests: `/api/checkout` POST mints a token, `/api/macaroons`
+ * POST stores the macaroon, every other request falls through to a 404 so
+ * mount-time checkAccess shows pay buttons. This helper installs that fetch
+ * mock so tests only have to express what makes them DIFFERENT.
+ *
+ * Override behaviors via the `overrides` param — return undefined to fall
+ * through to the default; return a Response-shaped object to take over.
+ */
+function setupFreshPaymentScenario(
+  overrides?: (url: string, init?: RequestInit) => unknown
+) {
+  mockFetch((url, init) => {
+    const ov = overrides?.(url, init);
+    if (ov !== undefined) return ov;
+    if (url === "/api/checkout" && init?.method === "POST") {
+      return { ok: true, json: async () => ({ token: "tok" }) };
+    }
+    if (url === "/api/macaroons" && init?.method === "POST") {
+      return { ok: true, json: async () => ({}) };
+    }
+    return undefined; // fall through to 404
+  });
+}
 
 describe("PaymentWall", () => {
   beforeEach(() => {
@@ -274,7 +301,7 @@ describe("PaymentWall", () => {
   // -------------------------------------------------------
   describe("macaroon-based unlock", () => {
     it("unlocks content when macaroon is valid", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
         }
@@ -290,7 +317,7 @@ describe("PaymentWall", () => {
     it("skips macaroon when key fingerprint verification fails", async () => {
       mockVerifyKeyFingerprint.mockResolvedValue(false);
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
         }
@@ -304,7 +331,7 @@ describe("PaymentWall", () => {
     });
 
     it("falls back to direct unlock when macaroons fail", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, json: async () => ({}) };
         }
@@ -328,7 +355,7 @@ describe("PaymentWall", () => {
     });
 
     it("shows payment wall when direct unlock also fails", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      mockFetch(() => {
         return { ok: false, json: async () => ({}) };
       });
 
@@ -339,7 +366,7 @@ describe("PaymentWall", () => {
     });
 
     it("handles direct unlock throwing an exception", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, json: async () => ({}) };
         }
@@ -356,7 +383,7 @@ describe("PaymentWall", () => {
     });
 
     it("handles macaroon fetch throwing an exception", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           throw new Error("Network error");
         }
@@ -377,7 +404,7 @@ describe("PaymentWall", () => {
     it("creates checkout session and shows overlay", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "checkout-token-123" }) };
         }
@@ -400,7 +427,7 @@ describe("PaymentWall", () => {
     it("shows error when checkout fails", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: false, json: async () => ({ error: "Checkout failed" }) };
         }
@@ -422,7 +449,7 @@ describe("PaymentWall", () => {
     it("shows generic error when checkout throws", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           throw new Error("Network error");
         }
@@ -444,7 +471,7 @@ describe("PaymentWall", () => {
     it("shows default error message when server returns no error field", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: false, json: async () => ({}) };
         }
@@ -466,7 +493,7 @@ describe("PaymentWall", () => {
     it("closes checkout overlay", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -490,7 +517,7 @@ describe("PaymentWall", () => {
     it("passes merchant info to checkout overlay", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -524,16 +551,7 @@ describe("PaymentWall", () => {
   describe("checkout completion", () => {
     it("decrypts content after successful checkout", async () => {
       const user = userEvent.setup();
-
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        if (url === "/api/macaroons" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
+      setupFreshPaymentScenario();
 
       render(<PaymentWall {...defaultProps} />);
       await waitFor(() => {
@@ -553,16 +571,7 @@ describe("PaymentWall", () => {
 
     it("stores macaroon after checkout completion", async () => {
       const user = userEvent.setup();
-
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        if (url === "/api/macaroons" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
+      setupFreshPaymentScenario();
 
       render(<PaymentWall {...defaultProps} />);
       await waitFor(() => {
@@ -590,7 +599,7 @@ describe("PaymentWall", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mockSession as any).status = "authenticated";
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -625,7 +634,7 @@ describe("PaymentWall", () => {
       const user = userEvent.setup();
       // Fingerprint-checks pass during mount checkAccess (no stored cookie),
       // and fail only AFTER the user pays.
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -661,7 +670,7 @@ describe("PaymentWall", () => {
     it("does not store empty macaroon and logs to Sentry", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -697,7 +706,7 @@ describe("PaymentWall", () => {
       const user = userEvent.setup();
       let checkoutCreated = false;
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           checkoutCreated = true;
           return { ok: true, json: async () => ({ token: "tok" }) };
@@ -740,7 +749,7 @@ describe("PaymentWall", () => {
     it("shows the unlock-failed card when both direct key and unlock fallback fail", async () => {
       const user = userEvent.setup();
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -768,7 +777,7 @@ describe("PaymentWall", () => {
 
     it("shows the unlock-failed card when decryption fails after checkout", async () => {
       const user = userEvent.setup();
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/checkout" && opts?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -801,6 +810,188 @@ describe("PaymentWall", () => {
   });
 
   // -------------------------------------------------------
+  // Sentry instrumentation on the failure paths
+  // -------------------------------------------------------
+  // These tests pin the observability contract used to diagnose
+  // post-payment decryption failures on the live demo. Each customer-visible
+  // failure MUST produce a `PaymentWall.recordFailure` Sentry event tagged
+  // with the branch that fired (`reason`) and the media type, so a single
+  // Sentry query disambiguates article vs photo failures and the cause.
+  describe("recordFailure Sentry contract", () => {
+    it("fires recordFailure with reason=fingerprintMismatch when the post-payment key fingerprint is wrong", async () => {
+      const user = userEvent.setup();
+      setupFreshPaymentScenario();
+      mockVerifyKeyFingerprint.mockResolvedValue(false);
+
+      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(mockCaptureMessage).toHaveBeenCalledWith(
+          "PaymentWall.recordFailure",
+          expect.objectContaining({
+            level: "error",
+            tags: expect.objectContaining({
+              context: "PaymentWall.recordFailure",
+              reason: "fingerprintMismatch",
+              mediaType: "article",
+            }),
+            extra: expect.objectContaining({
+              mediaId: "media-123",
+              activeProductId: "prod-1",
+              mediaType: "article",
+              orderId: "uuid-abc-123",
+              orderNumber: "ORD-TESTREF12345678",
+              hadKey: true,
+              hadMacaroon: true,
+            }),
+          })
+        );
+      });
+    });
+
+    it("fires recordFailure with reason=decryptFailed when resolveContent throws", async () => {
+      const user = userEvent.setup();
+      setupFreshPaymentScenario();
+      mockDecryptBlob.mockRejectedValue(new Error("AES-GCM auth tag mismatch"));
+
+      render(<PaymentWall {...defaultProps} mediaType="photo" storedProductIds={[]} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        // Underlying decrypt exception captured with rich context
+        expect(mockCaptureException).toHaveBeenCalledWith(
+          expect.any(Error),
+          expect.objectContaining({
+            tags: expect.objectContaining({ context: "PaymentWall.decrypt", mediaType: "photo" }),
+            extra: expect.objectContaining({
+              mediaId: "media-123",
+              activeProductId: "prod-1",
+              mediaType: "photo",
+              errorMessage: "AES-GCM auth tag mismatch",
+              encryptedBlobLength: "encrypted-blob-1".length,
+              keyLength: "test-key".length,
+            }),
+          })
+        );
+        // Customer-visible failure summary
+        expect(mockCaptureMessage).toHaveBeenCalledWith(
+          "PaymentWall.recordFailure",
+          expect.objectContaining({
+            tags: expect.objectContaining({
+              context: "PaymentWall.recordFailure",
+              reason: "decryptFailed",
+              mediaType: "photo",
+            }),
+          })
+        );
+      });
+    });
+
+    it("fires recordFailure with reason=noKeyAndFallbackFailed when key is empty and unlock fallback fails", async () => {
+      const user = userEvent.setup();
+      setupFreshPaymentScenario();
+
+      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      // complete-no-key-btn = portal returned macaroon but no key
+      await user.click(screen.getByTestId("complete-no-key-btn"));
+
+      await waitFor(() => {
+        expect(mockCaptureMessage).toHaveBeenCalledWith(
+          "PaymentWall.recordFailure",
+          expect.objectContaining({
+            tags: expect.objectContaining({
+              reason: "noKeyAndFallbackFailed",
+              mediaType: "article",
+            }),
+            extra: expect.objectContaining({ hadKey: false, hadMacaroon: true }),
+          })
+        );
+      });
+    });
+
+    it("reports non-2xx macaroon storage as a PaymentWall.macaroonStore Sentry event", async () => {
+      const user = userEvent.setup();
+      // Macaroon POST returns 500; key+fingerprint still valid so decryption succeeds.
+      mockFetch((url, init) => {
+        if (url === "/api/checkout" && init?.method === "POST") {
+          return { ok: true, json: async () => ({ token: "tok" }) };
+        }
+        if (url === "/api/macaroons" && init?.method === "POST") {
+          return { ok: false, status: 503, json: async () => ({ error: "down" }) };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      });
+
+      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(mockCaptureMessage).toHaveBeenCalledWith(
+          "Failed to store macaroon (non-2xx)",
+          expect.objectContaining({
+            level: "error",
+            tags: expect.objectContaining({ context: "PaymentWall.macaroonStore" }),
+            extra: expect.objectContaining({
+              mediaId: "media-123",
+              activeProductId: "prod-1",
+              mediaType: "article",
+              status: 503,
+            }),
+          })
+        );
+      });
+      // Direct decryption still succeeded so the user sees content, not the failure card.
+      expect(await screen.findByTestId("content-renderer")).toBeInTheDocument();
+    });
+
+    it("captures the exception when the macaroon storage fetch throws", async () => {
+      const user = userEvent.setup();
+      mockFetch((url, init) => {
+        if (url === "/api/checkout" && init?.method === "POST") {
+          return { ok: true, json: async () => ({ token: "tok" }) };
+        }
+        if (url === "/api/macaroons" && init?.method === "POST") {
+          throw new Error("network down");
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      });
+
+      render(<PaymentWall {...defaultProps} mediaType="photo" storedProductIds={[]} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(mockCaptureException).toHaveBeenCalledWith(
+          expect.any(Error),
+          expect.objectContaining({
+            tags: expect.objectContaining({ context: "PaymentWall.macaroonStore" }),
+            extra: expect.objectContaining({
+              mediaId: "media-123",
+              activeProductId: "prod-1",
+              mediaType: "photo",
+            }),
+          })
+        );
+      });
+    });
+  });
+
+  // -------------------------------------------------------
   // Unlock failure card (post-payment)
   // -------------------------------------------------------
   describe("unlock failure card", () => {
@@ -808,7 +999,7 @@ describe("PaymentWall", () => {
       if (opts.decryptThrows) {
         mockDecryptBlob.mockRejectedValue(new Error("AAD verify failed"));
       }
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, init?: RequestInit) => {
+      mockFetch((url, init) => {
         if (url === "/api/checkout" && init?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -883,7 +1074,7 @@ describe("PaymentWall", () => {
     it("falls back to 'Reference unavailable' when both order fields are null", async () => {
       const user = userEvent.setup();
       mockDecryptBlob.mockRejectedValue(new Error("decrypt"));
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, init?: RequestInit) => {
+      mockFetch((url, init) => {
         if (url === "/api/checkout" && init?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
         }
@@ -971,7 +1162,7 @@ describe("PaymentWall", () => {
   // -------------------------------------------------------
   describe("verify failure card", () => {
     it("shows the verify-failed card when stored macaroon verify returns 502", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, status: 502, json: async () => ({ error: "Verification temporarily unavailable" }) };
         }
@@ -996,7 +1187,7 @@ describe("PaymentWall", () => {
 
     it("shows the verify-failed card when key fingerprint mismatches on a stored macaroon", async () => {
       mockVerifyKeyFingerprint.mockResolvedValue(false);
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: true, status: 200, json: async () => ({ key: "k", key_fingerprint: "wrong" }) };
         }
@@ -1011,7 +1202,7 @@ describe("PaymentWall", () => {
     });
 
     it("does NOT show verify-failed card when user has no stored macaroons (fresh visitor)", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      mockFetch(() => {
         return { ok: false, json: async () => ({}) };
       });
 
@@ -1024,7 +1215,7 @@ describe("PaymentWall", () => {
 
     it("clears verify-failed when content unlocks via heartbeat key refresh", async () => {
       // First: simulate a stored macaroon verify that succeeds (so we end up unlocked)
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: true, status: 200, json: async () => ({ key: "k1", key_fingerprint: "fp-1" }) };
         }
@@ -1040,7 +1231,7 @@ describe("PaymentWall", () => {
     });
 
     it("reload button on verify-failed card calls window.location.reload", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, status: 502, json: async () => ({}) };
         }
@@ -1069,7 +1260,7 @@ describe("PaymentWall", () => {
   // -------------------------------------------------------
   describe("unlocked state", () => {
     beforeEach(() => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
         }
@@ -1173,7 +1364,7 @@ describe("PaymentWall", () => {
   // -------------------------------------------------------
   describe("direct unlock edge cases", () => {
     it("falls back to first product when encrypted_blob does not match", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, json: async () => ({}) };
         }
@@ -1199,7 +1390,7 @@ describe("PaymentWall", () => {
     it("skips direct unlock when fingerprint verification fails", async () => {
       mockVerifyKeyFingerprint.mockResolvedValue(false);
 
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string, opts?: RequestInit) => {
+      mockFetch((url, opts) => {
         if (url === "/api/macaroons" && opts?.method === "PUT") {
           return { ok: false, json: async () => ({}) };
         }

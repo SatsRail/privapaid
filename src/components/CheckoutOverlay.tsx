@@ -86,18 +86,25 @@ export default function CheckoutOverlay({
           cleanup();
           const key = data.items?.[0]?.key ?? "";
           const macaroon = data.access_token ?? "";
-          if (!key || !macaroon) {
-            Sentry.captureMessage("Checkout completed with missing data", {
-              level: "warning",
-              tags: { context: "CheckoutOverlay.status" },
-              extra: {
-                hasKey: !!key,
-                hasMacaroon: !!macaroon,
-                hasItems: !!data.items,
-                itemCount: data.items?.length ?? 0,
-              },
-            });
-          }
+          // ALWAYS log on completion (not just when missing) so we can see
+          // what the portal actually returned for a given order — needed
+          // to disambiguate "portal sent empty key" from "client dropped key"
+          // for the article failure mode.
+          Sentry.captureMessage("CheckoutOverlay.completed", {
+            level: !key || !macaroon ? "warning" : "info",
+            tags: { context: "CheckoutOverlay.completed" },
+            extra: {
+              hasKey: !!key,
+              hasMacaroon: !!macaroon,
+              hasItems: !!data.items,
+              itemCount: data.items?.length ?? 0,
+              keyLength: key.length,
+              macaroonLength: macaroon.length,
+              orderId: data.order_id ?? null,
+              orderNumber: data.order_number ?? null,
+              accessDurationSeconds: data.access_duration_seconds ?? null,
+            },
+          });
           onComplete({
             key,
             macaroon,

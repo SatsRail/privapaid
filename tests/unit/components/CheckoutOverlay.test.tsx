@@ -381,7 +381,7 @@ describe("CheckoutOverlay", () => {
       });
     });
 
-    it("logs to Sentry when completed status has missing key or macaroon", async () => {
+    it("logs a warning-level CheckoutOverlay.completed event when key is missing", async () => {
       (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/qr")) {
           return { ok: true, text: async () => "<svg>QR</svg>" };
@@ -393,6 +393,8 @@ describe("CheckoutOverlay", () => {
               status: "completed",
               items: [{ key: "" }],
               access_token: "macaroon-token",
+              order_id: "uuid-missing-key",
+              order_number: "ORD-MISSING-KEY",
             }),
           };
         }
@@ -402,17 +404,24 @@ describe("CheckoutOverlay", () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
         expect(mockCaptureMessage).toHaveBeenCalledWith(
-          "Checkout completed with missing data",
+          "CheckoutOverlay.completed",
           expect.objectContaining({
             level: "warning",
-            tags: { context: "CheckoutOverlay.status" },
-            extra: expect.objectContaining({ hasKey: false, hasMacaroon: true }),
+            tags: { context: "CheckoutOverlay.completed" },
+            extra: expect.objectContaining({
+              hasKey: false,
+              hasMacaroon: true,
+              keyLength: 0,
+              macaroonLength: 14,
+              orderId: "uuid-missing-key",
+              orderNumber: "ORD-MISSING-KEY",
+            }),
           })
         );
       });
     });
 
-    it("logs to Sentry when completed status has no access_token", async () => {
+    it("logs a warning-level CheckoutOverlay.completed event when access_token is missing", async () => {
       (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/qr")) {
           return { ok: true, text: async () => "<svg>QR</svg>" };
@@ -432,15 +441,19 @@ describe("CheckoutOverlay", () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
         expect(mockCaptureMessage).toHaveBeenCalledWith(
-          "Checkout completed with missing data",
+          "CheckoutOverlay.completed",
           expect.objectContaining({
+            level: "warning",
             extra: expect.objectContaining({ hasKey: true, hasMacaroon: false }),
           })
         );
       });
     });
 
-    it("does not log to Sentry when both key and macaroon are present", async () => {
+    it("logs an info-level CheckoutOverlay.completed event when both key and macaroon are present", async () => {
+      // Even on a healthy completion we emit one event so the Sentry trail
+      // disambiguates "portal returned the right payload" vs. "portal returned
+      // junk" when the customer later reports a failure.
       (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/qr")) {
           return { ok: true, text: async () => "<svg>QR</svg>" };
@@ -452,6 +465,9 @@ describe("CheckoutOverlay", () => {
               status: "completed",
               items: [{ key: "valid-key" }],
               access_token: "valid-macaroon",
+              order_id: "uuid-ok",
+              order_number: "ORD-OK",
+              access_duration_seconds: 86400,
             }),
           };
         }
@@ -462,7 +478,20 @@ describe("CheckoutOverlay", () => {
       await waitFor(() => {
         expect(defaultProps.onComplete).toHaveBeenCalled();
       });
-      expect(mockCaptureMessage).not.toHaveBeenCalled();
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        "CheckoutOverlay.completed",
+        expect.objectContaining({
+          level: "info",
+          tags: { context: "CheckoutOverlay.completed" },
+          extra: expect.objectContaining({
+            hasKey: true,
+            hasMacaroon: true,
+            orderId: "uuid-ok",
+            orderNumber: "ORD-OK",
+            accessDurationSeconds: 86400,
+          }),
+        })
+      );
     });
 
     it("handles completed status with missing data gracefully", async () => {

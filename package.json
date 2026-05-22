@@ -10,8 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:decryption": "vitest run tests/integration/decryption-e2e tests/integration/pages tests/unit/components/PaymentWall.real-crypto.test.tsx",
     "prepare": "husky",
     "deploy": "bash scripts/deploy-demo.sh",
+    "verify:sentry-dsn": "bash scripts/verify-sentry-dsn-inlined.sh",
     "cleanup:orphan-photos": "tsx scripts/cleanup-orphan-photos.ts"
   },
   "dependencies": {

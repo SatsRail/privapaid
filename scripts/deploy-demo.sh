@@ -27,26 +27,47 @@ source "$ENV_FILE"
 : "${DEPLOY_HOST:?Set DEPLOY_HOST in .deploy.env}"
 : "${DEPLOY_APP_DIR:=/home/ec2-user/privapaid}"
 
+# Public-safe build args. Inlined into the client bundle by `next build`,
+# so they MUST be in the shell env when docker-compose builds — otherwise
+# ${VAR:-} substitution in docker-compose.prod.yml resolves to empty and
+# the production bundle embeds an empty Sentry DSN (silent in production).
+# Set these in .deploy.env. Empty defaults preserve the existing behavior
+# for anyone who hasn't added them yet.
+: "${NEXT_PUBLIC_SENTRY_DSN:=}"
+: "${NEXT_PUBLIC_INSTANCE_NAME:=}"
+
 KEEP_RELEASES=3
 
 echo "==> Deploying to ${DEPLOY_HOST}..."
 
+# Shorthand so the SSH command lines read like sentences instead of a wall.
+remote() { ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_HOST" "$@"; }
+COMPOSE="docker-compose -f docker-compose.yml -f docker-compose.prod.yml"
+
 echo "==> Pulling latest code..."
-ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_HOST" "cd $DEPLOY_APP_DIR && git pull && git submodule update --init --recursive"
+remote "cd $DEPLOY_APP_DIR && git pull && git submodule update --init --recursive"
 
 echo "==> Rebuilding and restarting containers..."
-ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_HOST" "cd $DEPLOY_APP_DIR && sudo docker-compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache app && sudo docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+# `sudo env VAR=value docker-compose ...` is the only reliable way to pass
+# the Sentry DSN into docker-compose's ${VAR} substitution across the sudo
+# boundary. `sudo -E` doesn't work on Amazon Linux defaults — env vars
+# not in env_keep get stripped before docker-compose ever sees them.
+remote "cd $DEPLOY_APP_DIR && sudo env \
+  NEXT_PUBLIC_SENTRY_DSN='$NEXT_PUBLIC_SENTRY_DSN' \
+  NEXT_PUBLIC_INSTANCE_NAME='$NEXT_PUBLIC_INSTANCE_NAME' \
+  $COMPOSE build --no-cache app"
+remote "cd $DEPLOY_APP_DIR && sudo $COMPOSE up -d"
 
 echo "==> Waiting for health check..."
 for i in $(seq 1 30); do
-  HEALTH=$(ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_HOST" "curl -sf http://localhost:3000/api/health 2>/dev/null" || echo "")
+  HEALTH=$(remote "curl -sf http://localhost:3000/api/health 2>/dev/null" || echo "")
   if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "==> Health check passed: $HEALTH"
     break
   fi
   if [ "$i" -eq 30 ]; then
     echo "==> ERROR: Health check failed after 150s"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_HOST" "cd $DEPLOY_APP_DIR && sudo docker-compose logs --tail 20 app"
+    remote "cd $DEPLOY_APP_DIR && sudo docker-compose logs --tail 20 app"
     exit 1
   fi
   echo "    Waiting... ($i/30)"
