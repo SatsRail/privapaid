@@ -184,6 +184,28 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
 
   const thumbSrc = resolveImageUrl(media.thumbnail_id, media.thumbnail_url);
 
+  // Sibling-media list for the YouTube-style "up next" sidebar. Most-viewed
+  // first (founder's choice — surface the channel's hits), current media
+  // excluded, capped at 20 items. Stable secondary sort on _id keeps the
+  // order deterministic across tied view counts.
+  const siblingDocs = await Media.find({
+    channel_id: channel._id,
+    _id: { $ne: media._id },
+  })
+    .select("name thumbnail_id thumbnail_url media_type views_count")
+    .sort({ views_count: -1, _id: 1 })
+    .limit(20)
+    .lean();
+
+  const siblingMedia = siblingDocs.map((m) => ({
+    _id: String(m._id),
+    name: m.name,
+    thumbnailSrc: resolveImageUrl(m.thumbnail_id, m.thumbnail_url),
+    mediaType: m.media_type,
+    viewsCount: m.views_count ?? 0,
+    href: `/c/${slug}/${String(m._id)}`,
+  }));
+
   // JSON-LD structured data
   const mediaJsonLd = buildMediaSchema(
     {
@@ -232,6 +254,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     locale,
     instanceConfig: { theme: { logo: instanceConfig.theme.logo }, name: instanceConfig.name },
     adminPreviewSourceUrl,
+    siblingMedia,
   };
 
   return (

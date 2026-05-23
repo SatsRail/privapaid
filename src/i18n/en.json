@@ -261,6 +261,7 @@
   "viewer.media.access_label": "Access",
   "viewer.media.views_one": "1 view",
   "viewer.media.views_other": "{count} views",
+  "viewer.sidebar.more_from_channel": "More from this channel",
   "viewer.media.comments_one": "1 comment",
   "viewer.media.comments_other": "{count} comments",
 

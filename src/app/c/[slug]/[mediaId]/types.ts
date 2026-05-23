@@ -37,4 +37,23 @@ export interface MediaPageData {
     name: string;
   };
   adminPreviewSourceUrl?: string | null;
+  /**
+   * Other media items in the same channel (excluding the current one),
+   * served pre-serialized with everything the sidebar needs to render
+   * without further server work. Sorted by views descending — the founder's
+   * choice for what to surface as "up next" — and capped at 20 items.
+   * Empty array on a single-media channel.
+   */
+  siblingMedia: SiblingMediaItem[];
+}
+
+export interface SiblingMediaItem {
+  _id: string;
+  name: string;
+  /** Resolved thumbnail URL — handles thumbnail_id (GridFS) vs raw URL. */
+  thumbnailSrc?: string;
+  mediaType: string;
+  viewsCount: number;
+  /** Pre-built canonical href: /c/<slug>/<id>. Sidebar doesn't need to know the slug. */
+  href: string;
 }

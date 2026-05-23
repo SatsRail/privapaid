@@ -9,6 +9,9 @@ vi.mock("@/components/MediaBreadcrumb", () => ({
 vi.mock("@/components/MediaHeader", () => ({
   default: (props: { name: string }) => <div data-testid="header">{props.name}</div>,
 }));
+vi.mock("@/components/MediaMeta", () => ({
+  default: (props: { viewsCount: number }) => <div data-testid="media-meta">{props.viewsCount}</div>,
+}));
 vi.mock("@/components/UnavailableWall", () => ({
   default: (props: { variant: string }) => <div data-testid="unavailable-wall">{props.variant}</div>,
 }));
@@ -20,6 +23,11 @@ vi.mock("@/components/PreviewGallery", () => ({
 }));
 vi.mock("@/components/CommentSection", () => ({
   default: (props: { mediaId: string }) => <div data-testid="comment-section">{props.mediaId}</div>,
+}));
+vi.mock("@/components/ChannelSidebar", () => ({
+  default: (props: { items: { _id: string }[] }) => (
+    <div data-testid="channel-sidebar">{props.items.length} siblings</div>
+  ),
 }));
 vi.mock("@/components/ErrorBoundary", () => ({
   default: ({ children }: { children: React.ReactNode }) => <div data-testid="error-boundary">{children}</div>,
@@ -48,21 +56,72 @@ const baseData: MediaPageData = {
   thumbSrc: undefined,
   locale: "en",
   instanceConfig: { theme: {}, name: "TestInstance" },
+  siblingMedia: [
+    {
+      _id: "s1",
+      name: "Sibling A",
+      thumbnailSrc: "/api/images/a",
+      mediaType: "video",
+      viewsCount: 100,
+      href: "/c/test-channel/s1",
+    },
+    {
+      _id: "s2",
+      name: "Sibling B",
+      thumbnailSrc: "/api/images/b",
+      mediaType: "photo",
+      viewsCount: 50,
+      href: "/c/test-channel/s2",
+    },
+  ],
 };
 
 describe("MediaLayout", () => {
-  it("renders breadcrumb, header, and comment section (one mobile, one desktop)", () => {
+  it("renders breadcrumb, header, and comment section ONCE (comments live under content)", () => {
+    // After the YouTube-style refactor: comments are no longer duplicated
+    // for mobile vs desktop. A single CommentSection sits in the main
+    // column, visible on every breakpoint. The right column is now the
+    // channel sidebar.
     render(<MediaLayout {...baseData} />);
     expect(screen.getByTestId("breadcrumb")).toHaveTextContent("Test Video");
     expect(screen.getByTestId("header")).toHaveTextContent("Test Video");
-    // CommentSection now renders twice: once for mobile (in the main column,
-    // hidden on lg+) and once for desktop (in the sticky sidebar, hidden
-    // below lg). Both wired to the same mediaId.
     const comments = screen.getAllByTestId("comment-section");
-    expect(comments.length).toBe(2);
-    for (const c of comments) {
-      expect(c).toHaveTextContent("m1");
-    }
+    expect(comments.length).toBe(1);
+    expect(comments[0]).toHaveTextContent("m1");
+  });
+
+  it("renders the ChannelSidebar in the right column when siblings exist", () => {
+    render(<MediaLayout {...baseData} />);
+    const sidebar = screen.getByTestId("channel-sidebar");
+    expect(sidebar).toHaveTextContent("2 siblings");
+  });
+
+  it("collapses to a single column when there are no sibling media (channel-of-one)", () => {
+    // Empty sibling list = no rail. Layout becomes single column on every
+    // breakpoint — the empty grid track would be uglier than no track.
+    const { container } = render(
+      <MediaLayout {...baseData} siblingMedia={[]} />
+    );
+    expect(screen.queryByTestId("channel-sidebar")).not.toBeInTheDocument();
+    // No grid classes when there's nothing to fill the second column.
+    const grid = container.querySelector('[class*="md:grid"]');
+    expect(grid).toBeNull();
+  });
+
+  it("uses the YouTube-style grid widths (320px md, 360px lg)", () => {
+    const { container } = render(<MediaLayout {...baseData} />);
+    const grid = container.querySelector('[class*="md:grid"]');
+    expect(grid).not.toBeNull();
+    expect(grid?.className).toContain("md:grid-cols-[1fr_320px]");
+    expect(grid?.className).toContain("lg:grid-cols-[1fr_360px]");
+  });
+
+  it("places the sidebar in an <aside> hidden below md (mobile = no sidebar)", () => {
+    const { container } = render(<MediaLayout {...baseData} />);
+    const aside = container.querySelector("aside");
+    expect(aside).not.toBeNull();
+    expect(aside?.className).toContain("hidden");
+    expect(aside?.className).toContain("md:block");
   });
 
   it("shows UnavailableWall when no products and no admin preview", () => {
@@ -108,9 +167,6 @@ describe("MediaLayout", () => {
   it("renders the preview gallery under the content when preview images exist", () => {
     const data = { ...baseData, previewImages: ["/img1.jpg", "/img2.jpg"] };
     render(<MediaLayout {...data} />);
-    // The right sidebar is now reserved for the comments column on desktop,
-    // so the preview gallery renders once under the main content (visible
-    // on all breakpoints), not in two slots.
     const galleries = screen.getAllByTestId("preview-gallery");
     expect(galleries.length).toBe(1);
     expect(galleries[0]).toHaveTextContent("2 images");
@@ -121,31 +177,8 @@ describe("MediaLayout", () => {
     expect(screen.queryByTestId("preview-gallery")).not.toBeInTheDocument();
   });
 
-  it("uses the wider max-width container (always two-column-capable on desktop)", () => {
+  it("uses the wider max-width container so the sidebar has room", () => {
     const { container } = render(<MediaLayout {...baseData} />);
-    // Sidebar is now universal — always max-w-6xl so the comments column
-    // has room to breathe on md+.
     expect(container.firstElementChild?.className).toContain("max-w-6xl");
-  });
-
-  it("activates the two-column comments sidebar at md+ (not just lg+)", () => {
-    // Intentional regression guard: the previous lg: breakpoint (1024px)
-    // dropped the sidebar on the in-app preview pane and tablet widths,
-    // making the photo page feel inferior to videos. Sidebar now kicks
-    // in at md: (768px).
-    const { container } = render(<MediaLayout {...baseData} />);
-    const grid = container.querySelector('[class*="md:grid"]');
-    expect(grid).not.toBeNull();
-    expect(grid?.className).toContain("md:grid");
-    expect(grid?.className).toContain("md:grid-cols-[1fr_300px]");
-    // …and grows to a wider sidebar on lg+ where there's room.
-    expect(grid?.className).toContain("lg:grid-cols-[1fr_360px]");
-
-    // Mobile comments duplicate is hidden at md+, sidebar comments duplicate
-    // is hidden below md — exactly one renders at any given breakpoint.
-    const mobileWrappers = container.querySelectorAll('[class*="md:hidden"]');
-    const sidebarWrappers = container.querySelectorAll('aside[class*="hidden md:block"]');
-    expect(mobileWrappers.length).toBeGreaterThan(0);
-    expect(sidebarWrappers.length).toBe(1);
   });
 });

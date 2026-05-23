@@ -128,8 +128,11 @@ export default function CommentSection({
       className="mt-8 border-t pt-6"
       style={{ borderColor: "var(--theme-border)" }}
     >
+      {/* YouTube's comments section heading is medium-weight base size,
+          not a heavy title. The number sits inline ("Comments (12)") with
+          the same comfortable weight as the rest of the body. */}
       <h3
-        className="mb-4 text-lg font-semibold"
+        className="mb-4 text-base font-medium"
         style={{ color: "var(--theme-heading)" }}
       >
         {t("viewer.comments.title", { count: comments.length })}
@@ -185,15 +188,27 @@ export default function CommentSection({
         <div className="divide-y divide-[var(--theme-border)]">
           {comments.map((c) => (
             <div key={c._id} className="py-4 first:pt-0 last:pb-0">
-              <div className="mb-1 flex items-center gap-2 text-sm">
-                <span className="font-medium" style={{ color: "var(--theme-text)" }}>
+              {/* Author + timestamp row. YouTube uses smaller timestamps
+                  (xs) than the author name (sm) to de-emphasize the date.
+                  Author keeps medium weight so the name pops. */}
+              <div className="mb-1 flex items-baseline gap-2">
+                <span
+                  className="text-sm font-medium"
+                  style={{ color: "var(--theme-text)" }}
+                >
                   {c.customer.nickname}
                 </span>
-                <span style={{ color: "var(--theme-text-secondary)" }}>
+                <span
+                  className="text-xs"
+                  style={{ color: "var(--theme-text-secondary)" }}
+                >
                   {new Date(c.created_at).toLocaleDateString(locale, { timeZone: "UTC" })}
                 </span>
               </div>
-              <p className="text-sm" style={{ color: "var(--theme-text)" }}>
+              <p
+                className="text-sm leading-snug"
+                style={{ color: "var(--theme-text)" }}
+              >
                 {c.body}
               </p>
             </div>

@@ -462,20 +462,35 @@ function ContentRendererDOM({
     };
   }, [decryptedBytes, mediaType]);
 
-  // Background strategy:
+  // Background + sizing strategy:
   //   • article + podcast      → transparent + padding (text content sits on
   //                              the page background; black tile looks heavy)
   //   • photo                  → transparent (let the page show through any
   //                              letterbox gap from object-contain — black
   //                              bars next to a photo look unfinished)
-  //   • video + audio + others → black (proper letterbox for media players)
+  //   • audio                  → black tile, no aspect constraint
+  //   • video / iframe / other → black + max-w-[860px] centered. YouTube's
+  //                              watch-page video maxes around 854px on
+  //                              desktop; we round to 860 for a tidy number.
+  //                              The iframe is already `aspect-video w-full`
+  //                              and the native <video> intrinsic ratio
+  //                              fills inside the cap, so the box is always
+  //                              16:9 in practice for embeds.
   const isText = mediaType === "article" || mediaType === "podcast";
   const isPhoto = mediaType === "photo";
-  const containerClass = isText
-    ? "min-h-[200px] rounded-lg p-6"
-    : isPhoto
-      ? "min-h-[200px] overflow-hidden rounded-lg"
-      : "min-h-[200px] overflow-hidden rounded-lg bg-black";
+  const isAudio = mediaType === "audio";
+
+  let containerClass: string;
+  if (isText) {
+    containerClass = "min-h-[200px] rounded-lg p-6";
+  } else if (isPhoto) {
+    containerClass = "min-h-[200px] overflow-hidden rounded-lg";
+  } else if (isAudio) {
+    containerClass = "min-h-[80px] rounded-lg bg-black p-4";
+  } else {
+    containerClass =
+      "min-h-[200px] mx-auto max-w-[860px] overflow-hidden rounded-lg bg-black";
+  }
 
   return <div ref={containerRef} className={containerClass} />;
 }

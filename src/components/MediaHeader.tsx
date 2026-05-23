@@ -69,7 +69,10 @@ export default function MediaHeader({
 
   return (
     <div className="mb-6">
-      <h1 className="text-2xl font-bold">{name}</h1>
+      {/* YouTube's watch-page title is medium-weight, slightly smaller than
+          a typical bold h1. Roboto medium at this size reads as authoritative
+          without shouting. */}
+      <h1 className="text-xl font-medium">{name}</h1>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {hasActiveTimedAccess && (
           <AccessTimerPill serverSeconds={remainingSeconds!} locale={locale} />

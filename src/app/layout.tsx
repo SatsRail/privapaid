@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import { cookies } from "next/headers";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Roboto, Geist_Mono } from "next/font/google";
 import SessionProvider from "@/components/SessionProvider";
 import { SidebarProvider } from "@/components/SidebarContext";
 import Navbar from "@/components/Navbar";
@@ -14,9 +14,15 @@ import "./globals.css";
 
 export const dynamic = "force-dynamic";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+// YouTube uses Roboto across its entire UI. We adopt it globally so the
+// viewer page (and the rest of the app) feel like a familiar watch surface.
+// Weights chosen to cover everything we typeset: 400 body, 500 emphasis +
+// titles, 700 bold accents.
+const robotoSans = Roboto({
+  variable: "--font-roboto-sans",
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "700"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
@@ -87,7 +93,7 @@ export default async function RootLayout({
   return (
     <html lang={viewerLocale} className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${robotoSans.variable} ${geistMono.variable} antialiased`}
         style={themeVars}
       >
         {/*

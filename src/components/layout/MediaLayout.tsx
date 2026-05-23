@@ -8,6 +8,7 @@ import UnavailableWall from "@/components/UnavailableWall";
 import PaymentWall from "@/components/PaymentWall";
 import PreviewGallery from "@/components/PreviewGallery";
 import CommentSection from "@/components/CommentSection";
+import ChannelSidebar from "@/components/ChannelSidebar";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AdminPreviewBanner from "@/components/AdminPreviewBanner";
 import AdminPreviewContent from "@/components/AdminPreviewContent";
@@ -23,6 +24,7 @@ export default function MediaLayout({
   locale,
   instanceConfig,
   adminPreviewSourceUrl,
+  siblingMedia,
 }: MediaPageData) {
   const hasPreview = previewImages.length > 0;
 
@@ -44,6 +46,11 @@ export default function MediaLayout({
 
   const hasActiveAccess = access.status === "active";
   const remainingSeconds = access.status === "active" ? access.remainingSeconds : null;
+
+  // Channel-of-one collapses to single column — empty rail is uglier than
+  // no rail. siblingMedia is server-decided (page.tsx fetches all-but-current
+  // media in the channel, capped at 20, sorted by views desc).
+  const hasSidebar = siblingMedia.length > 0;
 
   const mainContent = adminPreviewSourceUrl ? (
     <>
@@ -83,13 +90,24 @@ export default function MediaLayout({
       />
 
       {/*
-        Two-column layout from md+ (768px). Sidebar grows from 300px on md
-        to 360px on lg so the content column stays usable on tablet-class
-        widths. On mobile (<md) the grid collapses to a single column with
-        comments at the bottom — natural source order makes this free.
+        YouTube-style two-column layout. On md+ (≥768px) the right column
+        holds the "more from this channel" sidebar. On mobile the grid
+        collapses to a single column — sidebar is skipped entirely (founder
+        decision; mobile users navigate via the channel page).
+        Sidebar widths: 320px on md, 360px on lg — same proportions YouTube
+        uses on the watch page at comparable breakpoints.
       */}
-      <div className="md:grid md:grid-cols-[1fr_300px] md:gap-6 lg:grid-cols-[1fr_360px] lg:gap-8">
-        {/* Left column — primary content */}
+      <div
+        className={
+          hasSidebar
+            ? "md:grid md:grid-cols-[1fr_320px] md:gap-6 lg:grid-cols-[1fr_360px] lg:gap-8"
+            : ""
+        }
+      >
+        {/* Left column — primary content + comments. Comments live HERE
+            (not in the right column) so the right column can host the
+            sibling-media rail. min-w-0 keeps long titles / wide videos from
+            blowing out the grid track. */}
         <div className="min-w-0">
           <MediaHeader
             name={media.name}
@@ -100,10 +118,9 @@ export default function MediaLayout({
 
           {mainContent}
 
-          {/* YouTube-style meta row: views (and future fields) sit under the
-              player, above the description. Tight visual association with
-              the content rather than competing with the title + price/clock
-              pills above the player. */}
+          {/* YouTube-style meta row: views sit under the player, above the
+              description. Tight visual association with the content rather
+              than competing with the title + price/clock pills above. */}
           <MediaMeta viewsCount={media.views_count} locale={locale} />
 
           {/* Description */}
@@ -111,40 +128,35 @@ export default function MediaLayout({
             <p className="mt-4" style={{ color: "var(--theme-text)" }}>{media.description}</p>
           )}
 
-          {/* Preview images — under content on every breakpoint now that
-              the sidebar is reserved for comments. */}
+          {/* Preview images */}
           {hasPreview && (
             <div className="mt-6">
               <PreviewGallery images={previewImages} />
             </div>
           )}
 
-          {/* Comments — mobile only. On md+ they live in the sidebar. */}
-          <div className="md:hidden">
-            <ErrorBoundary>
-              <CommentSection
-                mediaId={media._id}
-                productIds={productIds}
-                hasAccess={hasActiveAccess}
-                onUnauthorized={refresh}
-              />
-            </ErrorBoundary>
-          </div>
+          {/* Comments — single placement on every breakpoint. The duplicate
+              md:hidden / hidden md:block pair we used to render is gone:
+              now the right column hosts the channel sidebar, not comments. */}
+          <ErrorBoundary>
+            <CommentSection
+              mediaId={media._id}
+              productIds={productIds}
+              hasAccess={hasActiveAccess}
+              onUnauthorized={refresh}
+            />
+          </ErrorBoundary>
         </div>
 
-        {/* Right column — desktop/tablet comments sidebar (md+). */}
-        <aside className="hidden md:block">
-          <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
-            <ErrorBoundary>
-              <CommentSection
-                mediaId={media._id}
-                productIds={productIds}
-                hasAccess={hasActiveAccess}
-                onUnauthorized={refresh}
-              />
-            </ErrorBoundary>
-          </div>
-        </aside>
+        {/* Right column — md+ only. Sticky so the rail follows the viewer
+            as they scroll through long descriptions / comment threads. */}
+        {hasSidebar && (
+          <aside className="hidden md:block">
+            <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
+              <ChannelSidebar items={siblingMedia} locale={locale} />
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );
