@@ -65,8 +65,8 @@ describe("HeartbeatManager", () => {
     expect(onKeyRefreshed).toHaveBeenCalledWith("new-key-123");
   });
 
-  it("calls onExpired when response is not ok", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false });
+  it("calls onExpired when the route returns 410 (portal definitively rejected)", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 410 });
     const onExpired = vi.fn();
 
     render(
@@ -80,6 +80,77 @@ describe("HeartbeatManager", () => {
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(onExpired).toHaveBeenCalled();
+  });
+
+  it("calls onExpired when the route returns 404 (cookie has no entry)", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 404 });
+    const onExpired = vi.fn();
+
+    render(
+      <HeartbeatManager
+        productId="p1"
+        onExpired={onExpired}
+        onKeyRefreshed={vi.fn()}
+        intervalMs={1000}
+      />
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onExpired).toHaveBeenCalled();
+  });
+
+  it("does NOT call onExpired on 502 (transient portal failure) — retries next tick", async () => {
+    // Regression guard: a single portal hiccup must not lock a paying
+    // customer out. The cookie is preserved server-side on 502; the
+    // user's macaroon is likely still valid.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 502 });
+    const onExpired = vi.fn();
+
+    render(
+      <HeartbeatManager
+        productId="p1"
+        onExpired={onExpired}
+        onKeyRefreshed={vi.fn()}
+        intervalMs={1000}
+      />
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onExpired).not.toHaveBeenCalled();
+
+    // Next tick: portal recovers, returns key, content stays unlocked.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ key: "recovered-key", remaining_seconds: 100 }),
+    });
+    const onKeyRefreshed = vi.fn();
+    render(
+      <HeartbeatManager
+        productId="p2"
+        onExpired={vi.fn()}
+        onKeyRefreshed={onKeyRefreshed}
+        intervalMs={1000}
+      />
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onKeyRefreshed).toHaveBeenCalledWith("recovered-key");
+  });
+
+  it("does NOT call onExpired on 500 / unexpected non-2xx — same transient-tolerance principle", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 500 });
+    const onExpired = vi.fn();
+
+    render(
+      <HeartbeatManager
+        productId="p1"
+        onExpired={onExpired}
+        onKeyRefreshed={vi.fn()}
+        intervalMs={1000}
+      />
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onExpired).not.toHaveBeenCalled();
   });
 
   it("does not expire on network error", async () => {

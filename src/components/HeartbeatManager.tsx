@@ -28,16 +28,28 @@ export default function HeartbeatManager({
           body: JSON.stringify({ product_id: productId }),
         });
 
-        if (!res.ok) {
-          onExpired();
+        if (res.ok) {
+          const data = await res.json();
+          onKeyRefreshed(data.key);
+          if (data.remaining_seconds != null) {
+            onRemainingSeconds?.(data.remaining_seconds);
+          }
           return;
         }
 
-        const data = await res.json();
-        onKeyRefreshed(data.key);
-        if (data.remaining_seconds != null) {
-          onRemainingSeconds?.(data.remaining_seconds);
+        // 410 = portal definitively rejected the macaroon (access expired
+        // or signature-invalid). The cookie has already been cleared by
+        // the route; lock the content.
+        // 404 = cookie has no entry for this product. Lock the content.
+        // 502 / other non-2xx = transient portal failure (network blip,
+        // upstream 5xx). The cookie is preserved by the route; do NOT
+        // lock the user out for a temporary hiccup — retry on the next
+        // interval. Treating these as expiry is what caused "image
+        // disappears for a few minutes" after a single portal hiccup.
+        if (res.status === 410 || res.status === 404) {
+          onExpired();
         }
+        // Any other status: leave content alone, retry next tick.
       } catch {
         // Network error — don't expire, just skip this check
       }
