@@ -171,6 +171,13 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     expect(body.product_id).toBe(productId);
     expect(body.key).toBe(productKey);
     expect(body.encrypted_blob).toBe(encryptedSourceUrl);
+    // Drives the access pill in MediaHeader. The portal already returned
+    // this via verifyMacaroonAccess; the unlock route must propagate it so
+    // useMediaAccess can populate `remainingSeconds` on a returning visitor.
+    // Regression guard: without this, MediaHeader sees remainingSeconds=0,
+    // treats access as inactive for UI purposes, and the price pill stays
+    // visible even though content decrypts.
+    expect(body.remaining_seconds).toBe(3600);
 
     // Step 3 — client decryption (Web Crypto), the exact path PaymentWall runs
     const recovered = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);

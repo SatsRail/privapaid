@@ -198,14 +198,86 @@ export function useMediaAccess({
         remainingSeconds,
         encryptedBlob,
       });
+      // Tell sibling tabs viewing this same media. The message carries NO
+      // sensitive data — only "the cookie is now set, re-check the server."
+      // Each receiver will call `/api/media/[id]/unlock` and read its own
+      // copy from the shared cookie.
+      if (typeof BroadcastChannel !== "undefined") {
+        try {
+          const channel = new BroadcastChannel(`privapaid:access:${mediaId}`);
+          channel.postMessage({ type: "claimed", mediaId, productId });
+          channel.close();
+        } catch {
+          // Some browser quirk — fall back to the visibility listener.
+        }
+      }
     },
-    []
+    [mediaId]
   );
 
   const refresh = useCallback(async () => {
     const next = await fetchAccess(mediaId);
     setAccess(next);
   }, [mediaId]);
+
+  // Cross-tab access sync. Cookies are shared across same-origin tabs, but
+  // each tab's hook only runs its mount-time check ONCE. Two scenarios fail
+  // without cross-tab sync:
+  //
+  //   1. Tab B opened BEFORE Tab A's payment. Tab B server-rendered with
+  //      empty `storedProductIds` → hook short-circuited to no_cookie. The
+  //      cookie now exists in the browser but Tab B doesn't know.
+  //   2. Tab B is paying in a popup/iframe and the parent tab needs to
+  //      learn about it.
+  //
+  // We use BroadcastChannel for the immediate signal — Tab A's `claim()`
+  // posts a message, every other tab subscribing on the same channel hears
+  // it and calls `refresh()`. The decryption key itself is NOT broadcast;
+  // we just signal "go re-check with the server, the cookie is there now."
+  // This preserves the cookies-as-trust-boundary invariant.
+  //
+  // A visibility-change listener catches the missed-broadcast cases (Tab A
+  // closed before Tab B opened; browser quirks suppressed the message).
+  // It always fetches, ignoring the storedKey short-circuit, because that
+  // short-circuit only reflects what the server-render saw — by the time
+  // visibility fires, the cookie state may have moved.
+  useEffect(() => {
+    let cancelled = false;
+    const channelName = `privapaid:access:${mediaId}`;
+
+    const doRefresh = () => {
+      if (access.status === "active") return;
+      fetchAccess(mediaId).then((next) => {
+        if (!cancelled) setAccess(next);
+      });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      doRefresh();
+    };
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      channel = new BroadcastChannel(channelName);
+      channel.onmessage = (e: MessageEvent) => {
+        if (e.data?.type === "claimed" && e.data.mediaId === mediaId) {
+          doRefresh();
+        }
+      };
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", doRefresh);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", doRefresh);
+      channel?.close();
+    };
+    // `access.status` is in deps so the closure reads the current status —
+    // stale closures would always think access is whatever it was at mount.
+  }, [mediaId, access.status]);
 
   return { access, claim, refresh };
 }

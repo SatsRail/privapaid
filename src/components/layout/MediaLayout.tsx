@@ -3,6 +3,7 @@
 import type { MediaPageData } from "@/app/c/[slug]/[mediaId]/types";
 import MediaBreadcrumb from "@/components/MediaBreadcrumb";
 import MediaHeader from "@/components/MediaHeader";
+import MediaMeta from "@/components/MediaMeta";
 import UnavailableWall from "@/components/UnavailableWall";
 import PaymentWall from "@/components/PaymentWall";
 import PreviewGallery from "@/components/PreviewGallery";
@@ -93,13 +94,17 @@ export default function MediaLayout({
           <MediaHeader
             name={media.name}
             products={products}
-            viewsCount={media.views_count}
-            commentsCount={media.comments_count}
             locale={locale}
             remainingSeconds={remainingSeconds}
           />
 
           {mainContent}
+
+          {/* YouTube-style meta row: views (and future fields) sit under the
+              player, above the description. Tight visual association with
+              the content rather than competing with the title + price/clock
+              pills above the player. */}
+          <MediaMeta viewsCount={media.views_count} locale={locale} />
 
           {/* Description */}
           {media.description && (

@@ -5,8 +5,15 @@ import type { SerializedProduct } from "@/app/c/[slug]/[mediaId]/types";
 interface MediaHeaderProps {
   name: string;
   products: SerializedProduct[];
-  viewsCount: number;
-  commentsCount: number;
+  /**
+   * Retained on the interface so callers can pass it through without
+   * coupling to the layout's meta-row placement. The header itself does
+   * not render views — that moved under the content (see MediaLayout's
+   * MediaMeta below the player) so the title + price/clock pills stay
+   * tight. YouTube-style placement.
+   */
+  viewsCount?: number;
+  commentsCount?: number;
   locale: string;
   remainingSeconds?: number | null;
 }
@@ -14,7 +21,6 @@ interface MediaHeaderProps {
 export default function MediaHeader({
   name,
   products,
-  viewsCount,
   locale,
   remainingSeconds,
 }: MediaHeaderProps) {
@@ -90,11 +96,6 @@ export default function MediaHeader({
         )}
         {showPricePill && pricePill}
       </div>
-      {viewsCount > 0 && (
-        <div className="mt-1.5 flex gap-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>
-          <span>{t(locale, "viewer.media.views", { count: viewsCount })}</span>
-        </div>
-      )}
     </div>
   );
 }

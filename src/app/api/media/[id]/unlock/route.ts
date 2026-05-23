@@ -56,6 +56,12 @@ export async function GET(_req: Request, context: RouteContext) {
       key_fingerprint: access.keyFingerprint || product.keyFingerprint,
       encrypted_blob: product.encryptedBlob,
       product_id: product.productId,
+      // Drives the access pill in MediaHeader. Without this the
+      // useMediaAccess hook stores remainingSeconds=0, MediaHeader sees no
+      // active time-gated access, and the price pill stays visible even
+      // though content unlocked. The portal already returned the value via
+      // verifyMacaroonAccess; we just need to propagate it.
+      remaining_seconds: access.remainingSeconds ?? 0,
     });
   } catch (err) {
     console.error("Unlock error:", err);

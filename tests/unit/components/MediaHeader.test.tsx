@@ -65,14 +65,12 @@ describe("MediaHeader", () => {
     expect(screen.getByText(/\$5/)).toBeInTheDocument();
   });
 
-  it("hides views when count is 0", () => {
-    render(<MediaHeader {...baseProps} viewsCount={0} />);
-    expect(screen.queryByText(/viewer\.media\.views/)).not.toBeInTheDocument();
-  });
-
-  it("shows views when count is greater than 0", () => {
+  it("never renders the views counter — that moved to MediaMeta under the content", () => {
+    // YouTube-style placement: the views counter lives under the player,
+    // not next to the title. Header stays tight with just title + pills.
+    // The prop is still accepted for backward compatibility but ignored.
     render(<MediaHeader {...baseProps} viewsCount={42} />);
-    expect(screen.getByText("viewer.media.views:42")).toBeInTheDocument();
+    expect(screen.queryByText(/viewer\.media\.views/)).not.toBeInTheDocument();
   });
 
   it("never renders the comments line (it lives in the comments section heading)", () => {
