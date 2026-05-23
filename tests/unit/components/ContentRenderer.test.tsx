@@ -317,7 +317,10 @@ describe("ContentRenderer", () => {
       expect(img?.src).toBe("blob:fake-url");
     });
 
-    it("handles image onload by revoking object URL", () => {
+    it("keeps the blob URL alive across onload so the lightbox click handler can reuse it", () => {
+      // We deliberately moved revoke from `img.onload` to component cleanup
+      // so clicking the rendered image to open the full-resolution lightbox
+      // doesn't hit a dead blob URL.
       mockDetectMimeType.mockReturnValue("image/png");
 
       const { container } = render(
@@ -327,10 +330,22 @@ describe("ContentRenderer", () => {
       act(() => {
         img?.dispatchEvent(new Event("load"));
       });
+      // `onload` must NOT revoke — that's what the lightbox needs.
+      expect(global.URL.revokeObjectURL).not.toHaveBeenCalled();
+    });
+
+    it("revokes the image blob URL when the component unmounts", () => {
+      mockDetectMimeType.mockReturnValue("image/png");
+
+      const { unmount } = render(
+        <ContentRenderer decryptedBytes={new Uint8Array([0x89, 0x50, 0x4e, 0x47])} mediaType="image" />
+      );
+      expect(global.URL.revokeObjectURL).not.toHaveBeenCalled();
+      unmount();
       expect(global.URL.revokeObjectURL).toHaveBeenCalledWith("blob:fake-url");
     });
 
-    it("handles image onerror", () => {
+    it("handles image onerror by reporting to Sentry (without revoking — cleanup handles that)", () => {
       mockDetectMimeType.mockReturnValue("image/jpeg");
 
       const { container } = render(
@@ -340,7 +355,6 @@ describe("ContentRenderer", () => {
       act(() => {
         img?.dispatchEvent(new Event("error"));
       });
-      expect(global.URL.revokeObjectURL).toHaveBeenCalled();
       expect(mockCaptureException).toHaveBeenCalled();
     });
 
@@ -355,7 +369,7 @@ describe("ContentRenderer", () => {
       expect(video?.controls).toBe(true);
     });
 
-    it("handles video blob onerror", () => {
+    it("handles video blob onerror by reporting to Sentry (cleanup handles revoke)", () => {
       mockDetectMimeType.mockReturnValue("video/webm");
 
       const { container } = render(
@@ -365,7 +379,6 @@ describe("ContentRenderer", () => {
       act(() => {
         video?.dispatchEvent(new Event("error"));
       });
-      expect(global.URL.revokeObjectURL).toHaveBeenCalled();
       expect(mockCaptureException).toHaveBeenCalled();
     });
 
@@ -380,7 +393,7 @@ describe("ContentRenderer", () => {
       expect(audio?.controls).toBe(true);
     });
 
-    it("handles audio blob onerror", () => {
+    it("handles audio blob onerror by reporting to Sentry (cleanup handles revoke)", () => {
       mockDetectMimeType.mockReturnValue("audio/mpeg");
 
       const { container } = render(
@@ -390,7 +403,6 @@ describe("ContentRenderer", () => {
       act(() => {
         audio?.dispatchEvent(new Event("error"));
       });
-      expect(global.URL.revokeObjectURL).toHaveBeenCalled();
       expect(mockCaptureException).toHaveBeenCalled();
     });
   });

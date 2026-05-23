@@ -24,7 +24,9 @@ export default function MediaLayout({
   adminPreviewSourceUrl,
 }: MediaPageData) {
   const hasPreview = previewImages.length > 0;
-  const useSidebar = hasPreview;
+  // Always render the desktop sidebar — it holds the comments column.
+  // Preview images, when present, share the right column above comments.
+  const useSidebar = true;
 
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const handleExpired = useCallback(() => setRemainingSeconds(null), []);
@@ -59,7 +61,7 @@ export default function MediaLayout({
   );
 
   return (
-    <div className={`mx-auto px-6 py-8 ${useSidebar ? "max-w-6xl" : "max-w-4xl"}`}>
+    <div className="mx-auto max-w-6xl px-6 py-8">
       <MediaBreadcrumb
         channelName={channel.name}
         channelSlug={channel.slug}
@@ -67,8 +69,15 @@ export default function MediaLayout({
         locale={locale}
       />
 
-      <div className={useSidebar ? "lg:grid lg:grid-cols-[1fr_280px] lg:gap-8" : ""}>
-        {/* Left column */}
+      {/*
+        Two-column layout on desktop (lg+):
+          left  = content (header, paywall/player, description, preview images)
+          right = sticky comments column (Twitch/YouTube-style sidebar)
+        On mobile the grid collapses to a single column with comments at
+        the bottom — the natural source order makes this free.
+      */}
+      <div className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-8">
+        {/* Left column — primary content */}
         <div className="min-w-0">
           <MediaHeader
             name={media.name}
@@ -86,31 +95,38 @@ export default function MediaLayout({
             <p className="mt-4" style={{ color: "var(--theme-text)" }}>{media.description}</p>
           )}
 
-          {/* Preview images — mobile fallback */}
+          {/* Preview images — under content on every breakpoint now that
+              the sidebar is reserved for comments. */}
           {hasPreview && (
-            <div className="mt-6 lg:hidden">
+            <div className="mt-6">
               <PreviewGallery images={previewImages} />
             </div>
           )}
 
-          {/* Comments */}
-          <ErrorBoundary>
-            <CommentSection
-              mediaId={media._id}
-              productIds={products.map((p) => p.productId)}
-              storedProductIds={storedProductIds}
-            />
-          </ErrorBoundary>
+          {/* Comments — mobile only. On desktop they live in the sidebar. */}
+          <div className="lg:hidden">
+            <ErrorBoundary>
+              <CommentSection
+                mediaId={media._id}
+                productIds={products.map((p) => p.productId)}
+                storedProductIds={storedProductIds}
+              />
+            </ErrorBoundary>
+          </div>
         </div>
 
-        {/* Right column — preview sidebar */}
-        {useSidebar && (
-          <div className="hidden lg:block">
-            <div className="sticky top-20">
-              <PreviewGallery images={previewImages} />
-            </div>
+        {/* Right column — desktop comments sidebar */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
+            <ErrorBoundary>
+              <CommentSection
+                mediaId={media._id}
+                productIds={products.map((p) => p.productId)}
+                storedProductIds={storedProductIds}
+              />
+            </ErrorBoundary>
           </div>
-        )}
+        </aside>
       </div>
     </div>
   );

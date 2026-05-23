@@ -205,6 +205,11 @@ function ContentRendererDOM({
     const mime = detectMimeType(decryptedBytes);
     const container = containerRef.current;
 
+    // Blob URLs created during this render — revoked on cleanup. We keep
+    // them alive across `img.onload` because the lightbox click handler
+    // reuses the same URL when the user clicks to zoom.
+    const blobUrls: string[] = [];
+
     // Clear previous content
     container.innerHTML = "";
 
@@ -330,12 +335,17 @@ function ContentRendererDOM({
     } else if (mime.startsWith("image/")) {
       const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mime });
       const url = URL.createObjectURL(blob);
+      blobUrls.push(url);
       const img = document.createElement("img");
       img.src = url;
-      img.className = "max-w-full rounded-lg";
-      img.onload = () => URL.revokeObjectURL(url);
+      // Cap the rendered height so a tall portrait doesn't push the rest of
+      // the page (sidebar comments, description) off-screen. `object-contain`
+      // preserves aspect ratio within the constrained box. Click opens the
+      // full-resolution lightbox we already use elsewhere.
+      img.className =
+        "block w-full max-h-[80vh] rounded-lg object-contain cursor-zoom-in bg-black";
+      img.addEventListener("click", () => openImageLightbox(url));
       img.onerror = () => {
-        URL.revokeObjectURL(url);
         Sentry.captureException(new Error("Image blob failed to render"), {
           tags: { context: "ContentRenderer.image" },
           extra: { mime, byteLength: decryptedBytes.length },
@@ -345,12 +355,12 @@ function ContentRendererDOM({
     } else if (mime.startsWith("video/")) {
       const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mime });
       const url = URL.createObjectURL(blob);
+      blobUrls.push(url);
       const video = document.createElement("video");
       video.src = url;
       video.controls = true;
       video.className = "w-full rounded-lg";
       video.onerror = () => {
-        URL.revokeObjectURL(url);
         Sentry.captureException(new Error("Video blob failed to render"), {
           tags: { context: "ContentRenderer.videoBlob" },
           extra: { mime, byteLength: decryptedBytes.length },
@@ -360,12 +370,12 @@ function ContentRendererDOM({
     } else if (mime.startsWith("audio/")) {
       const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mime });
       const url = URL.createObjectURL(blob);
+      blobUrls.push(url);
       const audio = document.createElement("audio");
       audio.src = url;
       audio.controls = true;
       audio.className = "w-full";
       audio.onerror = () => {
-        URL.revokeObjectURL(url);
         Sentry.captureException(new Error("Audio blob failed to render"), {
           tags: { context: "ContentRenderer.audioBlob" },
           extra: { mime, byteLength: decryptedBytes.length },
@@ -442,6 +452,11 @@ function ContentRendererDOM({
       // Remove any lingering lightbox overlay
       document.querySelector("[data-lightbox-overlay]")?.remove();
       document.body.style.overflow = "";
+      // Release blob URLs allocated during this render. We deliberately did
+      // NOT revoke on `onload` so the lightbox click handler can still open
+      // the same URL — cleanup on unmount / decryptedBytes change is the
+      // correct lifecycle boundary.
+      for (const u of blobUrls) URL.revokeObjectURL(u);
     };
   }, [decryptedBytes, mediaType]);
 

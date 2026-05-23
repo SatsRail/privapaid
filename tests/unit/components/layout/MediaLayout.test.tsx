@@ -51,11 +51,18 @@ const baseData: MediaPageData = {
 };
 
 describe("MediaLayout", () => {
-  it("renders breadcrumb, header, and comment section", () => {
+  it("renders breadcrumb, header, and comment section (one mobile, one desktop)", () => {
     render(<MediaLayout {...baseData} />);
     expect(screen.getByTestId("breadcrumb")).toHaveTextContent("Test Video");
     expect(screen.getByTestId("header")).toHaveTextContent("Test Video");
-    expect(screen.getByTestId("comment-section")).toHaveTextContent("m1");
+    // CommentSection now renders twice: once for mobile (in the main column,
+    // hidden on lg+) and once for desktop (in the sticky sidebar, hidden
+    // below lg). Both wired to the same mediaId.
+    const comments = screen.getAllByTestId("comment-section");
+    expect(comments.length).toBe(2);
+    for (const c of comments) {
+      expect(c).toHaveTextContent("m1");
+    }
   });
 
   it("shows UnavailableWall when no products and no admin preview", () => {
@@ -98,11 +105,15 @@ describe("MediaLayout", () => {
     expect(screen.queryByText("A great video")).not.toBeInTheDocument();
   });
 
-  it("renders preview gallery sidebar when preview images exist", () => {
+  it("renders the preview gallery under the content when preview images exist", () => {
     const data = { ...baseData, previewImages: ["/img1.jpg", "/img2.jpg"] };
     render(<MediaLayout {...data} />);
+    // The right sidebar is now reserved for the comments column on desktop,
+    // so the preview gallery renders once under the main content (visible
+    // on all breakpoints), not in two slots.
     const galleries = screen.getAllByTestId("preview-gallery");
-    expect(galleries.length).toBe(2); // mobile + desktop
+    expect(galleries.length).toBe(1);
+    expect(galleries[0]).toHaveTextContent("2 images");
   });
 
   it("does not render preview gallery when no preview images", () => {
@@ -110,14 +121,10 @@ describe("MediaLayout", () => {
     expect(screen.queryByTestId("preview-gallery")).not.toBeInTheDocument();
   });
 
-  it("uses wider max-width class when sidebar is present", () => {
-    const data = { ...baseData, previewImages: ["/img.jpg"] };
-    const { container } = render(<MediaLayout {...data} />);
-    expect(container.firstElementChild?.className).toContain("max-w-6xl");
-  });
-
-  it("uses narrower max-width class when no sidebar", () => {
+  it("uses the wider max-width container (always two-column-capable on desktop)", () => {
     const { container } = render(<MediaLayout {...baseData} />);
-    expect(container.firstElementChild?.className).toContain("max-w-4xl");
+    // Sidebar is now universal — always max-w-6xl so the comments column
+    // has room to breathe on lg+.
+    expect(container.firstElementChild?.className).toContain("max-w-6xl");
   });
 });
