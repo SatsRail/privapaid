@@ -207,7 +207,12 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     expect(body.error).toBe("No product available for this media");
   });
 
-  it("returns 404 when media product is archived", async () => {
+  it("verifies archived media products too — existing payments must still grant access", async () => {
+    // Architectural change: archiving a product means "stop selling new
+    // access", not "revoke existing access". A customer who paid before
+    // the archive must still be able to view the content. The unlock
+    // route uses `includeArchived: true` so the archived product enters
+    // the verification list; verifyMacaroonAccess does the rest.
     const channel = await Channel.create({
       ref: 104,
       slug: "archived-ch",
@@ -226,6 +231,57 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await MediaProduct.create({
       media_id: mid,
       satsrail_product_id: "prod_archived",
+      encrypted_source_url: "enc_blob_archived",
+      key_fingerprint: "fp_archived",
+      product_status: "archived",
+    });
+
+    // With a valid macaroon: the archived product unlocks normally.
+    mockCookieStore._set(
+      "satsrail_macaroons",
+      JSON.stringify({ prod_archived: "mac_still_valid" })
+    );
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        valid: true,
+        key: "decrypt_key_archived",
+        remaining_seconds: 3600,
+      }),
+    });
+
+    const res = await GET(makeRequest(mid), makeContext(mid));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.key).toBe("decrypt_key_archived");
+    expect(body.encrypted_blob).toBe("enc_blob_archived");
+    expect(body.product_id).toBe("prod_archived");
+  });
+
+  it("returns 401 (not 404) for archived product when no macaroon exists", async () => {
+    // Same setup as above, but no macaroon — should now be 401 "payment
+    // required", not 404 "no product available". The product DOES exist;
+    // the user just doesn't have proof of payment.
+    const channel = await Channel.create({
+      ref: 1041,
+      slug: "archived-ch-no-mac",
+      name: "Archived Channel No Mac",
+      active: true,
+    });
+    const media = await Media.create({
+      ref: 3031,
+      channel_id: String(channel._id),
+      name: "Archived Media No Mac",
+      source_url: "https://example.com/archived.mp4",
+      media_type: "video",
+    });
+    const mid = String(media._id);
+
+    await MediaProduct.create({
+      media_id: mid,
+      satsrail_product_id: "prod_archived_no_mac",
       encrypted_source_url: "enc_blob",
       product_status: "archived",
     });
@@ -233,8 +289,8 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     const res = await GET(makeRequest(mid), makeContext(mid));
     const body = await res.json();
 
-    expect(res.status).toBe(404);
-    expect(body.error).toBe("No product available for this media");
+    expect(res.status).toBe(401);
+    expect(body.error).toBe("Payment required");
   });
 
   it("returns 401 when no macaroon cookie", async () => {
@@ -350,7 +406,8 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     expect(body.key_fingerprint).toBe("fp_ch");
   });
 
-  it("returns 404 when channel product is archived", async () => {
+  it("verifies archived CHANNEL products too — channel-wide payments survive archive", async () => {
+    // Same archive-survives-payment invariant for channel-level products.
     const channel = await Channel.create({
       ref: 105,
       slug: "archived-cp-ch",
@@ -376,11 +433,81 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ],
     });
 
+    mockCookieStore._set(
+      "satsrail_macaroons",
+      JSON.stringify({ prod_cp_archived: "mac_ch_valid" })
+    );
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        valid: true,
+        key: "ch_key_after_archive",
+        remaining_seconds: 86400,
+      }),
+    });
+
     const res = await GET(makeRequest(mid), makeContext(mid));
     const body = await res.json();
 
-    expect(res.status).toBe(404);
-    expect(body.error).toBe("No product available for this media");
+    expect(res.status).toBe(200);
+    expect(body.key).toBe("ch_key_after_archive");
+    expect(body.encrypted_blob).toBe("cp_enc_blob");
+  });
+
+  it("returns 401 with expired_at when the cookie holds an expired macaroon for one of this media's products", async () => {
+    // The diagnostic surface: when verifyMacaroonAccess returns no live
+    // access, the route peeks into the cookie and reports the most-recent
+    // expiry. The client then renders "your access expired on X, pay to
+    // renew" instead of a silent paywall.
+    const { mediaId } = await seedWithMediaProduct();
+
+    // A real expired macaroon (Rails MessageVerifier format). The portal
+    // verify will reject (mocked below), but findExpiredAccessForProducts
+    // reads the encoded exp locally.
+    const expiredAt = new Date("2026-05-15T21:20:45.228Z");
+    const body = {
+      _rails: {
+        data: {
+          product_id: "prod_unlock",
+          exp: Math.floor(expiredAt.getTime() / 1000),
+        },
+        exp: expiredAt.toISOString(),
+        pur: "access_token",
+      },
+    };
+    const macaroon = `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
+
+    mockCookieStore._set(
+      "satsrail_macaroons",
+      JSON.stringify({ prod_unlock: macaroon })
+    );
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 402,
+      json: async () => ({ valid: false, error: { code: "access_expired" } }),
+    });
+
+    const res = await GET(makeRequest(mediaId), makeContext(mediaId));
+    const json = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(json.error).toBe("Payment required");
+    expect(json.expired_at).toBe(expiredAt.toISOString());
+    expect(json.expired_product_id).toBe("prod_unlock");
+  });
+
+  it("returns 401 WITHOUT expired_at when no matching cookie entry exists at all", async () => {
+    // Fresh visitor — never paid for anything that covers this media.
+    // Nothing in the cookie to surface; the paywall renders normally.
+    const { mediaId } = await seedWithMediaProduct();
+
+    const res = await GET(makeRequest(mediaId), makeContext(mediaId));
+    const json = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(json.expired_at).toBeUndefined();
+    expect(json.expired_product_id).toBeUndefined();
   });
 
   // ── Channel + Media product coexistence (the critical bug fix) ────

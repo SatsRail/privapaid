@@ -12,6 +12,7 @@ import * as Sentry from "@sentry/nextjs";
 import CheckoutOverlay from "@/components/CheckoutOverlay";
 import ContentRenderer from "@/components/ContentRenderer";
 import ExchangeModal from "@/components/ExchangeModal";
+import ExpiredAccessBanner from "@/components/ExpiredAccessBanner";
 import UnlockFailureCard from "@/components/UnlockFailureCard";
 import VerifyFailureCard from "@/components/VerifyFailureCard";
 import { useLocale } from "@/i18n/useLocale";
@@ -402,8 +403,16 @@ export default function PaymentWall({
     );
   }
 
+  // Surface "your access expired on [date], pay to renew" above the unlock
+  // buttons when the cookie holds an expired macaroon. This is the
+  // "returning visitor whose subscription lapsed" case — used to render a
+  // silent paywall; now it explains why they need to pay again.
+  const expiredAccessAt =
+    access.status === "inactive" ? access.expiredAt : undefined;
+
   const productButtons = (
     <div className="flex flex-col items-center gap-3 w-full max-w-sm">
+      {expiredAccessAt && <ExpiredAccessBanner expiredAt={expiredAccessAt} />}
       <div className="flex items-center gap-2 mb-1">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-[#f7931a]">
           <path d="M23.638 14.904c-1.602 6.43-8.113 10.34-14.542 8.736C2.67 22.05-1.244 15.525.362 9.105 1.962 2.67 8.475-1.243 14.9.358c6.43 1.605 10.342 8.115 8.738 14.546z" />

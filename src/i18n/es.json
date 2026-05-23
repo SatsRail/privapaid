@@ -266,6 +266,8 @@
 
   "viewer.payment.unlock_with_bitcoin": "Desbloquear con Bitcoin",
   "viewer.payment.unlock_content": "Desbloquear contenido",
+  "viewer.payment.expired_banner.title": "Tu acceso expiró",
+  "viewer.payment.expired_banner.body": "Tu acceso anterior terminó el {date}. Paga de nuevo para renovar.",
   "viewer.payment.duration_access": "{duration} de acceso",
   "viewer.payment.lifetime": "Permanente",
   "viewer.payment.min": "{n} min",

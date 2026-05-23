@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
-import { getProductsForMedia, verifyMacaroonAccess } from "@/lib/access-gate";
+import {
+  getProductsForMedia,
+  verifyMacaroonAccess,
+  findExpiredAccessForProducts,
+} from "@/lib/access-gate";
 import Channel from "@/models/Channel";
 import Media from "@/models/Media";
 import * as Sentry from "@sentry/nextjs";
@@ -27,7 +31,15 @@ export async function GET(_req: Request, context: RouteContext) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
 
-    const products = await getProductsForMedia(String(media._id), String(media.channel_id));
+    // Verification path uses `includeArchived: true` — existing payments
+    // must still grant access even after a merchant retires the product.
+    // (The page-render purchase UI uses the default to hide archived
+    // buy buttons.)
+    const products = await getProductsForMedia(
+      String(media._id),
+      String(media.channel_id),
+      { includeArchived: true }
+    );
 
     if (products.length === 0) {
       return NextResponse.json(
@@ -40,8 +52,18 @@ export async function GET(_req: Request, context: RouteContext) {
     const access = await verifyMacaroonAccess(productIds);
 
     if (!access.granted || !access.productId) {
+      // No live macaroon — but the cookie might still hold an expired one
+      // from a past purchase. Surface that so the paywall can show
+      // "your access expired on X, pay to renew" instead of a silent gate.
+      const expired = await findExpiredAccessForProducts(productIds);
       return NextResponse.json(
-        { error: "Payment required" },
+        {
+          error: "Payment required",
+          ...(expired && {
+            expired_at: expired.expiredAt.toISOString(),
+            expired_product_id: expired.productId,
+          }),
+        },
         { status: 401 }
       );
     }

@@ -466,6 +466,39 @@ describe("PaymentWall", () => {
       expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
     });
 
+    it("renders the ExpiredAccessBanner above the unlock buttons when access.expiredAt is set", async () => {
+      // The "returning visitor whose subscription lapsed" case — the
+      // useMediaAccess hook picked up `expired_at` from the unlock 401
+      // and surfaces it here so the paywall isn't silent about WHY the
+      // user is being asked to pay again.
+      const expiredAt = new Date("2026-05-15T21:20:45.228Z");
+      render(
+        <PaymentWall
+          {...defaultProps}
+          access={{
+            status: "inactive",
+            reason: "portal_rejected",
+            expiredAt,
+            expiredProductId: "prod-1",
+          }}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("expired-access-banner")).toBeInTheDocument();
+      });
+      expect(screen.getByText("Your access expired")).toBeInTheDocument();
+      // Pay buttons still render — the user CAN renew.
+      expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
+    });
+
+    it("does NOT render the ExpiredAccessBanner for a fresh visitor (no expiredAt)", async () => {
+      render(<PaymentWall {...defaultProps} access={NO_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("expired-access-banner")).not.toBeInTheDocument();
+    });
+
     it("does NOT show VerifyFailureCard for the 'portal_rejected' reason (cookie present but invalid)", async () => {
       // portal_rejected means the macaroon failed verification — that's a
       // real expiry, not a transient hiccup. We show the paywall.

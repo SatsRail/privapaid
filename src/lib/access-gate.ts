@@ -9,7 +9,11 @@
 
 import { cookies } from "next/headers";
 import { getInstanceConfig } from "@/config/instance";
-import { parseMacaroonCookie, COOKIE_NAME } from "@/lib/macaroon-cookie";
+import {
+  parseMacaroonCookie,
+  findMostRecentExpiry,
+  COOKIE_NAME,
+} from "@/lib/macaroon-cookie";
 import { getMerchantKey } from "@/lib/merchant-key";
 import MediaProduct from "@/models/MediaProduct";
 import ChannelProduct from "@/models/ChannelProduct";
@@ -20,6 +24,13 @@ export interface GatedProduct {
   productId: string;
   encryptedBlob?: string;
   keyFingerprint?: string;
+  /**
+   * Server-side product lifecycle status: "active", "inactive", "archived",
+   * or undefined for legacy rows. Surfaced so verification paths can keep
+   * iterating archived products (existing payments must still grant access)
+   * while purchase UIs filter to active-only.
+   */
+  status?: string;
 }
 
 export interface AccessResult {
@@ -33,9 +44,15 @@ export interface AccessResult {
 // ── Product lookup ───────────────────────────────────────────────────
 
 /**
- * Return every non-archived product (MediaProduct + ChannelProduct) that
- * covers a given media item. This is the single source of truth for
- * "what products gate this content?"
+ * Return every product (MediaProduct + ChannelProduct) that covers a given
+ * media item. This is the single source of truth for "what products gate
+ * this content?"
+ *
+ * By default, archived products are filtered out — purchase UIs should not
+ * show buy buttons for products the merchant has explicitly retired. Pass
+ * `{ includeArchived: true }` for verification paths where existing payments
+ * must still grant access regardless of archival status (archiving a product
+ * means "stop selling", not "revoke everyone's access").
  *
  * The filter is `product_status != "archived"` — active, inactive, and
  * undefined all pass. This is intentional: a missing status field must
@@ -43,31 +60,38 @@ export interface AccessResult {
  */
 export async function getProductsForMedia(
   mediaId: string,
-  channelId: string
+  channelId: string,
+  options: { includeArchived?: boolean } = {}
 ): Promise<GatedProduct[]> {
   const products: GatedProduct[] = [];
+  // Only filter out archived when we're NOT including them. Inactive and
+  // undefined-status products always pass — see the comment above.
+  const statusFilter = options.includeArchived ? {} : { product_status: { $ne: "archived" } };
 
-  const mediaProduct = await MediaProduct.findOne({
+  const mediaProducts = await MediaProduct.find({
     media_id: mediaId,
-    product_status: { $ne: "archived" },
+    ...statusFilter,
   })
-    .select("satsrail_product_id encrypted_source_url key_fingerprint")
+    .select("satsrail_product_id encrypted_source_url key_fingerprint product_status")
     .lean();
 
-  if (mediaProduct?.encrypted_source_url) {
-    products.push({
-      productId: mediaProduct.satsrail_product_id,
-      encryptedBlob: mediaProduct.encrypted_source_url,
-      keyFingerprint: mediaProduct.key_fingerprint,
-    });
+  for (const mp of mediaProducts) {
+    if (mp.encrypted_source_url) {
+      products.push({
+        productId: mp.satsrail_product_id,
+        encryptedBlob: mp.encrypted_source_url,
+        keyFingerprint: mp.key_fingerprint,
+        status: mp.product_status,
+      });
+    }
   }
 
   const channelProducts = await ChannelProduct.find({
     channel_id: channelId,
     "encrypted_media.media_id": mediaId,
-    product_status: { $ne: "archived" },
+    ...statusFilter,
   })
-    .select("satsrail_product_id key_fingerprint encrypted_media")
+    .select("satsrail_product_id key_fingerprint encrypted_media product_status")
     .lean();
 
   for (const cp of channelProducts) {
@@ -79,6 +103,7 @@ export async function getProductsForMedia(
         productId: cp.satsrail_product_id,
         encryptedBlob: entry.encrypted_source_url,
         keyFingerprint: cp.key_fingerprint,
+        status: cp.product_status,
       });
     }
   }
@@ -172,6 +197,24 @@ export async function verifySatsrailToken(
 }
 
 // ── Macaroon verification ────────────────────────────────────────────
+
+/**
+ * Server-side helper: peek into the cookie and find the most-recent expiry
+ * for any of the given product IDs. Used to surface "your access expired
+ * on [date], pay to renew" in the paywall — turning the silent paywall
+ * into a transparent renewal prompt.
+ *
+ * Reads the macaroon's encoded `exp` locally (Rails MessageVerifier), so
+ * NO portal call is needed. Returns null when nothing in the cookie matches
+ * the candidate products, or when everything that matches is still valid.
+ */
+export async function findExpiredAccessForProducts(
+  productIds: string[]
+): Promise<{ productId: string; expiredAt: Date } | null> {
+  if (productIds.length === 0) return null;
+  const cookieStore = await cookies();
+  return findMostRecentExpiry(cookieStore.get(COOKIE_NAME)?.value, productIds);
+}
 
 /**
  * Check whether the current request holds a valid macaroon (proof of

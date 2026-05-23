@@ -57,6 +57,17 @@ export interface InactiveAccess {
   /** Reason the most recent check returned no access. Mostly informational —
    *  components just see "no access" and render the paywall. */
   reason: "no_cookie" | "portal_rejected" | "transient" | "not_checked";
+  /**
+   * When the cookie holds an expired macaroon for one of this media's
+   * products, the server returns the expiry date alongside the 401. The
+   * hook stores it here so PaymentWall can render "your access expired on
+   * [date], pay to renew" instead of a silent paywall. Null when no
+   * matching expired macaroon was found.
+   */
+  expiredAt?: Date;
+  /** Product id whose macaroon was the most-recently expired. Useful for
+   *  surfacing the product name in the expired-banner copy. */
+  expiredProductId?: string;
 }
 
 export interface LoadingAccess {
@@ -102,7 +113,31 @@ async function fetchAccess(mediaId: string): Promise<MediaAccess> {
   try {
     const res = await fetch(`/api/media/${mediaId}/unlock`);
     if (res.status === 401) {
-      return { status: "inactive", reason: "portal_rejected" };
+      // Server may have included expired_at when the cookie holds an
+      // expired macaroon for one of this media's products. Pick it up so
+      // PaymentWall can render the "expired on X" renewal prompt.
+      let expiredAt: Date | undefined;
+      let expiredProductId: string | undefined;
+      try {
+        const body = (await res.json()) as {
+          expired_at?: string;
+          expired_product_id?: string;
+        };
+        if (body.expired_at) {
+          const d = new Date(body.expired_at);
+          if (!isNaN(d.getTime())) {
+            expiredAt = d;
+            expiredProductId = body.expired_product_id;
+          }
+        }
+      } catch {
+        // 401 with non-JSON body — fine, just no expiry info to show.
+      }
+      return {
+        status: "inactive",
+        reason: "portal_rejected",
+        ...(expiredAt && { expiredAt, expiredProductId }),
+      };
     }
     if (!res.ok) {
       // Anything else (5xx, network shape mismatch) — treat as transient,

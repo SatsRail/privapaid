@@ -87,6 +87,81 @@ describe("useMediaAccess", () => {
     });
     if (result.current.access.status === "inactive") {
       expect(result.current.access.reason).toBe("portal_rejected");
+      expect(result.current.access.expiredAt).toBeUndefined();
+    }
+  });
+
+  it("populates expiredAt when the unlock endpoint surfaces an expired macaroon", async () => {
+    // The unlock route attaches `expired_at` when the cookie holds an
+    // expired macaroon for one of this media's products. Hook stores it
+    // so PaymentWall can render "your access expired on [date]".
+    const expiredAt = "2026-05-15T21:20:45.228Z";
+    mockFetch((url) => {
+      if (url === "/api/media/media-1/unlock") {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({
+            error: "Payment required",
+            expired_at: expiredAt,
+            expired_product_id: "prod-1",
+          }),
+        };
+      }
+    });
+
+    const { result } = renderHook(() =>
+      useMediaAccess({ ...baseParams, storedProductIds: ["prod-1"] })
+    );
+
+    await waitFor(() => expect(result.current.access.status).toBe("inactive"));
+    if (result.current.access.status === "inactive") {
+      expect(result.current.access.reason).toBe("portal_rejected");
+      expect(result.current.access.expiredAt?.toISOString()).toBe(expiredAt);
+      expect(result.current.access.expiredProductId).toBe("prod-1");
+    }
+  });
+
+  it("gracefully handles a 401 whose body isn't JSON (no expiredAt set, no crash)", async () => {
+    mockFetch((url) => {
+      if (url === "/api/media/media-1/unlock") {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => { throw new Error("not json"); },
+        };
+      }
+    });
+
+    const { result } = renderHook(() =>
+      useMediaAccess({ ...baseParams, storedProductIds: ["prod-1"] })
+    );
+
+    await waitFor(() => expect(result.current.access.status).toBe("inactive"));
+    if (result.current.access.status === "inactive") {
+      expect(result.current.access.reason).toBe("portal_rejected");
+      expect(result.current.access.expiredAt).toBeUndefined();
+    }
+  });
+
+  it("ignores a malformed expired_at value (defensive)", async () => {
+    mockFetch((url) => {
+      if (url === "/api/media/media-1/unlock") {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ expired_at: "not-a-date" }),
+        };
+      }
+    });
+
+    const { result } = renderHook(() =>
+      useMediaAccess({ ...baseParams, storedProductIds: ["prod-1"] })
+    );
+
+    await waitFor(() => expect(result.current.access.status).toBe("inactive"));
+    if (result.current.access.status === "inactive") {
+      expect(result.current.access.expiredAt).toBeUndefined();
     }
   });
 

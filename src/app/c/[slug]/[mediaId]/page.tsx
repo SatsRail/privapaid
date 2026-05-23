@@ -92,27 +92,30 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     .lean();
   if (!media) notFound();
 
-  // Get all media products for this media item
-  // Filter: $ne "archived" — matches access-gate.ts. Active, inactive, and
-  // undefined all pass so a missing status field never hides a product.
+  // Get all media products for this media item — INCLUDING archived.
+  // Archived products must still be verifiable for users who already paid
+  // (archiving means "stop selling new", not "revoke existing access").
+  // We filter archived OUT later, but only from the purchase-UI list,
+  // not the verification list.
   const mediaProducts = await MediaProduct.find({
     media_id: media._id,
-    product_status: { $ne: "archived" },
   })
     .select("satsrail_product_id encrypted_source_url key_fingerprint product_name product_price_cents product_currency product_access_duration_seconds product_status")
     .lean();
 
-  // Get channel-level products that cover this media
+  // Get channel-level products that cover this media — same archive policy.
   const channelProducts = await ChannelProduct.find({
     channel_id: channel._id,
     "encrypted_media.media_id": media._id,
-    product_status: { $ne: "archived" },
   })
     .select("satsrail_product_id key_fingerprint encrypted_media product_name product_price_cents product_currency product_access_duration_seconds product_status")
     .lean();
 
-  // Serialize for client — merge media-level and channel-level products
-  const products = [
+  // Serialize for client — merge media-level and channel-level products.
+  // The full list (including archived) feeds the macaroon-cookie intersection
+  // below so the useMediaAccess hook doesn't short-circuit when the only
+  // matching product happens to be archived.
+  const allProducts = [
     ...mediaProducts.map((mp) => ({
       productId: mp.satsrail_product_id,
       encryptedBlob: mp.encrypted_source_url,
@@ -141,11 +144,20 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     }),
   ].filter((p) => p.encryptedBlob);
 
-  // Server-side pre-check: which products have stored macaroons?
+  // Purchase-UI list — what PaymentWall renders as buy buttons. Archived
+  // products are hidden here so the merchant's "stop selling" decision is
+  // honored client-side.
+  const products = allProducts.filter((p) => p.status !== "archived");
+
+  // Server-side pre-check: which products (active OR archived) have stored
+  // macaroons? Intersecting against `allProducts` is critical — if we only
+  // intersected against `products` (active-only), the hook would think
+  // "no cookie for this media" and short-circuit, hiding the access of any
+  // customer who paid for a now-archived product.
   const cookieStore = await cookies();
   const storedProductIds = getStoredProductIds(
     cookieStore.get(COOKIE_NAME)?.value,
-    products.map((p) => p.productId)
+    allProducts.map((p) => p.productId)
   );
 
   // Admin preview: validate session server-side
