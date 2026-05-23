@@ -43,8 +43,12 @@ export default function HeartbeatManager({
       }
     }
 
-    // Fire initial heartbeat immediately, then on interval
-    heartbeat();
+    // Schedule periodic checks WITHOUT firing immediately. The caller has
+    // already verified the macaroon (PaymentWall's mount-time access check
+    // or the post-payment handler) before mounting us. An immediate-on-mount
+    // heartbeat would race with a freshly-stored cookie and could silently
+    // invalidate a customer's access if the portal hiccups for one tick —
+    // exactly the "I paid but the image disappeared" failure mode.
     intervalRef.current = setInterval(heartbeat, intervalMs);
 
     return () => {

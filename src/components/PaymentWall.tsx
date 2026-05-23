@@ -77,6 +77,13 @@ export default function PaymentWall({
   // Different from unlockFailure (which only fires on a fresh checkout).
   const [verifyFailure, setVerifyFailure] = useState<{ failedAt: number } | null>(null);
   const lastKeyRef = useRef<string | null>(null);
+  // Wall-clock timestamp of the most recent successful unlock. Used by
+  // `handleExpired` to distinguish "macaroon naturally expired mid-session"
+  // (silent → pay buttons) from "portal rejected a fresh macaroon within
+  // seconds of unlock" (loud → unlock-failure card + Sentry event). Without
+  // this signal a portal hiccup silently dumps a paying customer back to
+  // pay buttons with no indication anything went wrong.
+  const unlockedAtRef = useRef<number | null>(null);
 
   // Every failure report in this component shares the same identity envelope
   // (mediaId, activeProductId, mediaType). These wrappers fold the boilerplate
@@ -160,11 +167,16 @@ export default function PaymentWall({
     };
   }, [mediaId, products, storedProductIds, resolveContent, onRemainingSeconds]);
 
-  // Clear any stale failure state if decryption succeeds via any path
+  // Clear any stale failure state on successful unlock, and stamp the
+  // unlock time so handleExpired can recognize an immediate post-unlock
+  // rejection as a visible failure (rather than a silent natural expiry).
   useEffect(() => {
     if (decryptedBytes) {
       setUnlockFailure(null);
       setVerifyFailure(null);
+      unlockedAtRef.current = Date.now();
+    } else {
+      unlockedAtRef.current = null;
     }
   }, [decryptedBytes]);
 
@@ -351,12 +363,35 @@ export default function PaymentWall({
     [activeProductId, products, session, mediaId, mediaType, resolveContent, reportException, reportMessage]
   );
 
+  // Grace period during which a heartbeat-driven expiry is treated as a
+  // portal-side rejection of a freshly-stored macaroon rather than a real
+  // session expiry. 90s comfortably covers the default 30s heartbeat
+  // interval plus jitter.
+  const HEARTBEAT_FRESH_REJECT_MS = 90_000;
+
   const handleExpired = useCallback(() => {
+    const unlockedAt = unlockedAtRef.current;
+    const now = Date.now();
+
+    // If we expired within the grace window, the portal almost certainly
+    // rejected a macaroon that we just minted. Surface that visibly — the
+    // alternative (silent return to pay buttons) is the exact UX the
+    // customer hit: "I paid, image vanished, no explanation".
+    if (unlockedAt !== null && now - unlockedAt < HEARTBEAT_FRESH_REJECT_MS) {
+      reportMessage(
+        "PaymentWall.heartbeatRejectedFreshMacaroon",
+        "Heartbeat verify rejected a freshly-stored macaroon",
+        "error",
+        { msSinceUnlock: now - unlockedAt }
+      );
+      setUnlockFailure({ orderNumber: null, orderId: null, failedAt: now });
+    }
+
     lastKeyRef.current = null;
     setDecryptedBytes(null);
     setActiveProductId(null);
     onExpired?.();
-  }, [onExpired]);
+  }, [onExpired, reportMessage]);
 
   const handleKeyRefreshed = useCallback(
     async (key: string) => {

@@ -1304,7 +1304,40 @@ describe("PaymentWall", () => {
       expect(screen.queryByAltText("Artwork")).not.toBeInTheDocument();
     });
 
-    it("handles handleExpired callback by re-locking content", async () => {
+    it("re-locks content when a heartbeat-driven expiry fires AFTER the fresh-unlock grace window", async () => {
+      // Natural session expiry (mid-session): no failure card, just back
+      // to pay buttons. This is the original silent behavior; the new
+      // visible-failure path only fires inside the grace window.
+      const user = userEvent.setup();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        render(<PaymentWall {...defaultProps} />);
+        await waitFor(() => {
+          expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
+        });
+
+        // Advance past the 90s fresh-unlock grace window so the expiry
+        // is treated as a natural session expiry.
+        await act(async () => {
+          vi.advanceTimersByTime(95_000);
+        });
+
+        await user.click(screen.getByTestId("expire-btn"));
+        await waitFor(() => {
+          expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+        });
+        expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("surfaces the unlock-failure card when a heartbeat-driven expiry fires WITHIN the fresh-unlock grace window", async () => {
+      // Portal rejection of a freshly-stored macaroon — the customer just
+      // paid (or just reloaded into a valid macaroon) and within seconds
+      // the heartbeat says "no access". That must NOT silently dump them
+      // back to pay buttons; it must surface as a visible failure with a
+      // Sentry event tagged `PaymentWall.heartbeatRejectedFreshMacaroon`.
       const user = userEvent.setup();
       render(<PaymentWall {...defaultProps} />);
       await waitFor(() => {
@@ -1312,9 +1345,22 @@ describe("PaymentWall", () => {
       });
 
       await user.click(screen.getByTestId("expire-btn"));
+
       await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+        expect(screen.getByText("Payment received")).toBeInTheDocument();
       });
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        "Heartbeat verify rejected a freshly-stored macaroon",
+        expect.objectContaining({
+          tags: expect.objectContaining({
+            context: "PaymentWall.heartbeatRejectedFreshMacaroon",
+          }),
+          extra: expect.objectContaining({
+            mediaId: "media-123",
+            msSinceUnlock: expect.any(Number),
+          }),
+        })
+      );
     });
 
     it("handles handleKeyRefreshed callback by re-decrypting", async () => {

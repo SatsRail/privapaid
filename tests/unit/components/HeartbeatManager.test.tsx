@@ -45,7 +45,7 @@ describe("HeartbeatManager", () => {
     });
   });
 
-  it("calls onKeyRefreshed with key from response", async () => {
+  it("calls onKeyRefreshed with key from response after the first interval", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: async () => ({ key: "new-key-123" }),
@@ -99,7 +99,11 @@ describe("HeartbeatManager", () => {
     expect(onExpired).not.toHaveBeenCalled();
   });
 
-  it("fires immediately on mount, then on 30s interval", async () => {
+  it("defers the first heartbeat by intervalMs — does NOT fire on mount", async () => {
+    // Mount-on-fire would race with a freshly-stored cookie and could
+    // silently invalidate a customer's just-paid access on a single
+    // portal hiccup. Caller is responsible for the initial verification;
+    // the heartbeat is purely for periodic re-checks.
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, json: async () => ({ key: "k" }) });
 
     render(
@@ -110,16 +114,20 @@ describe("HeartbeatManager", () => {
       />
     );
 
-    // Immediate heartbeat on mount
+    // Nothing yet — there's no initial-on-mount fetch.
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
 
-    // Should not fire again before 30s
-    await vi.advanceTimersByTimeAsync(29999);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // Still nothing just before 30s.
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(fetch).not.toHaveBeenCalled();
 
-    // Fires again at 30s
+    // First heartbeat fires at exactly 30s.
     await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // Second at 60s.
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -135,13 +143,12 @@ describe("HeartbeatManager", () => {
       />
     );
 
-    // Immediate heartbeat fires on mount
-    await vi.advanceTimersByTimeAsync(0);
+    // Let one heartbeat fire before unmounting.
+    await vi.advanceTimersByTimeAsync(1000);
     const callsBeforeUnmount = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
 
     unmount();
     await vi.advanceTimersByTimeAsync(5000);
-    // No additional calls after unmount
     expect(fetch).toHaveBeenCalledTimes(callsBeforeUnmount);
   });
 
@@ -162,7 +169,7 @@ describe("HeartbeatManager", () => {
       />
     );
 
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(onRemainingSeconds).toHaveBeenCalledWith(300);
   });
 });
