@@ -124,7 +124,28 @@ describe("MediaLayout", () => {
   it("uses the wider max-width container (always two-column-capable on desktop)", () => {
     const { container } = render(<MediaLayout {...baseData} />);
     // Sidebar is now universal — always max-w-6xl so the comments column
-    // has room to breathe on lg+.
+    // has room to breathe on md+.
     expect(container.firstElementChild?.className).toContain("max-w-6xl");
+  });
+
+  it("activates the two-column comments sidebar at md+ (not just lg+)", () => {
+    // Intentional regression guard: the previous lg: breakpoint (1024px)
+    // dropped the sidebar on the in-app preview pane and tablet widths,
+    // making the photo page feel inferior to videos. Sidebar now kicks
+    // in at md: (768px).
+    const { container } = render(<MediaLayout {...baseData} />);
+    const grid = container.querySelector('[class*="md:grid"]');
+    expect(grid).not.toBeNull();
+    expect(grid?.className).toContain("md:grid");
+    expect(grid?.className).toContain("md:grid-cols-[1fr_300px]");
+    // …and grows to a wider sidebar on lg+ where there's room.
+    expect(grid?.className).toContain("lg:grid-cols-[1fr_360px]");
+
+    // Mobile comments duplicate is hidden at md+, sidebar comments duplicate
+    // is hidden below md — exactly one renders at any given breakpoint.
+    const mobileWrappers = container.querySelectorAll('[class*="md:hidden"]');
+    const sidebarWrappers = container.querySelectorAll('aside[class*="hidden md:block"]');
+    expect(mobileWrappers.length).toBeGreaterThan(0);
+    expect(sidebarWrappers.length).toBe(1);
   });
 });

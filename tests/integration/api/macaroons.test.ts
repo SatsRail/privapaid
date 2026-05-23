@@ -203,7 +203,13 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
     expect(body.remaining_seconds).toBe(3600);
   });
 
-  it("returns 410 and removes macaroon when portal definitively rejects (402)", async () => {
+  it("returns 410 and PRESERVES the cookie when portal rejects (402)", async () => {
+    // Architectural change (worktree dazzling-nightingale): a single 402 used
+    // to clear the rejected entry from the cookie. That meant a transient
+    // portal hiccup or a signing-key rotation race locked the user out for
+    // the rest of the cookie's lifetime, even when they had JUST paid. The
+    // new behavior is to leave the cookie alone — the client treats 410 as
+    // "no access right now" and a refresh re-attempts verification.
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_bad", prod_2: "mac_ok" }));
 
     mockFetch.mockResolvedValue({
@@ -218,13 +224,11 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
 
     expect(res.status).toBe(410);
     expect(body.error).toBe("Access expired");
-    // prod_1 removed, prod_2 remains
-    const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
-    expect(parsed.prod_1).toBeUndefined();
-    expect(parsed.prod_2).toBe("mac_ok");
+    // Cookie MUST NOT be touched — no Set-Cookie header on this response.
+    expect(res.cookies.get("satsrail_macaroons")).toBeUndefined();
   });
 
-  it("deletes cookie when 402-rejected macaroon was the only one", async () => {
+  it("returns 410 even when the rejected macaroon is the only one (still preserves cookie)", async () => {
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_bad" }));
 
     mockFetch.mockResolvedValue({
@@ -236,6 +240,8 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
     const req = jsonRequest("PUT", { product_id: "prod_1" });
     const res = await PUT(req);
     expect(res.status).toBe(410);
+    // Same invariant: no Set-Cookie. The cookie lives until natural expiry.
+    expect(res.cookies.get("satsrail_macaroons")).toBeUndefined();
   });
 
   it("returns 502 and KEEPS the macaroon when portal returns 5xx", async () => {

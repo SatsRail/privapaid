@@ -143,11 +143,13 @@ export async function PUT(req: NextRequest) {
   }
 
   if (result.status === "invalid") {
-    // Portal definitively rejected the macaroon (HTTP 402) — it is either
-    // expired or signature-invalid. Safe to clear it from the cookie.
-    // This is the SMOKING GUN if the customer just paid: it means the
-    // portal won't accept a macaroon it just minted. Capture richly.
-    Sentry.captureMessage("macaroons.PUT: portal rejected (clearing cookie)", {
+    // Portal rejected the macaroon (HTTP 402). Historically we cleared the
+    // cookie here, but a single transient rejection (portal hiccup, signing
+    // key drift, key rotation race) would lock the user out for the rest of
+    // the cookie's lifetime — even when they'd just paid. We now leave the
+    // cookie alone and let it live to its natural expiry. The client treats
+    // 410 as "no access right now," and a refresh re-attempts verification.
+    Sentry.captureMessage("macaroons.PUT: portal rejected (cookie preserved)", {
       level: "error",
       tags: { context: "macaroons.PUT", outcome: "410_portal_rejected" },
       extra: {
@@ -157,20 +159,7 @@ export async function PUT(req: NextRequest) {
         otherProductsInCookie: Object.keys(macaroons).filter((k) => k !== product_id),
       },
     });
-    delete macaroons[product_id];
-    const response = NextResponse.json({ error: "Access expired" }, { status: 410 });
-    if (Object.keys(macaroons).length === 0) {
-      response.cookies.delete(COOKIE_NAME);
-    } else {
-      response.cookies.set(COOKIE_NAME, JSON.stringify(macaroons), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: COOKIE_MAX_AGE,
-      });
-    }
-    return response;
+    return NextResponse.json({ error: "Access expired" }, { status: 410 });
   }
 
   // status: "transient" — portal blip, network error, or surprising body.

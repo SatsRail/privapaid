@@ -122,11 +122,58 @@ describe("MediaHeader", () => {
       expect(screen.getByText(/viewer\.media\.access_label/)).toBeInTheDocument();
     });
 
-    it("renders Lifetime tag alongside the price pill for a lifetime product", () => {
+    it("renders Lifetime tag alongside the price pill for a lifetime product the viewer has NOT paid for", () => {
       const products = [makeProduct({ priceCents: 500, currency: "USD" })];
       render(<MediaHeader {...baseProps} products={products} />);
       expect(screen.getByTestId("lifetime-tag")).toBeInTheDocument();
       expect(screen.getByText("$5")).toBeInTheDocument();
+    });
+  });
+
+  // -----------------------------------------------------------
+  // Access pill swap — the price pill disappears once the viewer
+  // has active access; the access clock or lifetime tag takes
+  // the visual slot. Founder framing: "if the user paid for
+  // something, the price should go away and the access clock
+  // should take that spot."
+  // -----------------------------------------------------------
+  describe("price → access swap when viewer holds an active macaroon", () => {
+    it("time-gated: shows the clock and HIDES the price once remainingSeconds is positive", () => {
+      const products = [
+        makeProduct({ accessDurationSeconds: 604800, priceCents: 100, currency: "USD" }),
+      ];
+      render(<MediaHeader {...baseProps} products={products} remainingSeconds={604800} />);
+      // Clock visible
+      expect(screen.getByText(/viewer\.media\.access_label/)).toBeInTheDocument();
+      // Price hidden — they've already paid
+      expect(screen.queryByText("$1")).not.toBeInTheDocument();
+    });
+
+    it("time-gated: still shows the price BEFORE payment (remainingSeconds undefined)", () => {
+      const products = [
+        makeProduct({ accessDurationSeconds: 604800, priceCents: 100, currency: "USD" }),
+      ];
+      render(<MediaHeader {...baseProps} products={products} />);
+      expect(screen.queryByText(/viewer\.media\.access_label/)).not.toBeInTheDocument();
+      expect(screen.getByText("$1")).toBeInTheDocument();
+    });
+
+    it("lifetime: hides the price once the viewer has paid (remainingSeconds set), keeps the lifetime tag", () => {
+      // Portal returns a 30-day TTL even for lifetime products. Any positive
+      // remainingSeconds at the header layer means "viewer has paid."
+      const products = [makeProduct({ priceCents: 500, currency: "USD" })];
+      render(<MediaHeader {...baseProps} products={products} remainingSeconds={2_592_000} />);
+      expect(screen.getByTestId("lifetime-tag")).toBeInTheDocument();
+      expect(screen.queryByText("$5")).not.toBeInTheDocument();
+    });
+
+    it("treats remainingSeconds=0 as unpaid (expired) — price returns, clock hidden", () => {
+      const products = [
+        makeProduct({ accessDurationSeconds: 604800, priceCents: 100, currency: "USD" }),
+      ];
+      render(<MediaHeader {...baseProps} products={products} remainingSeconds={0} />);
+      expect(screen.queryByText(/viewer\.media\.access_label/)).not.toBeInTheDocument();
+      expect(screen.getByText("$1")).toBeInTheDocument();
     });
   });
 });

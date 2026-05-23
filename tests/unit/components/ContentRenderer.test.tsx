@@ -317,6 +317,46 @@ describe("ContentRenderer", () => {
       expect(img?.src).toBe("blob:fake-url");
     });
 
+    it("photo media renders with a transparent container (no black letterbox)", () => {
+      // Black bars next to a portrait photo look unfinished. The container
+      // must not paint a background — only video/audio players need it.
+      mockDetectMimeType.mockReturnValue("image/png");
+
+      const { container } = render(
+        <ContentRenderer decryptedBytes={new Uint8Array([0x89, 0x50, 0x4e, 0x47])} mediaType="photo" />
+      );
+      const outer = container.firstElementChild as HTMLElement;
+      expect(outer.className).not.toContain("bg-black");
+      // …and the image itself doesn't paint a background either.
+      const img = container.querySelector("img");
+      expect(img?.className).not.toContain("bg-black");
+    });
+
+    it("video media keeps bg-black for letterboxing", () => {
+      // Letterboxing matters for video — black bars around a 16:9 player on
+      // a wider/narrower viewport are the conventional look.
+      mockDetectMimeType.mockReturnValue("video/mp4");
+
+      const { container } = render(
+        <ContentRenderer decryptedBytes={new Uint8Array([0x00, 0x00, 0x00, 0x18])} mediaType="video" />
+      );
+      const outer = container.firstElementChild as HTMLElement;
+      expect(outer.className).toContain("bg-black");
+    });
+
+    it("article media renders with a transparent container", () => {
+      // Text sits on the page background; a black tile around prose looks
+      // heavy. Article body bytes go through the HTML fallback elsewhere;
+      // this test pins just the container styling.
+      mockDetectMimeType.mockReturnValue("text/html");
+
+      const { container } = render(
+        <ContentRenderer decryptedBytes={new Uint8Array([0x23, 0x20, 0x48])} mediaType="article" />
+      );
+      const outer = container.firstElementChild as HTMLElement;
+      expect(outer.className).not.toContain("bg-black");
+    });
+
     it("keeps the blob URL alive across onload so the lightbox click handler can reuse it", () => {
       // We deliberately moved revoke from `img.onload` to component cleanup
       // so clicking the rendered image to open the full-resolution lightbox

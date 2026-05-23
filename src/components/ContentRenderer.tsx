@@ -341,9 +341,11 @@ function ContentRendererDOM({
       // Cap the rendered height so a tall portrait doesn't push the rest of
       // the page (sidebar comments, description) off-screen. `object-contain`
       // preserves aspect ratio within the constrained box. Click opens the
-      // full-resolution lightbox we already use elsewhere.
+      // full-resolution lightbox. No `bg-*` here — the outer container is
+      // transparent for photos so the page background shows through where
+      // the image doesn't fill the column.
       img.className =
-        "block w-full max-h-[80vh] rounded-lg object-contain cursor-zoom-in bg-black";
+        "block mx-auto max-w-full max-h-[80vh] rounded-lg object-contain cursor-zoom-in";
       img.addEventListener("click", () => openImageLightbox(url));
       img.onerror = () => {
         Sentry.captureException(new Error("Image blob failed to render"), {
@@ -460,15 +462,20 @@ function ContentRendererDOM({
     };
   }, [decryptedBytes, mediaType]);
 
+  // Background strategy:
+  //   • article + podcast      → transparent + padding (text content sits on
+  //                              the page background; black tile looks heavy)
+  //   • photo                  → transparent (let the page show through any
+  //                              letterbox gap from object-contain — black
+  //                              bars next to a photo look unfinished)
+  //   • video + audio + others → black (proper letterbox for media players)
   const isText = mediaType === "article" || mediaType === "podcast";
+  const isPhoto = mediaType === "photo";
+  const containerClass = isText
+    ? "min-h-[200px] rounded-lg p-6"
+    : isPhoto
+      ? "min-h-[200px] overflow-hidden rounded-lg"
+      : "min-h-[200px] overflow-hidden rounded-lg bg-black";
 
-  return (
-    <div
-      ref={containerRef}
-      className={isText
-        ? "min-h-[200px] rounded-lg bg-black p-6"
-        : "min-h-[200px] overflow-hidden rounded-lg bg-black"
-      }
-    />
-  );
+  return <div ref={containerRef} className={containerClass} />;
 }

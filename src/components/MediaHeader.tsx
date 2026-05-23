@@ -50,12 +50,23 @@ export default function MediaHeader({
     !hasTimeGated &&
     products.some((p) => p.accessDurationSeconds == null);
 
+  // `remainingSeconds` is set when (and only when) the viewer has a verified
+  // active macaroon for this media — set after fresh payment, by the
+  // mount-time access check on a returning visitor, and by every successful
+  // heartbeat. It IS the "user has paid" signal at this component layer.
+  const hasActiveAccess = remainingSeconds != null && remainingSeconds > 0;
+  // When access is active the price pill is misleading — they've already
+  // paid. Swap it out for the access clock (time-gated) or just hide it
+  // (lifetime, where the lifetime tag carries the meaning).
+  const hasActiveTimedAccess = hasTimeGated && hasActiveAccess;
+  const showPricePill = !hasActiveAccess;
+
   return (
     <div className="mb-6">
       <h1 className="text-2xl font-bold">{name}</h1>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
-        {hasTimeGated && remainingSeconds != null && (
-          <AccessTimerPill serverSeconds={remainingSeconds} locale={locale} />
+        {hasActiveTimedAccess && (
+          <AccessTimerPill serverSeconds={remainingSeconds!} locale={locale} />
         )}
         {hasLifetime && (
           <span
@@ -77,7 +88,7 @@ export default function MediaHeader({
             {t(locale, "viewer.payment.lifetime")}
           </span>
         )}
-        {pricePill}
+        {showPricePill && pricePill}
       </div>
       {viewsCount > 0 && (
         <div className="mt-1.5 flex gap-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>

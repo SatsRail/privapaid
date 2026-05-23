@@ -11,13 +11,12 @@ import {
 import * as Sentry from "@sentry/nextjs";
 import CheckoutOverlay from "@/components/CheckoutOverlay";
 import ContentRenderer from "@/components/ContentRenderer";
-import HeartbeatManager from "@/components/HeartbeatManager";
 import ExchangeModal from "@/components/ExchangeModal";
 import UnlockFailureCard from "@/components/UnlockFailureCard";
 import VerifyFailureCard from "@/components/VerifyFailureCard";
 import { useLocale } from "@/i18n/useLocale";
 import { formatPrice, formatDuration } from "@/lib/format";
-import { checkStoredMacaroonAccess } from "@/lib/stored-macaroon-access";
+import type { MediaAccess } from "@/lib/use-media-access";
 
 interface Product {
   productId: string;
@@ -33,15 +32,31 @@ interface Product {
 interface PaymentWallProps {
   mediaId: string;
   products: Product[];
-  storedProductIds?: string[];
+  /**
+   * Access state from the parent's `useMediaAccess` hook. PaymentWall reads
+   * from this and never runs its own verification — that's the architectural
+   * change that eliminated the multi-component race conditions we used to
+   * have. When `access.status === "active"` we have the key and the
+   * encryptedBlob; this component just decrypts and renders.
+   */
+  access: MediaAccess;
+  /**
+   * Called after a fresh payment to inject the access state synchronously,
+   * without a server roundtrip. Parent's hook updates → access prop
+   * transitions to "active" → the decrypt effect below fires.
+   */
+  onAccessClaim: (params: {
+    productId: string;
+    key: string;
+    remainingSeconds: number;
+    encryptedBlob: string;
+  }) => void;
   thumbnailUrl?: string;
   mediaType: string;
   /** For media_type === "photo" only: GridFS ID of the encrypted bytes. */
   photoGridFsId?: string;
   merchantLogo?: string;
   merchantName?: string;
-  onRemainingSeconds?: (seconds: number) => void;
-  onExpired?: () => void;
 }
 
 /** Media types that should show artwork/thumbnail alongside the player */
@@ -50,14 +65,13 @@ const ARTWORK_TYPES = new Set(["audio", "podcast"]);
 export default function PaymentWall({
   mediaId,
   products,
-  storedProductIds,
+  access,
+  onAccessClaim,
   thumbnailUrl,
   mediaType,
   photoGridFsId,
   merchantLogo,
   merchantName,
-  onRemainingSeconds,
-  onExpired,
 }: PaymentWallProps) {
   const { data: session } = useSession();
   const { t, locale } = useLocale();
@@ -72,18 +86,17 @@ export default function PaymentWall({
     orderId: string | null;
     failedAt: number;
   } | null>(null);
-  // Set when the user has a stored macaroon for this media but the mount-time
-  // checkAccess can't unlock content (transient verify, network failure, etc).
-  // Different from unlockFailure (which only fires on a fresh checkout).
-  const [verifyFailure, setVerifyFailure] = useState<{ failedAt: number } | null>(null);
-  const lastKeyRef = useRef<string | null>(null);
-  // Wall-clock timestamp of the most recent successful unlock. Used by
-  // `handleExpired` to distinguish "macaroon naturally expired mid-session"
-  // (silent → pay buttons) from "portal rejected a fresh macaroon within
-  // seconds of unlock" (loud → unlock-failure card + Sentry event). Without
-  // this signal a portal hiccup silently dumps a paying customer back to
-  // pay buttons with no indication anything went wrong.
-  const unlockedAtRef = useRef<number | null>(null);
+  // Remembers the most recent payment's order identifiers across the access
+  // claim → decryption effect transition. If decryption blows up on the
+  // freshly-claimed access, the failure card still shows the customer's order
+  // reference even though the decryption effect itself has no direct view of
+  // handleCheckoutComplete's locals. Stays null for already-active access on
+  // mount (refresh case), which is correct — no payment just happened.
+  const lastPaymentRef = useRef<{ orderNumber: string | null; orderId: string | null } | null>(null);
+  // Soft-fail card for transient portal hiccups. Distinct from `unlockFailure`,
+  // which is for "you just paid and decryption failed."
+  const showVerifyFailure =
+    access.status === "inactive" && access.reason === "transient";
 
   // Every failure report in this component shares the same identity envelope
   // (mediaId, activeProductId, mediaType). These wrappers fold the boilerplate
@@ -139,44 +152,66 @@ export default function PaymentWall({
     [mediaType, photoGridFsId]
   );
 
-  // On mount: ask the access library whether this visitor already has a
-  // stored macaroon for any of the products covering this media. The
-  // library encapsulates the two-step verify-then-fall-back-to-unlock
-  // flow; this effect just dispatches its outcome.
+  // Decryption effect: whenever access becomes active, attempt to decrypt
+  // and render. This is the SECOND step of the founder's two-step model
+  //   1. Access exists → show clock + comments (parent's job, via hook)
+  //   2. Decrypt → requires access, fetch key from access state (this)
+  // If access becomes inactive (expiry, portal rejection on refresh), we
+  // clear the decrypted bytes so the paywall returns.
   useEffect(() => {
     let cancelled = false;
-    checkStoredMacaroonAccess({
-      mediaId,
-      products,
-      storedProductIds: storedProductIds ?? [],
-      resolveContent,
-    }).then((outcome) => {
-      if (cancelled) return;
-      if (outcome.kind === "unlocked") {
-        setDecryptedBytes(outcome.bytes);
-        setActiveProductId(outcome.productId);
-        if (outcome.remainingSeconds != null) {
-          onRemainingSeconds?.(outcome.remainingSeconds);
-        }
-      } else if (outcome.kind === "transient_failure") {
-        setVerifyFailure({ failedAt: Date.now() });
-      }
-    });
+    if (access.status !== "active") {
+      setDecryptedBytes(null);
+      setActiveProductId(null);
+      return;
+    }
+
+    // Don't re-decrypt for the same key — prevents iframe/video restart
+    // on a benign access-state refresh.
+    if (activeProductId === access.productId && decryptedBytes) {
+      return;
+    }
+
+    resolveContent(access.encryptedBlob, access.key, access.productId)
+      .then((bytes) => {
+        if (cancelled) return;
+        setDecryptedBytes(bytes);
+        setActiveProductId(access.productId);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Active access but decryption blew up — the macaroon is valid,
+        // we received a key, but `resolveContent` threw. Surface this
+        // because it's exactly the "I paid but content won't load"
+        // moment the customer cares about.
+        Sentry.captureException(err, {
+          tags: { context: "PaymentWall.decryptOnAccess", mediaType },
+          extra: {
+            mediaId,
+            activeProductId: access.productId,
+            mediaType,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        const last = lastPaymentRef.current;
+        setUnlockFailure({
+          orderNumber: last?.orderNumber ?? null,
+          orderId: last?.orderId ?? null,
+          failedAt: Date.now(),
+        });
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [mediaId, products, storedProductIds, resolveContent, onRemainingSeconds]);
+    // `access` is a discriminated union; if its identity changes we re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [access.status, access.status === "active" ? access.productId : null, access.status === "active" ? access.key : null]);
 
-  // Clear any stale failure state on successful unlock, and stamp the
-  // unlock time so handleExpired can recognize an immediate post-unlock
-  // rejection as a visible failure (rather than a silent natural expiry).
+  // Clear stale failure state once content is rendered.
   useEffect(() => {
     if (decryptedBytes) {
       setUnlockFailure(null);
-      setVerifyFailure(null);
-      unlockedAtRef.current = Date.now();
-    } else {
-      unlockedAtRef.current = null;
     }
   }, [decryptedBytes]);
 
@@ -247,9 +282,10 @@ export default function PaymentWall({
         setCheckoutToken(null);
       };
 
-      // Store macaroon in httpOnly cookie via server — must complete before
-      // HeartbeatManager's first tick, otherwise verify finds no cookie and
-      // locks content immediately. Skip if the portal returned an empty token.
+      // Store macaroon in httpOnly cookie. Even though `onAccessClaim`
+      // below sets the in-memory access state synchronously, the cookie
+      // is what survives page refreshes — without it, the user is back to
+      // the paywall on reload.
       if (data.macaroon) {
         try {
           const macRes = await fetch("/api/macaroons", {
@@ -261,10 +297,6 @@ export default function PaymentWall({
             }),
           });
           if (!macRes.ok) {
-            // Non-2xx macaroon storage breaks the heartbeat path silently —
-            // a future page reload finds no cookie and the user sees pay
-            // buttons again instead of unlocked content. Surface to Sentry
-            // so this exact symptom is debuggable.
             reportMessage(
               "PaymentWall.macaroonStore",
               "Failed to store macaroon (non-2xx)",
@@ -272,8 +304,6 @@ export default function PaymentWall({
               { status: macRes.status }
             );
           }
-          // Notify sibling components (e.g. CommentSection) that access is now available
-          window.dispatchEvent(new CustomEvent("privapaid:unlocked"));
         } catch (err) {
           reportException("PaymentWall.macaroonStore", err);
         }
@@ -308,115 +338,42 @@ export default function PaymentWall({
         return;
       }
 
-      if (data.key) {
-        try {
-          if (!(await verifyKeyFingerprint(data.key, product.keyFingerprint))) {
-            reportMessage(
-              "PaymentWall.fingerprint",
-              "Key fingerprint mismatch after payment",
-              "error"
-            );
-            recordFailure("fingerprintMismatch");
-            return;
-          }
-          const bytes = await resolveContent(product.encryptedBlob, data.key, product.productId);
-          lastKeyRef.current = data.key;
-          setDecryptedBytes(bytes);
-          setCheckoutToken(null);
-          // Notify siblings (e.g. CommentSection) even without a stored macaroon
-          window.dispatchEvent(new CustomEvent("privapaid:unlocked"));
-          return;
-        } catch (err) {
-          // Capture the decrypt error with full context — message + stack go
-          // to Sentry, and the `mediaType` tag lets us filter article vs photo
-          // failures separately. This is the most diagnostic line in the file.
-          reportException("PaymentWall.decrypt", err, {
-            errorMessage: err instanceof Error ? err.message : String(err),
-            encryptedBlobLength: product.encryptedBlob?.length,
-            keyLength: data.key?.length,
-          });
-        }
+      if (!data.key) {
+        recordFailure("noKeyFromPortal");
+        return;
       }
 
-      // Fallback: if direct decryption failed or key was empty, try
-      // the server-side unlock endpoint (uses stored macaroon from cookie)
-      try {
-        const unlockRes = await fetch(`/api/media/${mediaId}/unlock`);
-        if (unlockRes.ok) {
-          const unlockData = await unlockRes.json();
-          const fingerprint = unlockData.key_fingerprint || product.keyFingerprint;
-          if (await verifyKeyFingerprint(unlockData.key, fingerprint)) {
-            const bytes = await resolveContent(unlockData.encrypted_blob, unlockData.key, unlockData.product_id);
-            lastKeyRef.current = unlockData.key;
-            setDecryptedBytes(bytes);
-            setCheckoutToken(null);
-            window.dispatchEvent(new CustomEvent("privapaid:unlocked"));
-            return;
-          }
-        }
-      } catch (err) {
-        reportException("PaymentWall.unlockFallback", err);
+      if (!(await verifyKeyFingerprint(data.key, product.keyFingerprint))) {
+        reportMessage(
+          "PaymentWall.fingerprint",
+          "Key fingerprint mismatch after payment",
+          "error"
+        );
+        recordFailure("fingerprintMismatch");
+        return;
       }
 
-      recordFailure(data.key ? "decryptFailed" : "noKeyAndFallbackFailed");
+      // Inject access state into the parent's hook — this is the single
+      // place we "activate" access. The decrypt effect above will fire
+      // automatically as access becomes active, attempt decryption, and
+      // either set decryptedBytes (success) or set unlockFailure (failure).
+      // We deliberately do NOT decrypt inline here anymore; that's the
+      // decrypt effect's job, and centralizing it eliminates the two-path
+      // divergence we had before (direct + fallback).
+      //
+      // Stash the order ids before claiming so the decrypt effect's failure
+      // path can surface them on UnlockFailureCard if decryption blows up.
+      lastPaymentRef.current = { orderNumber, orderId };
+      onAccessClaim({
+        productId: product.productId,
+        key: data.key,
+        remainingSeconds: data.remaining_seconds ?? 0,
+        encryptedBlob: product.encryptedBlob,
+      });
+      setCheckoutToken(null);
     },
-    [activeProductId, products, session, mediaId, mediaType, resolveContent, reportException, reportMessage]
+    [activeProductId, products, session, mediaId, reportException, reportMessage, onAccessClaim]
   );
-
-  // Grace period during which a heartbeat-driven expiry is treated as a
-  // portal-side rejection of a freshly-stored macaroon rather than a real
-  // session expiry. 90s comfortably covers the default 30s heartbeat
-  // interval plus jitter.
-  const HEARTBEAT_FRESH_REJECT_MS = 90_000;
-
-  const handleExpired = useCallback(() => {
-    const unlockedAt = unlockedAtRef.current;
-    const now = Date.now();
-
-    // If we expired within the grace window, the portal almost certainly
-    // rejected a macaroon that we just minted. Surface that visibly — the
-    // alternative (silent return to pay buttons) is the exact UX the
-    // customer hit: "I paid, image vanished, no explanation".
-    if (unlockedAt !== null && now - unlockedAt < HEARTBEAT_FRESH_REJECT_MS) {
-      reportMessage(
-        "PaymentWall.heartbeatRejectedFreshMacaroon",
-        "Heartbeat verify rejected a freshly-stored macaroon",
-        "error",
-        { msSinceUnlock: now - unlockedAt }
-      );
-      setUnlockFailure({ orderNumber: null, orderId: null, failedAt: now });
-    }
-
-    lastKeyRef.current = null;
-    setDecryptedBytes(null);
-    setActiveProductId(null);
-    onExpired?.();
-  }, [onExpired, reportMessage]);
-
-  const handleKeyRefreshed = useCallback(
-    async (key: string) => {
-      // Skip re-decryption if key hasn't changed — prevents iframe/video restart
-      if (key === lastKeyRef.current) return;
-
-      if (!activeProductId) return;
-      const product = products.find((p) => p.productId === activeProductId);
-      if (!product) return;
-
-      try {
-        if (!(await verifyKeyFingerprint(key, product.keyFingerprint))) return;
-        const bytes = await resolveContent(product.encryptedBlob, key, product.productId);
-        lastKeyRef.current = key;
-        setDecryptedBytes(bytes);
-      } catch {
-        // Key might have changed — content will re-render next heartbeat
-      }
-    },
-    [activeProductId, products, resolveContent]
-  );
-
-  const handleRemainingSeconds = useCallback((seconds: number) => {
-    onRemainingSeconds?.(seconds);
-  }, [onRemainingSeconds]);
 
   if (decryptedBytes) {
     return (
@@ -434,14 +391,13 @@ export default function PaymentWall({
           decryptedBytes={decryptedBytes}
           mediaType={mediaType}
         />
-        {activeProductId && (
-          <HeartbeatManager
-            productId={activeProductId}
-            onExpired={handleExpired}
-            onKeyRefreshed={handleKeyRefreshed}
-            onRemainingSeconds={handleRemainingSeconds}
-          />
-        )}
+        {/*
+          No HeartbeatManager. Periodic re-verification was the source of
+          "image disappears after a minute" — a single portal hiccup could
+          revoke fresh access. The macaroon's own TTL is now the source of
+          truth; we trust it for the session and re-verify only on the
+          next page load.
+        */}
       </div>
     );
   }
@@ -501,9 +457,9 @@ export default function PaymentWall({
       onCopyError={reportCopyError}
       onReload={reload}
     />
-  ) : verifyFailure ? (
+  ) : showVerifyFailure ? (
     <VerifyFailureCard
-      failedAt={verifyFailure.failedAt}
+      failedAt={Date.now()}
       merchantName={merchantName}
       onReload={reload}
     />
@@ -543,7 +499,7 @@ export default function PaymentWall({
 
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
-      {checkoutToken && !unlockFailure && !verifyFailure && (() => {
+      {checkoutToken && !unlockFailure && !showVerifyFailure && (() => {
         const activeProduct = products.find((p) => p.productId === activeProductId);
         return (
           <CheckoutOverlay

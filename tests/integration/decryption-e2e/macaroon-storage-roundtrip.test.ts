@@ -6,8 +6,9 @@ import { NextRequest } from "next/server";
  *
  * PaymentWall.handleCheckoutComplete POSTs to /api/macaroons after a
  * successful payment to persist the macaroon in an httpOnly cookie.
- * The next page load (or HeartbeatManager tick) then PUTs to the same
- * endpoint to verify the stored macaroon against the SatsRail portal.
+ * The next page load PUTs to the same endpoint (via useMediaAccess →
+ * /api/media/[id]/unlock, which proxies to /api/macaroons internally)
+ * to verify the stored macaroon against the SatsRail portal.
  *
  * If POST silently stores nothing, or if PUT can't retrieve what POST
  * stored, the customer pays, comes back, and sees the pay buttons again

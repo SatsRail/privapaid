@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockFetch } from "../../helpers/fetch";
+import type { MediaAccess } from "@/lib/use-media-access";
 
 // --- Mocks ---
 
@@ -16,6 +18,10 @@ const mockVerifyKeyFingerprint = vi.fn().mockResolvedValue(true);
 vi.mock("@/lib/client-crypto", () => ({
   decryptBlob: (...args: unknown[]) => mockDecryptBlob(...args),
   verifyKeyFingerprint: (...args: unknown[]) => mockVerifyKeyFingerprint(...args),
+  // base64urlToBytes / decryptBytesWithKey are only used on the photo path,
+  // which we exercise via mockDecryptBlob anyway in the unit-level tests.
+  base64urlToBytes: (s: string) => new TextEncoder().encode(s),
+  decryptBytesWithKey: async (bytes: Uint8Array) => bytes,
 }));
 
 const mockCaptureException = vi.fn();
@@ -72,9 +78,9 @@ vi.mock("@/components/CheckoutOverlay", () => ({
       {merchantName && <span data-testid="merchant-name">{merchantName}</span>}
       {priceCents != null && <span data-testid="price-cents">{priceCents}</span>}
       {priceCurrency && <span data-testid="price-currency">{priceCurrency}</span>}
-      <button data-testid="complete-btn" onClick={() => onComplete({ key: "test-key", macaroon: "test-macaroon", order_number: "ORD-TESTREF12345678", order_id: "uuid-abc-123" })}>Complete</button>
+      <button data-testid="complete-btn" onClick={() => onComplete({ key: "test-key", macaroon: "test-macaroon", remaining_seconds: 604800, order_number: "ORD-TESTREF12345678", order_id: "uuid-abc-123" })}>Complete</button>
       <button data-testid="complete-empty-btn" onClick={() => onComplete({ key: "", macaroon: "", order_number: null, order_id: null })}>Complete Empty</button>
-      <button data-testid="complete-no-key-btn" onClick={() => onComplete({ key: "", macaroon: "test-macaroon", order_number: "ORD-NOKEY12345678", order_id: "uuid-nokey" })}>Complete No Key</button>
+      <button data-testid="complete-no-key-btn" onClick={() => onComplete({ key: "", macaroon: "test-macaroon", remaining_seconds: 604800, order_number: "ORD-NOKEY12345678", order_id: "uuid-nokey" })}>Complete No Key</button>
       <button data-testid="close-btn" onClick={onClose}>Close</button>
     </div>
   ),
@@ -83,19 +89,6 @@ vi.mock("@/components/CheckoutOverlay", () => ({
 vi.mock("@/components/ContentRenderer", () => ({
   default: ({ mediaType }: { decryptedBytes: Uint8Array; mediaType: string }) => (
     <div data-testid="content-renderer">{mediaType}</div>
-  ),
-}));
-
-vi.mock("@/components/HeartbeatManager", () => ({
-  default: ({ productId, onExpired, onKeyRefreshed }: {
-    productId: string;
-    onExpired: () => void;
-    onKeyRefreshed: (key: string) => void;
-  }) => (
-    <div data-testid="heartbeat-manager" data-product-id={productId}>
-      <button data-testid="expire-btn" onClick={onExpired}>Expire</button>
-      <button data-testid="refresh-key-btn" onClick={() => onKeyRefreshed("refreshed-key")}>Refresh</button>
-    </div>
   ),
 }));
 
@@ -123,23 +116,62 @@ const defaultProducts = [
   },
 ];
 
+// Common access state fixtures. PaymentWall reads access state as a prop;
+// each test picks the fixture that matches the scenario it's exercising.
+const NO_ACCESS: MediaAccess = { status: "inactive", reason: "no_cookie" };
+const LOADING_ACCESS: MediaAccess = { status: "loading" };
+const TRANSIENT_ACCESS: MediaAccess = { status: "inactive", reason: "transient" };
+const ACTIVE_ACCESS: MediaAccess = {
+  status: "active",
+  productId: "prod-1",
+  key: "active-key",
+  remainingSeconds: 604800,
+  encryptedBlob: "encrypted-blob-1",
+};
+
 const defaultProps = {
   mediaId: "media-123",
   products: defaultProducts,
-  storedProductIds: ["prod-1"],
+  access: NO_ACCESS,
+  onAccessClaim: () => {},
   thumbnailUrl: "https://example.com/thumb.jpg",
   mediaType: "video",
 };
 
 /**
- * The post-payment journey for a fresh visitor has the same fetch surface
- * across many tests: `/api/checkout` POST mints a token, `/api/macaroons`
- * POST stores the macaroon, every other request falls through to a 404 so
- * mount-time checkAccess shows pay buttons. This helper installs that fetch
- * mock so tests only have to express what makes them DIFFERENT.
- *
- * Override behaviors via the `overrides` param — return undefined to fall
- * through to the default; return a Response-shaped object to take over.
+ * Stateful wrapper that mirrors the parent's `useMediaAccess` integration:
+ * when PaymentWall calls `onAccessClaim`, we transition the access prop to
+ * "active" with that payload. Use this for end-to-end checkout-completion
+ * tests where the test cares about what renders AFTER the claim fires.
+ */
+function StatefulPaymentWall({
+  initialAccess = NO_ACCESS,
+  ...props
+}: Omit<React.ComponentProps<typeof PaymentWall>, "access" | "onAccessClaim"> & {
+  initialAccess?: MediaAccess;
+}) {
+  const [access, setAccess] = useState<MediaAccess>(initialAccess);
+  return (
+    <PaymentWall
+      {...props}
+      access={access}
+      onAccessClaim={(p) =>
+        setAccess({
+          status: "active",
+          productId: p.productId,
+          key: p.key,
+          remainingSeconds: p.remainingSeconds,
+          encryptedBlob: p.encryptedBlob,
+        })
+      }
+    />
+  );
+}
+
+/**
+ * Most tests share the same fetch surface: `/api/checkout` POST mints a
+ * token, `/api/macaroons` POST stores the macaroon. This helper installs
+ * that default so tests only have to express what's DIFFERENT.
  */
 function setupFreshPaymentScenario(
   overrides?: (url: string, init?: RequestInit) => unknown
@@ -166,7 +198,7 @@ describe("PaymentWall", () => {
     mockVerifyKeyFingerprint.mockResolvedValue(true);
     mockLocale = "en";
 
-    // Default: all fetches fail so we see the payment wall
+    // Default: all fetches fail. Tests that need success paths override via mockFetch.
     global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) });
   });
 
@@ -200,7 +232,7 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("shows 'Unlock with Lightning' when no name/price", async () => {
+    it("shows 'Unlock content' when no name/price", async () => {
       const products = [{ productId: "prod-1", encryptedBlob: "blob" }];
       render(<PaymentWall {...defaultProps} products={products} />);
       await waitFor(() => {
@@ -294,111 +326,181 @@ describe("PaymentWall", () => {
         expect(screen.getAllByText(/\$5\.50/)[0]).toBeInTheDocument();
       });
     });
+
+    it("renders pay buttons (not VerifyFailureCard) when access is loading", async () => {
+      // Loading should NOT immediately show the soft-fail card — that card
+      // is for confirmed transient portal hiccups. While loading we just
+      // render the paywall so the user can act.
+      render(<PaymentWall {...defaultProps} access={LOADING_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
+    });
   });
 
   // -------------------------------------------------------
-  // Unlock via macaroons on mount
+  // Active access — content rendering
   // -------------------------------------------------------
-  describe("macaroon-based unlock", () => {
-    it("unlocks content when macaroon is valid", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
+  describe("active access (content rendering)", () => {
+    it("renders ContentRenderer when access becomes active", async () => {
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
       await waitFor(() => {
         expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
       });
     });
 
-    it("skips macaroon when key fingerprint verification fails", async () => {
-      mockVerifyKeyFingerprint.mockResolvedValue(false);
-
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
+    it("decrypts using the key from the access prop", async () => {
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
       await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+        expect(mockDecryptBlob).toHaveBeenCalledWith(
+          ACTIVE_ACCESS.encryptedBlob,
+          ACTIVE_ACCESS.key,
+          ACTIVE_ACCESS.productId
+        );
       });
     });
 
-    it("falls back to direct unlock when macaroons fail", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return {
-            ok: true,
-            json: async () => ({
-              key: "direct-key",
-              key_fingerprint: "fp-1",
-              encrypted_blob: "encrypted-blob-1",
-            }),
-          };
-        }
-        return { ok: false, json: async () => ({}) };
+    it("shows artwork for audio mediaType", async () => {
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} mediaType="audio" />);
+      await waitFor(() => {
+        expect(screen.getByAltText("Artwork")).toBeInTheDocument();
       });
+    });
 
-      render(<PaymentWall {...defaultProps} />);
+    it("shows artwork for podcast mediaType", async () => {
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} mediaType="podcast" />);
+      await waitFor(() => {
+        expect(screen.getByAltText("Artwork")).toBeInTheDocument();
+      });
+    });
+
+    it("does not show artwork for video mediaType", async () => {
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} mediaType="video" />);
       await waitFor(() => {
         expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
       });
+      expect(screen.queryByAltText("Artwork")).not.toBeInTheDocument();
     });
 
-    it("shows payment wall when direct unlock also fails", async () => {
-      mockFetch(() => {
-        return { ok: false, json: async () => ({}) };
+    it("falls back to the paywall when access drops back to inactive", async () => {
+      // Mid-session: parent's hook flips access from active to inactive (the
+      // macaroon naturally expired, the cookie was cleared by another tab,
+      // whatever). PaymentWall must clear decryptedBytes and surface pay
+      // buttons immediately — the founder's "image disappears" regression
+      // came from leaving stale bytes on screen after this transition.
+      const { rerender } = render(
+        <PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
       });
 
-      render(<PaymentWall {...defaultProps} />);
+      rerender(<PaymentWall {...defaultProps} access={NO_ACCESS} />);
       await waitFor(() => {
+        expect(screen.queryByTestId("content-renderer")).not.toBeInTheDocument();
         expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
       });
     });
 
-    it("handles direct unlock throwing an exception", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          throw new Error("Network error");
-        }
-        return { ok: false, json: async () => ({}) };
-      });
+    it("shows UnlockFailureCard when decryption blows up on active access", async () => {
+      // Active access + decryption error = customer-visible "I paid but it
+      // won't load" moment. Surface the failure card and log to Sentry
+      // with context PaymentWall.decryptOnAccess.
+      mockDecryptBlob.mockRejectedValue(new Error("AES-GCM auth tag mismatch"));
 
-      render(<PaymentWall {...defaultProps} />);
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
       await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+        expect(screen.getByText("Payment received")).toBeInTheDocument();
       });
+      expect(mockCaptureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          tags: expect.objectContaining({ context: "PaymentWall.decryptOnAccess" }),
+          extra: expect.objectContaining({
+            mediaId: "media-123",
+            activeProductId: "prod-1",
+            errorMessage: "AES-GCM auth tag mismatch",
+          }),
+        })
+      );
     });
 
-    it("handles macaroon fetch throwing an exception", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          throw new Error("Network error");
-        }
-        return { ok: false, json: async () => ({}) };
-      });
+    it("the failure card on mount-time decryption error shows 'Reference unavailable' because no order ids are known yet", async () => {
+      // Mount-time decryption failure happens BEFORE any payment in this
+      // session — the user landed on the page with a pre-existing macaroon
+      // that the parent's hook validated. The UnlockFailureCard has no
+      // order ids to show in that case.
+      mockDecryptBlob.mockRejectedValue(new Error("AAD verify failed"));
 
-      render(<PaymentWall {...defaultProps} />);
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
       await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+        expect(screen.getByText("Reference unavailable")).toBeInTheDocument();
       });
     });
   });
 
   // -------------------------------------------------------
-  // Checkout flow
+  // Verify failure card (parent hook reported a transient error)
+  // -------------------------------------------------------
+  describe("verify failure card", () => {
+    it("shows VerifyFailureCard when access.reason is 'transient'", async () => {
+      render(
+        <PaymentWall {...defaultProps} access={TRANSIENT_ACCESS} merchantName="Acme Co" />
+      );
+      await waitFor(() => {
+        expect(screen.getByText("Couldn't verify your access")).toBeInTheDocument();
+      });
+      // Pay buttons hidden — we don't ask the user to pay again if we
+      // can't verify; we ask them to reload.
+      expect(screen.queryByText(/HD Video/)).not.toBeInTheDocument();
+      expect(screen.getByText("Contact Acme Co for support.")).toBeInTheDocument();
+      expect(screen.getByText("Reload page")).toBeInTheDocument();
+    });
+
+    it("does NOT show VerifyFailureCard for the 'no_cookie' reason (fresh visitor)", async () => {
+      render(<PaymentWall {...defaultProps} access={NO_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
+    });
+
+    it("does NOT show VerifyFailureCard for the 'portal_rejected' reason (cookie present but invalid)", async () => {
+      // portal_rejected means the macaroon failed verification — that's a
+      // real expiry, not a transient hiccup. We show the paywall.
+      render(
+        <PaymentWall
+          {...defaultProps}
+          access={{ status: "inactive", reason: "portal_rejected" }}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
+    });
+
+    it("reload button on VerifyFailureCard calls window.location.reload", async () => {
+      const reloadSpy = vi.fn();
+      Object.defineProperty(window, "location", {
+        value: { ...window.location, reload: reloadSpy },
+        writable: true,
+      });
+
+      render(<PaymentWall {...defaultProps} access={TRANSIENT_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getByText("Couldn't verify your access")).toBeInTheDocument();
+      });
+
+      const user = userEvent.setup();
+      await user.click(screen.getByText("Reload page"));
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -------------------------------------------------------
+  // Checkout flow (clicking unlock → checkout overlay)
   // -------------------------------------------------------
   describe("checkout flow", () => {
     it("creates checkout session and shows overlay", async () => {
@@ -546,44 +648,84 @@ describe("PaymentWall", () => {
   });
 
   // -------------------------------------------------------
-  // Checkout completion
+  // Checkout completion (post-payment)
   // -------------------------------------------------------
   describe("checkout completion", () => {
-    it("decrypts content after successful checkout", async () => {
+    it("calls onAccessClaim with the full payload after successful checkout", async () => {
+      const user = userEvent.setup();
+      const onAccessClaim = vi.fn();
+      setupFreshPaymentScenario();
+
+      render(
+        <PaymentWall {...defaultProps} access={NO_ACCESS} onAccessClaim={onAccessClaim} />
+      );
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(onAccessClaim).toHaveBeenCalledWith({
+          productId: "prod-1",
+          key: "test-key",
+          remainingSeconds: 604800,
+          encryptedBlob: "encrypted-blob-1",
+        });
+      });
+    });
+
+    it("fires onAccessClaim IMMEDIATELY (no roundtrip / delay)", async () => {
+      // Regression guard for the original "access pill appears 30s late"
+      // bug: we used to wait for HeartbeatManager to fire before the timer
+      // showed. With onAccessClaim now the synchronous handoff, the parent
+      // hook flips to active the moment the portal returns success.
+      const user = userEvent.setup();
+      const onAccessClaim = vi.fn();
+      setupFreshPaymentScenario();
+
+      render(
+        <PaymentWall {...defaultProps} access={NO_ACCESS} onAccessClaim={onAccessClaim} />
+      );
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(onAccessClaim).toHaveBeenCalledTimes(1);
+      });
+      // remainingSeconds matches the mocked CheckoutOverlay payload (7 days).
+      expect(onAccessClaim).toHaveBeenCalledWith(
+        expect.objectContaining({ remainingSeconds: 604800 })
+      );
+    });
+
+    it("decrypts content after the parent's hook transitions to active", async () => {
+      // End-to-end: complete payment → onAccessClaim → parent flips access →
+      // decryption fires → ContentRenderer renders. The StatefulPaymentWall
+      // wrapper mirrors the real parent's behavior.
       const user = userEvent.setup();
       setupFreshPaymentScenario();
 
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
+      render(<StatefulPaymentWall {...defaultProps} initialAccess={NO_ACCESS} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-btn"));
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
+
+      await waitFor(() => expect(screen.getByTestId("content-renderer")).toBeInTheDocument());
     });
 
     it("stores macaroon after checkout completion", async () => {
       const user = userEvent.setup();
       setupFreshPaymentScenario();
 
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-btn"));
+
       await waitFor(() => {
         expect(global.fetch).toHaveBeenCalledWith("/api/macaroons", expect.objectContaining({
           method: "POST",
@@ -599,30 +741,19 @@ describe("PaymentWall", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mockSession as any).status = "authenticated";
 
-      mockFetch((url, opts) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
+      setupFreshPaymentScenario((url, opts) => {
+        if (url === "/api/customer/purchases" && opts?.method === "POST") {
+          return { ok: true, json: async () => ({}) };
         }
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return { ok: false, json: async () => ({}) };
-        }
-        return { ok: true, json: async () => ({}) };
+        return undefined;
       });
 
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-btn"));
+
       await waitFor(() => {
         expect(global.fetch).toHaveBeenCalledWith("/api/customer/purchases", expect.objectContaining({
           method: "POST",
@@ -630,40 +761,25 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("shows the unlock-failed card when key fingerprint verification fails during checkout", async () => {
+    it("shows the unlock-failed card when post-payment key fingerprint verification fails", async () => {
       const user = userEvent.setup();
-      // Fingerprint-checks pass during mount checkAccess (no stored cookie),
-      // and fail only AFTER the user pays.
-      mockFetch((url, opts) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        // Fail any unlock-related fetch so checkAccess doesn't unlock and
-        // doesn't trigger verifyFailure either (no transient signal).
-        return { ok: false, status: 404, json: async () => ({}) };
-      });
-
-      // Fresh visitor — no stored macaroon — so checkAccess shows pay buttons.
-      render(<PaymentWall {...defaultProps} storedProductIds={[]} />);
-
-      // Now arrange the post-payment fingerprint failure
+      setupFreshPaymentScenario();
       mockVerifyKeyFingerprint.mockResolvedValue(false);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
 
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-btn"));
+
       await waitFor(() => {
         expect(screen.getByText("Payment received")).toBeInTheDocument();
       });
       expect(mockCaptureMessage).toHaveBeenCalledWith(
         "Key fingerprint mismatch after payment",
-        expect.objectContaining({ tags: expect.objectContaining({ context: "PaymentWall.fingerprint" }) })
+        expect.objectContaining({
+          tags: expect.objectContaining({ context: "PaymentWall.fingerprint" }),
+        })
       );
     });
 
@@ -677,24 +793,17 @@ describe("PaymentWall", () => {
         return { ok: false, json: async () => ({}) };
       });
 
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-empty-btn"));
+
       await waitFor(() => {
-        // Should NOT have called POST /api/macaroons with empty value
         const macaroonPosts = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
           (c: unknown[]) => c[0] === "/api/macaroons" && (c[1] as RequestInit | undefined)?.method === "POST"
         );
         expect(macaroonPosts).toHaveLength(0);
-        // Should have logged to Sentry
         expect(mockCaptureMessage).toHaveBeenCalledWith(
           "Checkout completed with empty macaroon",
           expect.objectContaining({ level: "warning" })
@@ -702,128 +811,64 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("falls back to unlock endpoint when key is empty after checkout", async () => {
+    it("shows the unlock-failed card when the portal returns no key", async () => {
       const user = userEvent.setup();
-      let checkoutCreated = false;
+      setupFreshPaymentScenario();
 
-      mockFetch((url, opts) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          checkoutCreated = true;
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        if (url === "/api/macaroons" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          // Fail on initial mount, succeed after checkout
-          if (!checkoutCreated) return { ok: false, json: async () => ({}) };
-          return {
-            ok: true,
-            json: async () => ({
-              key: "fallback-key",
-              key_fingerprint: "fp-1",
-              encrypted_blob: "encrypted-blob-1",
-              product_id: "prod-1",
-            }),
-          };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-no-key-btn"));
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-    });
 
-    it("shows the unlock-failed card when both direct key and unlock fallback fail", async () => {
-      const user = userEvent.setup();
-
-      mockFetch((url, opts) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        if (url === "/api/macaroons" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-
-      await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByTestId("complete-no-key-btn"));
       await waitFor(() => {
         expect(screen.getByText("Payment received")).toBeInTheDocument();
       });
     });
 
-    it("shows the unlock-failed card when decryption fails after checkout", async () => {
+    it("shows the unlock-failed card when decryption fails after checkout (and surfaces order ids on the card)", async () => {
+      // End-to-end: payment completes → access claim fires → decryption
+      // effect runs → decryption fails → UnlockFailureCard shown. The card
+      // shows the order ids that came in with the payment payload (NOT
+      // null — that was the regression I'm guarding against here).
       const user = userEvent.setup();
-      mockFetch((url, opts) => {
-        if (url === "/api/checkout" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        return { ok: false, status: 404, json: async () => ({}) };
-      });
-
-      // Fresh visitor — no stored macaroon — so mount checkAccess shows pay buttons.
-      render(<PaymentWall {...defaultProps} storedProductIds={[]} />);
-
-      // Decryption fails AFTER checkout completes
+      setupFreshPaymentScenario();
       mockDecryptBlob.mockRejectedValue(new Error("Decryption error"));
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
 
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
       await user.click(screen.getByTestId("complete-btn"));
+
       await waitFor(() => {
         expect(screen.getByText("Payment received")).toBeInTheDocument();
       });
+      expect(screen.getByText("ORD-TESTREF12345678")).toBeInTheDocument();
+      expect(screen.getByText("uuid-abc-123")).toBeInTheDocument();
       expect(mockCaptureException).toHaveBeenCalledWith(
         expect.any(Error),
-        expect.objectContaining({ tags: expect.objectContaining({ context: "PaymentWall.decrypt" }) })
+        expect.objectContaining({
+          tags: expect.objectContaining({ context: "PaymentWall.decryptOnAccess" }),
+        })
       );
     });
   });
 
   // -------------------------------------------------------
-  // Sentry instrumentation on the failure paths
+  // Sentry instrumentation
   // -------------------------------------------------------
-  // These tests pin the observability contract used to diagnose
-  // post-payment decryption failures on the live demo. Each customer-visible
-  // failure MUST produce a `PaymentWall.recordFailure` Sentry event tagged
-  // with the branch that fired (`reason`) and the media type, so a single
-  // Sentry query disambiguates article vs photo failures and the cause.
+  // The recordFailure Sentry contract is the diagnostic backbone we built
+  // up to triage post-payment failures from the demo. Each customer-visible
+  // failure MUST produce a single tagged event so a Sentry filter on
+  // `context: PaymentWall.recordFailure` reveals every one.
   describe("recordFailure Sentry contract", () => {
     it("fires recordFailure with reason=fingerprintMismatch when the post-payment key fingerprint is wrong", async () => {
       const user = userEvent.setup();
       setupFreshPaymentScenario();
       mockVerifyKeyFingerprint.mockResolvedValue(false);
 
-      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      render(<StatefulPaymentWall {...defaultProps} mediaType="article" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
       await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
@@ -853,56 +898,14 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("fires recordFailure with reason=decryptFailed when resolveContent throws", async () => {
-      const user = userEvent.setup();
-      setupFreshPaymentScenario();
-      mockDecryptBlob.mockRejectedValue(new Error("AES-GCM auth tag mismatch"));
-
-      render(<PaymentWall {...defaultProps} mediaType="photo" storedProductIds={[]} />);
-      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
-      await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
-      await user.click(screen.getByTestId("complete-btn"));
-
-      await waitFor(() => {
-        // Underlying decrypt exception captured with rich context
-        expect(mockCaptureException).toHaveBeenCalledWith(
-          expect.any(Error),
-          expect.objectContaining({
-            tags: expect.objectContaining({ context: "PaymentWall.decrypt", mediaType: "photo" }),
-            extra: expect.objectContaining({
-              mediaId: "media-123",
-              activeProductId: "prod-1",
-              mediaType: "photo",
-              errorMessage: "AES-GCM auth tag mismatch",
-              encryptedBlobLength: "encrypted-blob-1".length,
-              keyLength: "test-key".length,
-            }),
-          })
-        );
-        // Customer-visible failure summary
-        expect(mockCaptureMessage).toHaveBeenCalledWith(
-          "PaymentWall.recordFailure",
-          expect.objectContaining({
-            tags: expect.objectContaining({
-              context: "PaymentWall.recordFailure",
-              reason: "decryptFailed",
-              mediaType: "photo",
-            }),
-          })
-        );
-      });
-    });
-
-    it("fires recordFailure with reason=noKeyAndFallbackFailed when key is empty and unlock fallback fails", async () => {
+    it("fires recordFailure with reason=noKeyFromPortal when the portal returns an empty key", async () => {
       const user = userEvent.setup();
       setupFreshPaymentScenario();
 
-      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      render(<StatefulPaymentWall {...defaultProps} mediaType="article" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
       await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
-      // complete-no-key-btn = portal returned macaroon but no key
       await user.click(screen.getByTestId("complete-no-key-btn"));
 
       await waitFor(() => {
@@ -910,7 +913,7 @@ describe("PaymentWall", () => {
           "PaymentWall.recordFailure",
           expect.objectContaining({
             tags: expect.objectContaining({
-              reason: "noKeyAndFallbackFailed",
+              reason: "noKeyFromPortal",
               mediaType: "article",
             }),
             extra: expect.objectContaining({ hadKey: false, hadMacaroon: true }),
@@ -919,9 +922,42 @@ describe("PaymentWall", () => {
       });
     });
 
+    it("captures decryption-on-active-access exceptions with context PaymentWall.decryptOnAccess", async () => {
+      // The post-claim decryption path used to report under
+      // PaymentWall.decrypt; it's now PaymentWall.decryptOnAccess because the
+      // effect (not handleCheckoutComplete) owns the call. Pinning the tag
+      // here protects the Sentry filter that operations relies on.
+      const user = userEvent.setup();
+      setupFreshPaymentScenario();
+      mockDecryptBlob.mockRejectedValue(new Error("AES-GCM auth tag mismatch"));
+
+      render(<StatefulPaymentWall {...defaultProps} mediaType="photo" />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => {
+        expect(mockCaptureException).toHaveBeenCalledWith(
+          expect.any(Error),
+          expect.objectContaining({
+            tags: expect.objectContaining({
+              context: "PaymentWall.decryptOnAccess",
+              mediaType: "photo",
+            }),
+            extra: expect.objectContaining({
+              mediaId: "media-123",
+              activeProductId: "prod-1",
+              mediaType: "photo",
+              errorMessage: "AES-GCM auth tag mismatch",
+            }),
+          })
+        );
+      });
+    });
+
     it("reports non-2xx macaroon storage as a PaymentWall.macaroonStore Sentry event", async () => {
       const user = userEvent.setup();
-      // Macaroon POST returns 500; key+fingerprint still valid so decryption succeeds.
       mockFetch((url, init) => {
         if (url === "/api/checkout" && init?.method === "POST") {
           return { ok: true, json: async () => ({ token: "tok" }) };
@@ -932,7 +968,7 @@ describe("PaymentWall", () => {
         return { ok: false, status: 404, json: async () => ({}) };
       });
 
-      render(<PaymentWall {...defaultProps} mediaType="article" storedProductIds={[]} />);
+      render(<StatefulPaymentWall {...defaultProps} mediaType="article" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
       await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
@@ -953,7 +989,9 @@ describe("PaymentWall", () => {
           })
         );
       });
-      // Direct decryption still succeeded so the user sees content, not the failure card.
+      // Direct decryption still succeeded (the macaroon store is a side
+      // channel for refresh-persistence; the in-memory access claim still
+      // happens), so the user sees content, not the failure card.
       expect(await screen.findByTestId("content-renderer")).toBeInTheDocument();
     });
 
@@ -969,7 +1007,7 @@ describe("PaymentWall", () => {
         return { ok: false, status: 404, json: async () => ({}) };
       });
 
-      render(<PaymentWall {...defaultProps} mediaType="photo" storedProductIds={[]} />);
+      render(<StatefulPaymentWall {...defaultProps} mediaType="photo" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
       await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
@@ -992,30 +1030,20 @@ describe("PaymentWall", () => {
   });
 
   // -------------------------------------------------------
-  // Unlock failure card (post-payment)
+  // Unlock failure card (post-payment customer-visible failure)
   // -------------------------------------------------------
   describe("unlock failure card", () => {
-    function setupCheckout(opts: { decryptThrows?: boolean; fallbackOk?: boolean } = {}) {
-      if (opts.decryptThrows) {
-        mockDecryptBlob.mockRejectedValue(new Error("AAD verify failed"));
-      }
-      mockFetch((url, init) => {
-        if (url === "/api/checkout" && init?.method === "POST") {
-          return { ok: true, json: async () => ({ token: "tok" }) };
-        }
-        if (url === "/api/macaroons" && init?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return { ok: !!opts.fallbackOk, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-    }
-
-    async function payAndFail() {
+    async function payAndFail(merchantName?: string) {
       const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} merchantName="Acme Co" />);
+      setupFreshPaymentScenario();
+      mockDecryptBlob.mockRejectedValue(new Error("AAD verify failed"));
+
+      render(
+        <StatefulPaymentWall
+          {...defaultProps}
+          {...(merchantName ? { merchantName } : {})}
+        />
+      );
       await waitFor(() => {
         expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
       });
@@ -1031,16 +1059,14 @@ describe("PaymentWall", () => {
     }
 
     it("hides the pay buttons and unmounts the checkout overlay on failure", async () => {
-      setupCheckout({ decryptThrows: true });
-      await payAndFail();
+      await payAndFail("Acme Co");
       expect(screen.queryByText("Unlock with Bitcoin")).not.toBeInTheDocument();
       expect(screen.queryByTestId("checkout-overlay")).not.toBeInTheDocument();
       expect(screen.queryByText("Need Bitcoin?")).not.toBeInTheDocument();
     });
 
     it("renders the order_number reference and contact line", async () => {
-      setupCheckout({ decryptThrows: true });
-      await payAndFail();
+      await payAndFail("Acme Co");
       expect(screen.getByText("ORD-TESTREF12345678")).toBeInTheDocument();
       expect(screen.getByText("uuid-abc-123")).toBeInTheDocument();
       expect(screen.getByText("Contact Acme Co for support.")).toBeInTheDocument();
@@ -1048,7 +1074,6 @@ describe("PaymentWall", () => {
     });
 
     it("reload button calls window.location.reload", async () => {
-      setupCheckout({ decryptThrows: true });
       const reloadSpy = vi.fn();
       Object.defineProperty(window, "location", {
         value: { ...window.location, reload: reloadSpy },
@@ -1060,9 +1085,7 @@ describe("PaymentWall", () => {
     });
 
     it("copy reference button writes to the clipboard", async () => {
-      setupCheckout({ decryptThrows: true });
       const user = await payAndFail();
-      // userEvent.setup() installs its own virtual clipboard — spy on it after setup
       const writeTextSpy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
       await user.click(screen.getByText("Copy reference"));
       expect(writeTextSpy).toHaveBeenCalledWith("ORD-TESTREF12345678 / uuid-abc-123");
@@ -1080,7 +1103,7 @@ describe("PaymentWall", () => {
         }
         return { ok: false, json: async () => ({}) };
       });
-      render(<PaymentWall {...defaultProps} />);
+      render(<StatefulPaymentWall {...defaultProps} />);
       await waitFor(() => {
         expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
       });
@@ -1096,24 +1119,11 @@ describe("PaymentWall", () => {
     });
 
     it("renders the generic contact line when merchantName is not provided", async () => {
-      setupCheckout({ decryptThrows: true });
-      const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} />); // no merchantName
-      await waitFor(() => {
-        expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument();
-      });
-      await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => {
-        expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument();
-      });
-      await user.click(screen.getByTestId("complete-btn"));
-      await waitFor(() => {
-        expect(screen.getByText("Contact the merchant for support.")).toBeInTheDocument();
-      });
+      await payAndFail();
+      expect(screen.getByText("Contact the merchant for support.")).toBeInTheDocument();
     });
 
     it("falls back to execCommand and shows error when clipboard API is unavailable", async () => {
-      setupCheckout({ decryptThrows: true });
       const user = await payAndFail();
 
       // Remove clipboard from navigator to simulate non-secure context
@@ -1128,16 +1138,16 @@ describe("PaymentWall", () => {
         expect(screen.getByText(/Couldn't copy/)).toBeInTheDocument();
       });
 
-      // Restore
       Object.defineProperty(navigator, "clipboard", { value: originalClipboard, configurable: true });
       document.execCommand = originalExecCommand;
     });
 
     it("renders the unlock-failed card in Spanish locale", async () => {
       mockLocale = "es";
-      setupCheckout({ decryptThrows: true });
       const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} merchantName="Acme Co" />);
+      setupFreshPaymentScenario();
+      mockDecryptBlob.mockRejectedValue(new Error("AAD verify failed"));
+      render(<StatefulPaymentWall {...defaultProps} merchantName="Acme Co" />);
       await waitFor(() => {
         expect(screen.getAllByText("Desbloquear con Bitcoin")[0]).toBeInTheDocument();
       });
@@ -1154,309 +1164,6 @@ describe("PaymentWall", () => {
       expect(screen.getByText("Recargar página")).toBeInTheDocument();
       expect(screen.getByText("Copiar referencia")).toBeInTheDocument();
       expect(screen.getByText("Contacta a Acme Co para asistencia.")).toBeInTheDocument();
-    });
-  });
-
-  // -------------------------------------------------------
-  // Verify failure card (returning visitor — paid, can't verify)
-  // -------------------------------------------------------
-  describe("verify failure card", () => {
-    it("shows the verify-failed card when stored macaroon verify returns 502", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, status: 502, json: async () => ({ error: "Verification temporarily unavailable" }) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return { ok: false, status: 503, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} merchantName="Acme Co" />);
-      await waitFor(() => {
-        expect(screen.getByText("Couldn't verify your access")).toBeInTheDocument();
-      });
-      // Pay buttons are NOT visible
-      expect(screen.queryByText("Unlock with Bitcoin")).not.toBeInTheDocument();
-      expect(screen.queryByText(/HD Video/)).not.toBeInTheDocument();
-      // Contact line uses merchant name
-      expect(screen.getByText("Contact Acme Co for support.")).toBeInTheDocument();
-      // Reload button is present
-      expect(screen.getByText("Reload page")).toBeInTheDocument();
-    });
-
-    it("shows the verify-failed card when key fingerprint mismatches on a stored macaroon", async () => {
-      mockVerifyKeyFingerprint.mockResolvedValue(false);
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: true, status: 200, json: async () => ({ key: "k", key_fingerprint: "wrong" }) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByText("Couldn't verify your access")).toBeInTheDocument();
-      });
-      expect(screen.queryByText("Unlock with Bitcoin")).not.toBeInTheDocument();
-    });
-
-    it("does NOT show verify-failed card when user has no stored macaroons (fresh visitor)", async () => {
-      mockFetch(() => {
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} storedProductIds={[]} />);
-      await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
-      });
-      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
-    });
-
-    it("clears verify-failed when content unlocks via heartbeat key refresh", async () => {
-      // First: simulate a stored macaroon verify that succeeds (so we end up unlocked)
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: true, status: 200, json: async () => ({ key: "k1", key_fingerprint: "fp-1" }) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-      // Verify-failed card never appears in the success path
-      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
-    });
-
-    it("reload button on verify-failed card calls window.location.reload", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, status: 502, json: async () => ({}) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      const reloadSpy = vi.fn();
-      Object.defineProperty(window, "location", {
-        value: { ...window.location, reload: reloadSpy },
-        writable: true,
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByText("Couldn't verify your access")).toBeInTheDocument();
-      });
-
-      const user = userEvent.setup();
-      await user.click(screen.getByText("Reload page"));
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  // -------------------------------------------------------
-  // Unlocked state
-  // -------------------------------------------------------
-  describe("unlocked state", () => {
-    beforeEach(() => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: true, json: async () => ({ key: "aes-key", key_fingerprint: "fp-1" }) };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-    });
-
-    it("renders ContentRenderer when unlocked", async () => {
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-    });
-
-    it("renders HeartbeatManager when unlocked", async () => {
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-      });
-    });
-
-    it("shows artwork for audio mediaType", async () => {
-      render(<PaymentWall {...defaultProps} mediaType="audio" />);
-      await waitFor(() => {
-        expect(screen.getByAltText("Artwork")).toBeInTheDocument();
-      });
-    });
-
-    it("shows artwork for podcast mediaType", async () => {
-      render(<PaymentWall {...defaultProps} mediaType="podcast" />);
-      await waitFor(() => {
-        expect(screen.getByAltText("Artwork")).toBeInTheDocument();
-      });
-    });
-
-    it("does not show artwork for video mediaType", async () => {
-      render(<PaymentWall {...defaultProps} mediaType="video" />);
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-      expect(screen.queryByAltText("Artwork")).not.toBeInTheDocument();
-    });
-
-    it("re-locks content when a heartbeat-driven expiry fires AFTER the fresh-unlock grace window", async () => {
-      // Natural session expiry (mid-session): no failure card, just back
-      // to pay buttons. This is the original silent behavior; the new
-      // visible-failure path only fires inside the grace window.
-      const user = userEvent.setup();
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      try {
-        render(<PaymentWall {...defaultProps} />);
-        await waitFor(() => {
-          expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-        });
-
-        // Advance past the 90s fresh-unlock grace window so the expiry
-        // is treated as a natural session expiry.
-        await act(async () => {
-          vi.advanceTimersByTime(95_000);
-        });
-
-        await user.click(screen.getByTestId("expire-btn"));
-        await waitFor(() => {
-          expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
-        });
-        expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it("surfaces the unlock-failure card when a heartbeat-driven expiry fires WITHIN the fresh-unlock grace window", async () => {
-      // Portal rejection of a freshly-stored macaroon — the customer just
-      // paid (or just reloaded into a valid macaroon) and within seconds
-      // the heartbeat says "no access". That must NOT silently dump them
-      // back to pay buttons; it must surface as a visible failure with a
-      // Sentry event tagged `PaymentWall.heartbeatRejectedFreshMacaroon`.
-      const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByTestId("expire-btn"));
-
-      await waitFor(() => {
-        expect(screen.getByText("Payment received")).toBeInTheDocument();
-      });
-      expect(mockCaptureMessage).toHaveBeenCalledWith(
-        "Heartbeat verify rejected a freshly-stored macaroon",
-        expect.objectContaining({
-          tags: expect.objectContaining({
-            context: "PaymentWall.heartbeatRejectedFreshMacaroon",
-          }),
-          extra: expect.objectContaining({
-            mediaId: "media-123",
-            msSinceUnlock: expect.any(Number),
-          }),
-        })
-      );
-    });
-
-    it("handles handleKeyRefreshed callback by re-decrypting", async () => {
-      const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-      });
-
-      mockDecryptBlob.mockResolvedValue(new Uint8Array([4, 5, 6]));
-      await user.click(screen.getByTestId("refresh-key-btn"));
-      // Content renderer should still be there
-      expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-    });
-
-    it("handles key refresh when fingerprint verification fails silently", async () => {
-      const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-      });
-
-      mockVerifyKeyFingerprint.mockResolvedValue(false);
-      await user.click(screen.getByTestId("refresh-key-btn"));
-      // Still shows content (doesn't break)
-      expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-    });
-
-    it("handles key refresh when decryption throws silently", async () => {
-      const user = userEvent.setup();
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("heartbeat-manager")).toBeInTheDocument();
-      });
-
-      mockDecryptBlob.mockRejectedValue(new Error("decrypt error"));
-      await user.click(screen.getByTestId("refresh-key-btn"));
-      // Still shows content (doesn't break)
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-    });
-  });
-
-  // -------------------------------------------------------
-  // Direct unlock with fallback to first product
-  // -------------------------------------------------------
-  describe("direct unlock edge cases", () => {
-    it("falls back to first product when encrypted_blob does not match", async () => {
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return {
-            ok: true,
-            json: async () => ({
-              key: "direct-key",
-              key_fingerprint: "fp-1",
-              encrypted_blob: "different-blob",
-            }),
-          };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getByTestId("content-renderer")).toBeInTheDocument();
-      });
-    });
-
-    it("skips direct unlock when fingerprint verification fails", async () => {
-      mockVerifyKeyFingerprint.mockResolvedValue(false);
-
-      mockFetch((url, opts) => {
-        if (url === "/api/macaroons" && opts?.method === "PUT") {
-          return { ok: false, json: async () => ({}) };
-        }
-        if (url === "/api/media/media-123/unlock") {
-          return {
-            ok: true,
-            json: async () => ({
-              key: "direct-key",
-              key_fingerprint: "fp-1",
-              encrypted_blob: "encrypted-blob-1",
-            }),
-          };
-        }
-        return { ok: false, json: async () => ({}) };
-      });
-
-      render(<PaymentWall {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
-      });
     });
   });
 });

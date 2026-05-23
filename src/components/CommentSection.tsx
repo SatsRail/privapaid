@@ -17,7 +17,20 @@ interface Comment {
 interface CommentSectionProps {
   mediaId: string;
   productIds: string[];
-  storedProductIds?: string[];
+  /**
+   * Whether the viewer has active paid access for this media. The parent
+   * (MediaLayout) owns the single `useMediaAccess` hook and derives this
+   * from `access.status === "active"`. CommentSection used to run its own
+   * macaroon verification and listen for unlock events — both removed in
+   * favor of this prop so all components stay in sync.
+   */
+  hasAccess: boolean;
+  /**
+   * Called when a server-side write returns 401/402, signaling that the
+   * cached access view is stale. Parent re-runs `useMediaAccess.refresh()`
+   * to reconcile.
+   */
+  onUnauthorized?: () => void;
 }
 
 const NICKNAME_KEY = "privapaid_nickname";
@@ -25,7 +38,8 @@ const NICKNAME_KEY = "privapaid_nickname";
 export default function CommentSection({
   mediaId,
   productIds,
-  storedProductIds,
+  hasAccess,
+  onUnauthorized,
 }: CommentSectionProps) {
   const { data: session } = useSession();
   const { t, locale } = useLocale();
@@ -37,8 +51,6 @@ export default function CommentSection({
   const [nickname, setNickname] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [hasAccess, setHasAccess] = useState(false);
-  const [checkingAccess, setCheckingAccess] = useState(true);
 
   const isCustomer = session?.user?.role === "customer";
 
@@ -51,64 +63,6 @@ export default function CommentSection({
       // localStorage not available
     }
   }, []);
-
-  // Verify macaroon access for any product — used on mount and after unlock
-  async function verifyMacaroonAccess() {
-    for (const productId of productIds) {
-      try {
-        const res = await fetch("/api/macaroons", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ product_id: productId }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.remaining_seconds > 0) {
-            setHasAccess(true);
-            setCheckingAccess(false);
-            return;
-          }
-        }
-      } catch {
-        // Continue
-      }
-    }
-    setCheckingAccess(false);
-  }
-
-  // Check access: server already knows which products have stored macaroons.
-  // If any match, the user has paid — no verification round-trip needed.
-  // Fall back to macaroon verification only for anonymous payers mid-checkout.
-  useEffect(() => {
-    if (productIds.length === 0) {
-      setCheckingAccess(false);
-      return;
-    }
-
-    // Short-circuit: server confirmed stored macaroons for these products
-    if (storedProductIds && storedProductIds.length > 0) {
-      setHasAccess(true);
-      setCheckingAccess(false);
-      return;
-    }
-
-    verifyMacaroonAccess();
-  }, [productIds, storedProductIds]);
-
-  // Listen for unlock events from PaymentWall so comments unlock without refresh.
-  // Grant access directly — the event only fires after confirmed payment +
-  // successful decryption, so no additional verification is needed.
-  useEffect(() => {
-    if (productIds.length === 0 || hasAccess) return;
-
-    function handleUnlocked() {
-      setHasAccess(true);
-      setCheckingAccess(false);
-    }
-
-    window.addEventListener("privapaid:unlocked", handleUnlocked);
-    return () => window.removeEventListener("privapaid:unlocked", handleUnlocked);
-  }, [productIds, hasAccess]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -137,11 +91,12 @@ export default function CommentSection({
       const json = await res.json();
       if (!res.ok) {
         // Server says access is missing/expired even though we optimistically
-        // showed the form based on the cookie. Revoke optimistic access so the
-        // gating message replaces the form, and surface a clearer error.
+        // showed the form. Surface a clearer error and ask the parent to
+        // re-check access (which will hide the form via the hasAccess prop
+        // if access really is gone).
         if (res.status === 401 || res.status === 402) {
-          setHasAccess(false);
           setError(t("viewer.comments.access_unverified"));
+          onUnauthorized?.();
           return;
         }
         setError(json.error || "Failed to post comment");
@@ -180,7 +135,7 @@ export default function CommentSection({
         {t("viewer.comments.title", { count: comments.length })}
       </h3>
 
-      {checkingAccess ? null : canComment && productIds.length > 0 ? (
+      {canComment && productIds.length > 0 ? (
         <form onSubmit={handleSubmit} className="mb-6">
           {!isCustomer && (
             <input

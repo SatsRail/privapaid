@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createHash, randomBytes, webcrypto } from "crypto";
@@ -10,20 +11,21 @@ import {
   sha256HexOfString,
 } from "../../helpers/crypto";
 import { mockFetch } from "../../helpers/fetch";
+import type { MediaAccess } from "@/lib/use-media-access";
 
 /**
  * PaymentWall with REAL crypto.
  *
- * The existing PaymentWall.test.tsx mocks `decryptBlob` and
- * `verifyKeyFingerprint` away — which is great for testing the
- * component's branching but useless for catching bugs in HOW PaymentWall
- * actually threads keys, AAD, and bytes through the decryption pipeline.
+ * The unit-level PaymentWall.test.tsx mocks `decryptBlob` and
+ * `verifyKeyFingerprint` away — great for testing the component's branching
+ * but useless for catching bugs in HOW PaymentWall threads keys, AAD, and
+ * bytes through the decryption pipeline.
  *
  * This file is the only place that exercises:
  *   - Real `decryptBlob` (with productId AAD) for non-photo media
  *   - Real photo envelope unwrap (decryptBlob → DEK → fetch GridFS → decryptBytesWithKey)
  *   - Real `verifyKeyFingerprint` SHA-256 contract
- *   - Real React state transitions (mount checkAccess + post-payment handleCheckoutComplete)
+ *   - Real React state transitions through onAccessClaim → decryption effect
  *
  * If anything drifts between the server-side encrypt path and what
  * PaymentWall expects at decrypt time, this file fails loudly with the
@@ -73,10 +75,6 @@ vi.mock("@/components/ContentRenderer", () => ({
   },
 }));
 
-vi.mock("@/components/HeartbeatManager", () => ({
-  default: () => <div data-testid="heartbeat-manager" />,
-}));
-
 vi.mock("@/components/ExchangeModal", () => ({
   default: () => null,
 }));
@@ -84,15 +82,14 @@ vi.mock("@/components/ExchangeModal", () => ({
 /**
  * Test fixture for the checkout-completion payload. Each test calls
  * `checkoutFixture.arm(...)` BEFORE `user.click("complete-btn")` to declare
- * what the mocked CheckoutOverlay should fire as `onComplete`. Wrapped in
- * an object instead of a free variable so the mutation is obvious at every
- * call site and `beforeEach` can reset it through one named method.
+ * what the mocked CheckoutOverlay should fire as `onComplete`.
  */
 interface CompletionPayload {
   key: string;
   macaroon: string;
   order_number: string | null;
   order_id: string | null;
+  remaining_seconds?: number;
 }
 const EMPTY_COMPLETION: CompletionPayload = {
   key: "",
@@ -112,7 +109,7 @@ const checkoutFixture = {
 
 vi.mock("@/components/CheckoutOverlay", () => ({
   default: ({ onComplete }: {
-    onComplete: (data: CompletionPayload & { remaining_seconds?: number }) => void;
+    onComplete: (data: CompletionPayload) => void;
   }) => (
     <div data-testid="checkout-overlay">
       <button
@@ -127,11 +124,39 @@ vi.mock("@/components/CheckoutOverlay", () => ({
 
 import PaymentWall from "@/components/PaymentWall";
 
-// ── Helpers ───────────────────────────────────────────────────────────
-// Shared crypto helpers live in tests/helpers/crypto.ts. The local
-// `webcrypto` import above is only retained for the `globalThis.crypto`
-// polyfill at the top of this file (jsdom doesn't ship `crypto.subtle`).
+const NO_ACCESS: MediaAccess = { status: "inactive", reason: "no_cookie" };
 
+/**
+ * Stateful wrapper mirroring the real MediaLayout's useMediaAccess
+ * integration: when PaymentWall calls onAccessClaim, transition the access
+ * prop to `active` with that payload. This is the real handoff the parent
+ * hook performs in production.
+ */
+function StatefulPaymentWall({
+  initialAccess = NO_ACCESS,
+  ...props
+}: Omit<React.ComponentProps<typeof PaymentWall>, "access" | "onAccessClaim"> & {
+  initialAccess?: MediaAccess;
+}) {
+  const [access, setAccess] = useState<MediaAccess>(initialAccess);
+  return (
+    <PaymentWall
+      {...props}
+      access={access}
+      onAccessClaim={(p) =>
+        setAccess({
+          status: "active",
+          productId: p.productId,
+          key: p.key,
+          remainingSeconds: p.remainingSeconds,
+          encryptedBlob: p.encryptedBlob,
+        })
+      }
+    />
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
 const PRODUCT_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -145,7 +170,7 @@ describe("PaymentWall with real crypto", () => {
   });
 
   // -------------------------------------------------------------------
-  // POST-PAYMENT — handleCheckoutComplete with REAL decryptBlob
+  // POST-PAYMENT — handleCheckoutComplete → onAccessClaim → decrypt effect
   // -------------------------------------------------------------------
 
   it("article post-payment: real decryptBlob recovers the EXACT original markdown", async () => {
@@ -176,8 +201,6 @@ describe("PaymentWall with real crypto", () => {
       status: "active",
     }];
 
-    // Fetch mocks: checkout creation succeeds; everything else 404s so the
-    // mount-time checkAccess shows pay buttons (no stored macaroon).
     mockFetch((url, opts) => {
       if (url === "/api/checkout" && opts?.method === "POST") {
         return { ok: true, json: async () => ({ token: "tok" }) };
@@ -193,13 +216,13 @@ describe("PaymentWall with real crypto", () => {
       macaroon: "macaroon-token-xyz",
       order_number: "ORD-REALCRYPTO-ART",
       order_id: "uuid-real-art",
+      remaining_seconds: 86400,
     });
 
     render(
-      <PaymentWall
+      <StatefulPaymentWall
         mediaId="media-article-1"
         products={products}
-        storedProductIds={[]}
         mediaType="article"
       />
     );
@@ -265,7 +288,6 @@ describe("PaymentWall with real crypto", () => {
         return { ok: true, json: async () => ({}) };
       }
       if (url === `/api/photos/${gridFsId}`) {
-        // Real GridFS bytes — PaymentWall.resolveContent will decrypt these.
         return {
           ok: true,
           arrayBuffer: async () => gridFsCiphertext.buffer.slice(
@@ -282,13 +304,13 @@ describe("PaymentWall with real crypto", () => {
       macaroon: "macaroon-photo-xyz",
       order_number: "ORD-REALCRYPTO-PHOTO",
       order_id: "uuid-real-photo",
+      remaining_seconds: 86400,
     });
 
     render(
-      <PaymentWall
+      <StatefulPaymentWall
         mediaId="media-photo-1"
         products={products}
-        storedProductIds={[]}
         mediaType="photo"
         photoGridFsId={gridFsId}
       />
@@ -301,22 +323,20 @@ describe("PaymentWall with real crypto", () => {
 
     await waitFor(() => expect(screen.getByTestId("content-renderer")).toBeInTheDocument());
 
-    // The bytes after PaymentWall's envelope unwrap MUST equal the original
-    // photo bytes exactly. If GridFS fetch, DEK decode, AAD encoding, or
-    // any decryption step drifts, this fails.
     expect(capturedDecryptedBytes).not.toBeNull();
     expect(capturedDecryptedBytes!.length).toBe(originalPhoto.length);
     expect(Buffer.from(capturedDecryptedBytes!).equals(originalPhoto)).toBe(true);
   });
 
   // -------------------------------------------------------------------
-  // PAGE RELOAD AFTER PAYMENT — the customer's "still shows pay buttons" case
+  // PAGE RELOAD AFTER PAYMENT — access prop arrives pre-active from the parent
   // -------------------------------------------------------------------
+  // In the new architecture, the parent's useMediaAccess hook runs the
+  // unlock check at mount; PaymentWall receives the already-active access
+  // prop and just needs to decrypt. These tests pin that we correctly
+  // decrypt under the most common "returning visitor" scenario.
 
-  it("article page reload after payment: stored macaroon → /api/macaroons PUT → real decrypt recovers the article", async () => {
-    // Simulates the customer's likely failure path: they paid in a previous
-    // session, came back, the cookie + PUT verify path runs at mount, and
-    // must decrypt the article with the real crypto.
+  it("article page reload after payment: active access prop → real decrypt recovers the article", async () => {
     const articleBody = "Article body after a page reload.";
     const productKey = genProductKey();
     const fingerprint = await sha256HexOfString(productKey);
@@ -334,27 +354,18 @@ describe("PaymentWall with real crypto", () => {
       status: "active",
     }];
 
-    mockFetch((url, opts) => {
-      if (url === "/api/macaroons" && opts?.method === "PUT") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            valid: true,
-            key: productKey,
-            key_fingerprint: fingerprint,
-            remaining_seconds: 86400,
-          }),
-        };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
-    });
-
     render(
       <PaymentWall
         mediaId="media-reload-article"
         products={products}
-        storedProductIds={[PRODUCT_ID]} // simulates server-found stored macaroon
+        access={{
+          status: "active",
+          productId: PRODUCT_ID,
+          key: productKey,
+          remainingSeconds: 86400,
+          encryptedBlob,
+        }}
+        onAccessClaim={() => {}}
         mediaType="article"
       />
     );
@@ -365,7 +376,7 @@ describe("PaymentWall with real crypto", () => {
     expect(Buffer.from(capturedDecryptedBytes!).equals(Buffer.from(expectedBytes))).toBe(true);
   });
 
-  it("photo page reload after payment: stored macaroon → envelope unwrap → real photo bytes", async () => {
+  it("photo page reload after payment: active access prop → envelope unwrap → real photo bytes", async () => {
     const originalPhoto = Buffer.from(
       Uint8Array.from([0x89, 0x50, 0x4e, 0x47, ...Buffer.from("RELOAD-PHOTO")])
     );
@@ -388,19 +399,7 @@ describe("PaymentWall with real crypto", () => {
       status: "active",
     }];
 
-    mockFetch((url, opts) => {
-      if (url === "/api/macaroons" && opts?.method === "PUT") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            valid: true,
-            key: productKey,
-            key_fingerprint: fingerprint,
-            remaining_seconds: 86400,
-          }),
-        };
-      }
+    mockFetch((url) => {
       if (url === `/api/photos/${gridFsId}`) {
         return {
           ok: true,
@@ -417,7 +416,14 @@ describe("PaymentWall with real crypto", () => {
       <PaymentWall
         mediaId="media-reload-photo"
         products={products}
-        storedProductIds={[PRODUCT_ID]}
+        access={{
+          status: "active",
+          productId: PRODUCT_ID,
+          key: productKey,
+          remainingSeconds: 86400,
+          encryptedBlob: wrappedDek,
+        }}
+        onAccessClaim={() => {}}
         mediaType="photo"
         photoGridFsId={gridFsId}
       />
@@ -428,91 +434,14 @@ describe("PaymentWall with real crypto", () => {
   });
 
   // -------------------------------------------------------------------
-  // FALLBACK UNLOCK ENDPOINT — direct decryption fails, fallback succeeds
+  // ADVERSARIAL PORTAL RESPONSES — key shapes a real portal might return
   // -------------------------------------------------------------------
 
-  it("article: when direct decryption is skipped (empty key), real fallback unlock decrypts correctly", async () => {
-    const user = userEvent.setup();
-    const articleBody = "Article delivered via fallback unlock endpoint.";
-    const productKey = genProductKey();
-    const fingerprint = await sha256HexOfString(productKey);
-    const encryptedBlob = encryptSourceUrl(articleBody, productKey, PRODUCT_ID);
-    const expectedBytes = new TextEncoder().encode(articleBody);
-
-    const products = [{
-      productId: PRODUCT_ID,
-      encryptedBlob,
-      keyFingerprint: fingerprint,
-      name: "Fallback Article",
-      priceCents: 1,
-      currency: "USD",
-      accessDurationSeconds: 86400,
-      status: "active",
-    }];
-
-    // Gate the unlock endpoint to fail during mount-time checkAccess and
-    // succeed only after checkout completes (mirrors the real flow: the
-    // server-side macaroon cookie isn't set until after the POST).
-    let checkoutCompleted = false;
-    mockFetch((url, opts) => {
-      if (url === "/api/checkout" && opts?.method === "POST") {
-        return { ok: true, json: async () => ({ token: "tok" }) };
-      }
-      if (url === "/api/macaroons" && opts?.method === "POST") {
-        checkoutCompleted = true; // set just before handleCheckoutComplete fires the fallback
-        return { ok: true, json: async () => ({}) };
-      }
-      if (url === "/api/media/media-fallback-article/unlock") {
-        if (!checkoutCompleted) return { ok: false, status: 401, json: async () => ({}) };
-        return {
-          ok: true,
-          json: async () => ({
-            key: productKey,
-            key_fingerprint: fingerprint,
-            encrypted_blob: encryptedBlob,
-            product_id: PRODUCT_ID,
-          }),
-        };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
-    });
-
-    // Portal returned macaroon but NO key — forces fallback.
-    checkoutFixture.arm({
-      key: "",
-      macaroon: "macaroon-fallback",
-      order_number: "ORD-FALLBACK-ART",
-      order_id: "uuid-fallback-art",
-    });
-
-    render(
-      <PaymentWall
-        mediaId="media-fallback-article"
-        products={products}
-        storedProductIds={[]}
-        mediaType="article"
-      />
-    );
-
-    await waitFor(() => expect(screen.getAllByText(/Article/)[0]).toBeInTheDocument());
-    await user.click(screen.getAllByText(/Article/)[0]);
-    await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
-    await user.click(screen.getByTestId("complete-btn"));
-
-    await waitFor(() => expect(screen.getByTestId("content-renderer")).toBeInTheDocument());
-    expect(Buffer.from(capturedDecryptedBytes!).equals(Buffer.from(expectedBytes))).toBe(true);
-  });
-
-  // -------------------------------------------------------------------
-  // ADVERSARIAL PORTAL RESPONSES — the key shapes a real portal might return
-  // -------------------------------------------------------------------
-
-  it("article: tolerates portal key with trailing newline (common ENV-var corruption)", async () => {
+  it("article: trailing newline on portal key fails LOUDLY at the fingerprint check", async () => {
     // If the portal accidentally returns the key with a trailing newline,
-    // base64urlDecode would treat the newline as padding and produce a
-    // wrong-length buffer — we want this to FAIL LOUDLY at the fingerprint
-    // check, NOT silently decrypt to garbage. The fingerprint mismatch
-    // path then surfaces a Sentry event so we can diagnose.
+    // the SHA-256 of the corrupted string won't match the stored fingerprint.
+    // The fingerprint check must catch this so we don't silently decrypt to
+    // garbage. The recordFailure Sentry event then surfaces the branch.
     const articleBody = "Tolerance test";
     const productKey = genProductKey();
     const corruptedKey = productKey + "\n";
@@ -549,10 +478,9 @@ describe("PaymentWall with real crypto", () => {
     });
 
     render(
-      <PaymentWall
+      <StatefulPaymentWall
         mediaId="media-adv"
         products={products}
-        storedProductIds={[]}
         mediaType="article"
       />
     );
@@ -562,14 +490,13 @@ describe("PaymentWall with real crypto", () => {
     await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
     await user.click(screen.getByTestId("complete-btn"));
 
-    // Must NOT silently render anything — and MUST capture a Sentry event
-    // identifying the branch so we can diagnose in production.
     await waitFor(() => {
       expect(mockCaptureMessage).toHaveBeenCalledWith(
         "PaymentWall.recordFailure",
         expect.objectContaining({
           tags: expect.objectContaining({
             context: "PaymentWall.recordFailure",
+            reason: "fingerprintMismatch",
           }),
         })
       );
@@ -581,13 +508,10 @@ describe("PaymentWall with real crypto", () => {
     // Pin the fingerprint algorithm contract end-to-end. If portal Ruby
     // (Digest::SHA256.hexdigest(key)) ever drifts from the client
     // (SHA-256 of UTF-8 bytes of key, hex), every paying customer would
-    // see PaymentWall.fingerprint failures. This is the cheapest, most
-    // load-bearing assertion in the file.
+    // see PaymentWall.fingerprint failures.
     const k = genProductKey();
     const clientFp = await sha256HexOfString(k);
 
-    // Server-side fingerprint computed via Node crypto (same algorithm
-    // the Ruby portal uses: SHA-256 of the key string, hex-encoded).
     const serverFp = createHash("sha256").update(k).digest("hex");
     expect(clientFp).toBe(serverFp);
   });

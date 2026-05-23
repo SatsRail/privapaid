@@ -38,7 +38,6 @@ beforeEach(() => {
   (useSession as ReturnType<typeof vi.fn>).mockReturnValue({ data: null });
   (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], mutate: mockMutate });
 
-  // Mock localStorage
   const store: Record<string, string> = {};
   vi.stubGlobal("localStorage", {
     getItem: vi.fn((key: string) => store[key] || null),
@@ -51,14 +50,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * Sane defaults reflecting the simplified API: the parent (MediaLayout)
+ * owns the single useMediaAccess hook and passes us `hasAccess` already
+ * computed from `access.status === "active"`. We no longer run any
+ * mount-time macaroon checks here; that's why the test file lost ~half
+ * its scaffolding (no more `fetch` mocks for the macaroon-check first
+ * call, etc.).
+ */
+const baseProps = {
+  mediaId: "m1",
+  productIds: ["p1"],
+  hasAccess: false,
+};
+
 describe("CommentSection", () => {
   it("renders comment count", () => {
-    render(<CommentSection mediaId="m1" productIds={[]} />);
+    render(<CommentSection {...baseProps} productIds={[]} />);
     expect(screen.getByText("Comments (0)")).toBeInTheDocument();
   });
 
   it("shows 'No comments yet.' when empty", () => {
-    render(<CommentSection mediaId="m1" productIds={[]} />);
+    render(<CommentSection {...baseProps} productIds={[]} />);
     expect(screen.getByText("No comments yet.")).toBeInTheDocument();
   });
 
@@ -70,84 +83,45 @@ describe("CommentSection", () => {
       mutate: mockMutate,
     });
 
-    render(<CommentSection mediaId="m1" productIds={[]} />);
+    render(<CommentSection {...baseProps} productIds={[]} />);
     expect(screen.getByText("Great!")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
   });
 
-  it("shows access-denied message when no access and has productIds", async () => {
-    // macaroon check returns no access
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 0 }),
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
-    });
+  it("shows access-denied message when no access and has productIds", () => {
+    render(<CommentSection {...baseProps} hasAccess={false} />);
+    expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
   });
 
-  it("shows comment form when user has macaroon access", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+  it("shows comment form when user has access", () => {
+    render(<CommentSection {...baseProps} hasAccess={true} />);
+    expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
   });
 
-  it("shows nickname field for anonymous (non-customer) users", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Your nickname")).toBeInTheDocument();
-    });
+  it("shows nickname field for anonymous (non-customer) users", () => {
+    render(<CommentSection {...baseProps} hasAccess={true} />);
+    expect(screen.getByPlaceholderText("Your nickname")).toBeInTheDocument();
   });
 
-  it("hides nickname field for customer users", async () => {
+  it("hides nickname field for customer users", () => {
     (useSession as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { user: { role: "customer", name: "Bob" } },
     });
 
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+    expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Your nickname")).not.toBeInTheDocument();
   });
 
-  it("shows customer form when isCustomer (no productIds needed for access)", async () => {
+  it("shows customer form even when hasAccess=false (customer login is its own access path)", () => {
     (useSession as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { user: { role: "customer", name: "Bob" } },
     });
 
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
+    render(<CommentSection {...baseProps} hasAccess={false} />);
 
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+    expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
   });
 
   it("prevents submit with empty body", async () => {
@@ -155,37 +129,19 @@ describe("CommentSection", () => {
       data: { user: { role: "customer", name: "Bob" } },
     });
 
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     const form = screen.getByPlaceholderText("Share your thoughts...").closest("form")!;
     await act(async () => {
       fireEvent.submit(form);
     });
 
-    // fetch should only have been called for macaroon check, not for comment POST
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // No POST should have happened — the body was empty.
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("shows error when anonymous user submits without nickname", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     const textarea = screen.getByPlaceholderText("Share your thoughts...");
     fireEvent.change(textarea, { target: { value: "Hello" } });
@@ -199,57 +155,35 @@ describe("CommentSection", () => {
   });
 
   it("submits comment successfully", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ _id: "new1", body: "Hello", created_at: "2025-01-01", customer: { nickname: "Me" } }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ _id: "new1", body: "Hello", created_at: "2025-01-01", customer: { nickname: "Me" } }),
     });
 
-    const nicknameInput = screen.getByPlaceholderText("Your nickname");
-    fireEvent.change(nicknameInput, { target: { value: "Me" } });
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
-    const textarea = screen.getByPlaceholderText("Share your thoughts...");
-    fireEvent.change(textarea, { target: { value: "Hello" } });
+    fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
+    fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hello" } });
 
-    const form = textarea.closest("form")!;
+    const form = screen.getByPlaceholderText("Share your thoughts...").closest("form")!;
     await act(async () => {
       fireEvent.submit(form);
     });
 
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(mockMutate).toHaveBeenCalled();
     expect(localStorage.setItem).toHaveBeenCalledWith("privapaid_nickname", "Me");
   });
 
-  it("revokes optimistic access and shows access-unverified message when POST returns 402", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      // Initial macaroon access check — succeeds (gives optimistic access)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      // POST /comments returns 402 (access expired/invalid)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 402,
-        json: async () => ({ error: "Payment required to comment" }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+  it("calls onUnauthorized and shows access-unverified when POST returns 402", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 402,
+      json: async () => ({ error: "Payment required to comment" }),
     });
+    const onUnauthorized = vi.fn();
+
+    render(<CommentSection {...baseProps} hasAccess={true} onUnauthorized={onUnauthorized} />);
 
     fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
@@ -259,32 +193,22 @@ describe("CommentSection", () => {
       fireEvent.submit(form);
     });
 
-    // The form should be replaced with the access-denied gate
-    await waitFor(() => {
-      expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
-    });
-    // The access_unverified message is set as the inline error before the form revokes
-    // so the user sees a clear signal that their access couldn't be verified.
-    // Once hasAccess flips false, the form unmounts — that's the expected end state.
+    // The component delegates the access flip to the parent — the parent's
+    // useMediaAccess hook will re-check and may re-render us with hasAccess=false.
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    // And we display the access-unverified inline error.
+    expect(screen.getByText(/couldn't verify your access/i)).toBeInTheDocument();
   });
 
-  it("revokes optimistic access on POST 401 and shows access-unverified", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        json: async () => ({ error: "Unauthorized" }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+  it("calls onUnauthorized on POST 401 and shows access-unverified", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: "Unauthorized" }),
     });
+    const onUnauthorized = vi.fn();
+
+    render(<CommentSection {...baseProps} hasAccess={true} onUnauthorized={onUnauthorized} />);
 
     fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
@@ -294,27 +218,40 @@ describe("CommentSection", () => {
       fireEvent.submit(form);
     });
 
-    await waitFor(() => {
-      expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/couldn't verify your access/i)).toBeInTheDocument();
+  });
+
+  it("does not throw when onUnauthorized is omitted and POST returns 401", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: "Unauthorized" }),
     });
+
+    // No onUnauthorized prop — this used to crash with the verify-failed
+    // path setting state on an unmounted component; with optional chaining
+    // it now no-ops cleanly.
+    render(<CommentSection {...baseProps} hasAccess={true} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
+    fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
+
+    const form = screen.getByPlaceholderText("Share your thoughts...").closest("form")!;
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(screen.getByText(/couldn't verify your access/i)).toBeInTheDocument();
   });
 
   it("handles server error on submit", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        json: async () => ({ error: "Bad request" }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: "Bad request" }),
     });
+
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
@@ -328,21 +265,12 @@ describe("CommentSection", () => {
   });
 
   it("handles server error without message", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        json: async () => ({}),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({}),
     });
+
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
@@ -356,18 +284,9 @@ describe("CommentSection", () => {
   });
 
   it("handles network error on submit", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockRejectedValueOnce(new Error("Network"));
+    (fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network"));
 
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     fireEvent.change(screen.getByPlaceholderText("Your nickname"), { target: { value: "Me" } });
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hi" } });
@@ -380,37 +299,10 @@ describe("CommentSection", () => {
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
   });
 
-  it("handles macaroon check failure gracefully", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network"));
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    // After check fails, should show access denied
-    await waitFor(() => {
-      expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
-    });
-  });
-
-  it("handles macaroon non-ok response", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: false,
-    });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();
-    });
-  });
-
   it("loads nickname from localStorage on mount", async () => {
     (localStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue("SavedNick");
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ remaining_seconds: 100 }),
-    });
 
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("Your nickname")).toHaveValue("SavedNick");
@@ -418,28 +310,9 @@ describe("CommentSection", () => {
   });
 
   it("skips form when no productIds (not pay-gated content)", () => {
-    render(<CommentSection mediaId="m1" productIds={[]} />);
+    render(<CommentSection {...baseProps} productIds={[]} hasAccess={false} />);
     expect(screen.queryByPlaceholderText("Share your thoughts...")).not.toBeInTheDocument();
-    // No access-denied message either
     expect(screen.queryByText(/Only paying viewers/)).not.toBeInTheDocument();
-  });
-
-  it("checks multiple products and grants access on second", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 50 }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1", "p2"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
-    });
   });
 
   it("submits comment without nickname for customer", async () => {
@@ -447,21 +320,12 @@ describe("CommentSection", () => {
       data: { user: { role: "customer", name: "Bob" } },
     });
 
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ remaining_seconds: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ _id: "c2", body: "Hey", created_at: "2025-01-01", customer: { nickname: "Bob" } }),
-      });
-
-    render(<CommentSection mediaId="m1" productIds={["p1"]} />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Share your thoughts...")).toBeInTheDocument();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ _id: "c2", body: "Hey", created_at: "2025-01-01", customer: { nickname: "Bob" } }),
     });
+
+    render(<CommentSection {...baseProps} hasAccess={true} />);
 
     fireEvent.change(screen.getByPlaceholderText("Share your thoughts..."), { target: { value: "Hey" } });
 
@@ -470,8 +334,7 @@ describe("CommentSection", () => {
       fireEvent.submit(form);
     });
 
-    // Should have posted without nickname
-    const postCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const postCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const postedBody = JSON.parse(postCall[1].body);
     expect(postedBody.body).toBe("Hey");
     expect(postedBody.nickname).toBeUndefined();
