@@ -138,6 +138,42 @@ describe("PhotoUploadField", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("gridfs-id-xyz|base64url-dek-here");
   });
 
+  it("rejects (and revokes) a non-blob: URL from createObjectURL — defense-in-depth against the CodeQL js/xss-through-dom path", async () => {
+    // The spec guarantees URL.createObjectURL returns a `blob:` URL, but
+    // we assert it anyway: a hypothetical future patch (or a malicious
+    // polyfill) that returned, say, `javascript:alert(1)` would otherwise
+    // flow into <img src>. CodeQL flags the data path conservatively;
+    // this guard narrows the trace AND catches the regression if it ever
+    // happens.
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        gridFsId: "gridfs-id-xyz",
+        dek: "base64url-dek-here",
+        mime: "image/jpeg",
+      }),
+    });
+    globalThis.fetch = mockFetch;
+
+    // Replace the mock to return a non-blob URL.
+    const revokeSpy = vi.fn();
+    global.URL.createObjectURL = vi.fn().mockReturnValue("javascript:alert(1)");
+    global.URL.revokeObjectURL = revokeSpy;
+
+    const { container } = render(<Harness />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = makeFile("photo.jpg", 1024);
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+
+    // Error surfaced to the user; state NOT advanced (no preview to <img>).
+    expect(screen.getByText(/Could not generate a safe photo preview/i)).toBeInTheDocument();
+    expect(screen.getByTestId("state")).toHaveTextContent("");
+    // The bogus URL was revoked so it doesn't linger in memory.
+    expect(revokeSpy).toHaveBeenCalledWith("javascript:alert(1)");
+  });
+
   it("surfaces a server error message and leaves state untouched", async () => {
     const mockFetch = vi.fn().mockResolvedValueOnce({
       ok: false,

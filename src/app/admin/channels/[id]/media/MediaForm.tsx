@@ -747,7 +747,21 @@ export function PhotoUploadField({
       }
       // Show a local preview from the just-selected file (the GridFS bytes are
       // ciphertext, so we can't display them directly).
+      //
+      // Defense-in-depth: the spec guarantees URL.createObjectURL returns a
+      // `blob:` URL — a same-origin, opaque handle to in-memory bytes, inert
+      // when used as <img src>. Asserting the protocol here narrows CodeQL's
+      // js/xss-through-dom taint trace (it sees a file-typed input flowing
+      // into an <img src> sink and conservatively flags it; the guard tells
+      // it the value can only ever be a blob URL by the time it reaches the
+      // attribute). It also catches a future regression where someone swaps
+      // in a different URL source that DOES carry attacker-controlled bytes.
       const localPreview = URL.createObjectURL(file);
+      if (!localPreview.startsWith("blob:")) {
+        URL.revokeObjectURL(localPreview);
+        setError("Could not generate a safe photo preview");
+        return;
+      }
       onUploaded({
         gridFsId: data.gridFsId,
         dek: data.dek,
