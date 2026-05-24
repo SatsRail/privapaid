@@ -77,12 +77,16 @@ describe("SidebarContext", () => {
     expect(mockLocalStorage.setItem).toHaveBeenCalledWith("sidebar-collapsed", "true");
   });
 
-  it("always collapses on mobile regardless of localStorage", () => {
+  it("honors localStorage on mobile too — the sidebar is now an overlay drawer at every breakpoint", () => {
+    // Architectural shift: the sidebar is no longer a 72px icon rail on
+    // desktop and a slide-out on mobile. It's now a full slide-out drawer
+    // everywhere, so the previous "force-collapse on mobile" guard is
+    // gone — the user's explicit choice wins, regardless of viewport.
     Object.defineProperty(window, "innerWidth", { value: 500, writable: true, configurable: true });
     store["sidebar-collapsed"] = "false";
     render(
       <SidebarProvider><TestConsumer /></SidebarProvider>
     );
-    expect(screen.getByTestId("collapsed")).toHaveTextContent("true");
+    expect(screen.getByTestId("collapsed")).toHaveTextContent("false");
   });
 });

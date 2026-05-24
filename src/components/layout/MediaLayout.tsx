@@ -81,7 +81,7 @@ export default function MediaLayout({
   );
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="mx-auto max-w-[1800px] px-6 py-8">
       <MediaBreadcrumb
         channelName={channel.name}
         channelSlug={channel.slug}
@@ -95,7 +95,8 @@ export default function MediaLayout({
         collapses to a single column — sidebar is skipped entirely (founder
         decision; mobile users navigate via the channel page).
         Sidebar widths: 320px on md, 360px on lg — same proportions YouTube
-        uses on the watch page at comparable breakpoints.
+        uses on the watch page at comparable breakpoints. Outer cap raised
+        to 1800px so a 1280px video + 360px sidebar fits without crowding.
       */}
       <div
         className={
@@ -107,8 +108,15 @@ export default function MediaLayout({
         {/* Left column — primary content + comments. Comments live HERE
             (not in the right column) so the right column can host the
             sibling-media rail. min-w-0 keeps long titles / wide videos from
-            blowing out the grid track. */}
+            blowing out the grid track.
+
+            Reading order: video → title → meta (views + price/clock) →
+            description → preview gallery → comments. Video-first matches
+            the YouTube watch page; user sees the content before any
+            framing chrome. */}
         <div className="min-w-0">
+          {mainContent}
+
           <MediaHeader
             name={media.name}
             products={products}
@@ -116,11 +124,10 @@ export default function MediaLayout({
             remainingSeconds={remainingSeconds}
           />
 
-          {mainContent}
-
-          {/* YouTube-style meta row: views sit under the player, above the
-              description. Tight visual association with the content rather
-              than competing with the title + price/clock pills above. */}
+          {/* YouTube-style meta row: views sit under the title, above the
+              description. Now that the title also sits under the video,
+              the title + meta + description form a coherent "info block"
+              directly beneath the player. */}
           <MediaMeta viewsCount={media.views_count} locale={locale} />
 
           {/* Description */}

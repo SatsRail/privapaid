@@ -68,7 +68,10 @@ export default function MediaHeader({
   const showPricePill = !hasActiveAccess;
 
   return (
-    <div className="mb-6">
+    // Title now lives UNDER the video (YouTube reading order). mt-4 gives
+    // it breathing room from the player; mb-2 keeps the meta row close
+    // since they form a coherent info block together.
+    <div className="mt-4 mb-2">
       {/* YouTube's watch-page title is medium-weight, slightly smaller than
           a typical bold h1. Roboto medium at this size reads as authoritative
           without shouting. */}

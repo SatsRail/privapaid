@@ -22,8 +22,13 @@ vi.mock("@/lib/images", () => ({
   },
 }));
 
+// Use vi.fn so individual tests can override the collapsed state via
+// mockReturnValue. Default: not collapsed (the sidebar is rendered as
+// expanded), which mirrors most of the file's assertions about visible
+// content (channel list, language switcher, etc).
+const mockUseSidebar = vi.fn(() => ({ collapsed: false, toggle: mockToggle }));
 vi.mock("@/components/SidebarContext", () => ({
-  useSidebar: () => ({ collapsed: false, toggle: mockToggle }),
+  useSidebar: () => mockUseSidebar(),
 }));
 
 vi.mock("@/i18n/useLocale", () => ({
@@ -67,6 +72,9 @@ beforeEach(() => {
   mockToggle.mockClear();
   mockSignOut.mockClear();
   mockSetLocale.mockClear();
+  // Default collapsed=false so visible-content assertions (channel list,
+  // language switcher, etc.) keep working. Individual tests can override.
+  mockUseSidebar.mockReturnValue({ collapsed: false, toggle: mockToggle });
   (useSession as ReturnType<typeof vi.fn>).mockReturnValue({ data: null });
 });
 
@@ -221,11 +229,13 @@ describe("Sidebar", () => {
     expect(screen.getByText("Art Channel")).toBeInTheDocument();
   });
 
-  it("shows mobile backdrop when not collapsed", () => {
+  it("shows the backdrop when not collapsed (always on, not just mobile)", () => {
     render(<Sidebar {...defaultProps} />);
-    // Backdrop should exist (not collapsed by default in our mock)
     const backdrop = document.querySelector(".fixed.inset-0");
     expect(backdrop).not.toBeNull();
+    // Pin the architectural change: backdrop no longer carries `lg:hidden`.
+    // YouTube watch-page model — the rail is an overlay at every breakpoint.
+    expect(backdrop?.className).not.toContain("lg:hidden");
   });
 
   it("calls toggle when backdrop clicked", () => {
@@ -234,6 +244,41 @@ describe("Sidebar", () => {
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
     expect(mockToggle).toHaveBeenCalled();
+  });
+
+  it("translates the aside fully off-screen when collapsed (no more 72px icon rail)", () => {
+    // The collapsed state used to render a 72px-wide icon rail on desktop.
+    // Now collapsed = -translate-x-full on every breakpoint. The aside is
+    // structurally w-60 always; the transform is what hides it.
+    mockUseSidebar.mockReturnValue({
+      collapsed: true,
+      toggle: mockToggle,
+    });
+    render(<Sidebar {...defaultProps} />);
+    const aside = document.querySelector("aside");
+    expect(aside).not.toBeNull();
+    expect(aside?.className).toContain("-translate-x-full");
+    expect(aside?.className).toContain("w-60");
+    expect(aside?.className).not.toContain("w-[72px]");
+  });
+
+  it("renders the aside in-frame when expanded (translate-x-0)", () => {
+    mockUseSidebar.mockReturnValue({
+      collapsed: false,
+      toggle: mockToggle,
+    });
+    render(<Sidebar {...defaultProps} />);
+    const aside = document.querySelector("aside");
+    expect(aside?.className).toContain("translate-x-0");
+  });
+
+  it("no longer renders the desktop spacer (rail is a pure overlay)", () => {
+    // The old spacer was `<div class="hidden ... lg:block w-[72px]" />` that
+    // reserved horizontal space on desktop. With the rail going overlay-only,
+    // the spacer would mean main shifts 60–260px to the right for no reason.
+    render(<Sidebar {...defaultProps} />);
+    const spacers = document.querySelectorAll('div.hidden.lg\\:block.w-60, div.hidden.lg\\:block.w-\\[72px\\]');
+    expect(spacers.length).toBe(0);
   });
 
   it("shows user initial for customer with name", () => {

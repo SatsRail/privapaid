@@ -13,10 +13,13 @@ const SidebarContext = createContext<SidebarContextValue>({
 });
 
 function getClientCollapsed(): boolean {
-  const isMobile = window.innerWidth < 1024;
-  if (isMobile) return true;
+  // YouTube watch-page model: rail hidden by default on every breakpoint.
+  // The hamburger toggle reveals it as a slide-out overlay; localStorage
+  // only sticks the explicit "open" choice so it survives navigation. A
+  // freshly-loaded page is always collapsed.
   const stored = localStorage.getItem("sidebar-collapsed");
-  return stored !== "false";
+  if (stored === "false") return false; // user explicitly opened it
+  return true;
 }
 
 // noop subscribe — we only need the snapshot for initial client value

@@ -81,14 +81,18 @@ export default async function ViewerShell({ children }: ViewerShellProps) {
   }));
 
   return (
-    <div className="flex min-h-[calc(100vh-3.5rem)]">
+    <div className="min-h-[calc(100vh-3.5rem)]">
+      {/* Sidebar is a `fixed` overlay drawer — it doesn't take horizontal
+          space in the document flow. The 72px desktop spacer it used to
+          render alongside is gone, so <main> spans the full viewport width
+          regardless of the rail's open / closed state. */}
       <Sidebar
         channels={serializedChannels}
         categories={serializedCategories}
         channelsByCategory={serializedByCategory}
         uncategorized={serializedUncategorized}
       />
-      <main className="min-w-0 flex-1">{children}</main>
+      <main className="min-w-0">{children}</main>
     </div>
   );
 }

@@ -55,19 +55,21 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Mobile backdrop */}
+      {/* Backdrop — always on when the rail is open, on every breakpoint.
+          YouTube watch-page model: the rail is an overlay drawer, not a
+          flex sibling that pushes content. Click outside to dismiss. */}
       {!collapsed && (
         <div
-          className="fixed inset-0 top-14 z-30 bg-black/50 lg:hidden"
+          className="fixed inset-0 top-14 z-30 bg-black/50"
           onClick={toggle}
         />
       )}
 
       <aside
         className={`
-          fixed left-0 top-14 z-40 flex h-[calc(100vh-3.5rem)] flex-col
-          transition-all duration-200
-          ${collapsed ? "w-[72px] max-lg:-translate-x-full" : "w-60"}
+          fixed left-0 top-14 z-40 flex h-[calc(100vh-3.5rem)] w-60 flex-col
+          transition-transform duration-200
+          ${collapsed ? "-translate-x-full" : "translate-x-0"}
         `}
         style={{ backgroundColor: "var(--theme-bg)" }}
       >
@@ -343,13 +345,10 @@ export default function Sidebar({
           </button>
         </div>
       </aside>
-
-      {/* Spacer — hidden on mobile where sidebar overlays */}
-      <div
-        className={`hidden shrink-0 transition-all duration-200 lg:block ${
-          collapsed ? "w-[72px]" : "w-60"
-        }`}
-      />
+      {/* No spacer — the rail is now a pure overlay (drawer) on every
+          breakpoint. Removing the spacer is what lets the viewer page's
+          <main> reclaim the horizontal real estate the icon rail used to
+          consume on desktop. */}
     </>
   );
 }

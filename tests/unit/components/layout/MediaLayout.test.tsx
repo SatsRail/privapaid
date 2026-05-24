@@ -177,8 +177,28 @@ describe("MediaLayout", () => {
     expect(screen.queryByTestId("preview-gallery")).not.toBeInTheDocument();
   });
 
-  it("uses the wider max-width container so the sidebar has room", () => {
+  it("uses the YouTube-scale max-width container (1800px) so a 1280px video + 360px sidebar fit", () => {
+    // Raised from max-w-6xl (1024px) to max-w-[1800px] when the left rail
+    // got collapsed away. The wider canvas is what makes a 1280px video
+    // actually 1280px — without it, the column would be too narrow.
     const { container } = render(<MediaLayout {...baseData} />);
-    expect(container.firstElementChild?.className).toContain("max-w-6xl");
+    expect(container.firstElementChild?.className).toContain("max-w-[1800px]");
+  });
+
+  it("renders the title (MediaHeader) AFTER the main content block — YouTube reading order", () => {
+    // Video-first reading order: the player loads, then the title appears
+    // under it, then the meta row. This guards against a future refactor
+    // accidentally flipping the order back to title-first.
+    const data = {
+      ...baseData,
+      products: [{ productId: "p1", encryptedBlob: "blob" }],
+    };
+    const { container } = render(<MediaLayout {...data} />);
+    const html = container.innerHTML;
+    const headerIdx = html.indexOf('data-testid="header"');
+    const mainIdx = html.indexOf('data-testid="payment-wall"');
+    expect(headerIdx).toBeGreaterThan(-1);
+    expect(mainIdx).toBeGreaterThan(-1);
+    expect(mainIdx).toBeLessThan(headerIdx);
   });
 });
