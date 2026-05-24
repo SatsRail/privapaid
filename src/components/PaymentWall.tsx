@@ -524,13 +524,13 @@ export default function PaymentWall({
       <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
         {mediaType === "photo" ? (
           // Single photo: black canvas with centered buttons
-          <div className="flex flex-col items-center justify-center bg-black px-4 py-12 min-h-[320px]">
+          <div className="flex min-h-[440px] flex-col items-center justify-center bg-black px-4 pt-20 pb-16">
             {cardContent}
           </div>
         ) : (
           <>
             {thumbnailUrl ? (
-              <div className="relative flex min-h-[320px] flex-col items-center justify-center px-4">
+              <div className="relative flex min-h-[440px] flex-col items-center justify-center px-4 pt-20 pb-16">
                 <img
                   src={thumbnailUrl}
                   alt="Preview"
@@ -542,7 +542,7 @@ export default function PaymentWall({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center px-4 py-6">
+              <div className="flex flex-col items-center px-4 pt-20 pb-16">
                 {cardContent}
               </div>
             )}

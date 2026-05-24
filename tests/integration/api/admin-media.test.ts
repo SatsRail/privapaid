@@ -21,6 +21,13 @@ vi.mock("@/lib/content-encryption", () => ({
   decryptSourceUrl: vi.fn().mockReturnValue("https://example.com/video.mp4"),
 }));
 
+const { mockWrapDekFromBase64url } = vi.hoisted(() => ({
+  mockWrapDekFromBase64url: vi.fn().mockReturnValue("kek-wrapped-dek-blob"),
+}));
+vi.mock("@/lib/photo-dek", () => ({
+  wrapDekFromBase64url: mockWrapDekFromBase64url,
+}));
+
 const { mockGridFsDelete } = vi.hoisted(() => ({ mockGridFsDelete: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/gridfs", () => ({
   getEncryptedPhotosBucket: vi.fn().mockResolvedValue({ delete: mockGridFsDelete }),
@@ -148,6 +155,60 @@ describe("Admin Media API", () => {
 
       expect(res.status).toBe(404);
       expect(body.error).toBe("Channel not found");
+    });
+
+    it("persists KEK-wrapped DEK on Media for photo + dek payload", async () => {
+      const chId = await seedChannel();
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "New Photo",
+        source_url: "gridfs:photo-id",
+        media_type: "photo",
+        dek: "raw-dek-base64url",
+      });
+      const res = await createMedia(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(mockWrapDekFromBase64url).toHaveBeenCalledWith("raw-dek-base64url");
+
+      // The persisted doc should carry the wrapped DEK exactly as wrapDek returned.
+      const persisted = await Media.findById(body.data._id);
+      expect(persisted?.encrypted_dek).toBe("kek-wrapped-dek-blob");
+    });
+
+    it("photo creation succeeds even when KEK wrapping throws (non-fatal)", async () => {
+      const chId = await seedChannel();
+      mockWrapDekFromBase64url.mockImplementationOnce(() => {
+        throw new Error("PHOTO_KEK is not set");
+      });
+
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "Resilient Photo",
+        source_url: "gridfs:photo-id",
+        media_type: "photo",
+        dek: "raw-dek-base64url",
+      });
+      const res = await createMedia(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(201);
+      const persisted = await Media.findById(body.data._id);
+      expect(persisted?.encrypted_dek).toBeUndefined();
+    });
+
+    it("does not call the DEK wrapper for non-photo media", async () => {
+      const chId = await seedChannel();
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "Plain Video",
+        source_url: "https://example.com/v.mp4",
+        media_type: "video",
+      });
+      const res = await createMedia(req);
+      expect(res.status).toBe(201);
+      expect(mockWrapDekFromBase64url).not.toHaveBeenCalled();
     });
   });
 

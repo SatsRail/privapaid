@@ -11,6 +11,7 @@ import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
+import { wrapDekFromBase64url } from "@/lib/photo-dek";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdminApi();
@@ -89,6 +90,21 @@ export async function POST(req: NextRequest) {
 
   const ref = await getNextRef("media");
 
+  // Wrap the per-photo DEK under the operator's PHOTO_KEK before persisting
+  // it on Media. This eliminates the SatsRail round-trip when later product
+  // creations need to recover the DEK, and survives the "no MediaProduct
+  // exists yet" case that previously blocked channel-product creation for
+  // photos. Failure to wrap is non-fatal — the legacy "recover via another
+  // MediaProduct" path stays as a fallback.
+  let encryptedDek: string | undefined;
+  if (media_type === "photo" && dek) {
+    try {
+      encryptedDek = wrapDekFromBase64url(dek as string);
+    } catch (err) {
+      console.error("Failed to KEK-wrap photo DEK:", err);
+    }
+  }
+
   const media = await Media.create({
     ref,
     channel_id,
@@ -96,6 +112,7 @@ export async function POST(req: NextRequest) {
     description: result.description || "",
     source_url,
     media_type: media_type || "video",
+    ...(encryptedDek && { encrypted_dek: encryptedDek }),
     thumbnail_url: result.thumbnail_url || "",
     thumbnail_id: result.thumbnail_id || "",
     position: result.position ?? (maxPos?.position ?? 0) + 1,

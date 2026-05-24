@@ -7,6 +7,7 @@ import ChannelProduct from "@/models/ChannelProduct";
 import MediaProduct from "@/models/MediaProduct";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl, decryptSourceUrl } from "@/lib/content-encryption";
+import { unwrapDekToBase64url } from "@/lib/photo-dek";
 import { satsrail } from "@/lib/satsrail";
 
 /**
@@ -86,41 +87,59 @@ export async function POST(
 
     // 3. Encrypt the per-media payload under the new channel product key.
     //    - Non-photo media: encrypt the plaintext source_url.
-    //    - Photo media (envelope encryption): recover the per-photo DEK by
-    //      decrypting an existing MediaProduct.encrypted_source_url with the
-    //      *other* product's key, then re-wrap the DEK under THIS product's
-    //      key. Photo bytes never need to be touched.
+    //    - Photo media: recover the per-photo DEK and re-wrap it under THIS
+    //      product's key. Preferred path is Media.encrypted_dek (KEK-wrapped,
+    //      no network call). Legacy fallback recovers the DEK by decrypting
+    //      an existing MediaProduct.encrypted_source_url — kept so photos
+    //      that pre-date the encrypted_dek field still work until the
+    //      backfill runs. Photo bytes never need to be touched either way.
     const mediaItems = await Media.find({ channel_id: channelId })
-      .select("_id source_url media_type")
+      .select("_id source_url media_type encrypted_dek")
       .lean();
 
     const encrypted_media: Array<{ media_id: Types.ObjectId; encrypted_source_url: string }> = [];
     for (const m of mediaItems) {
       const mediaId = m._id as Types.ObjectId;
       if (m.media_type === "photo") {
-        // Find any existing MediaProduct for this photo so we can recover the DEK.
-        const existing = await MediaProduct.findOne({ media_id: mediaId });
-        if (!existing) {
-          return NextResponse.json(
-            {
-              error: `Cannot include photo media ${mediaId} in channel product: no existing product to recover DEK from. Create a per-media product for this photo first.`,
-            },
-            { status: 422 }
+        let dekBase64url: string | null = null;
+
+        // Preferred: unwrap the KEK-protected DEK stored on Media.
+        if (m.encrypted_dek) {
+          try {
+            dekBase64url = unwrapDekToBase64url(m.encrypted_dek);
+          } catch (err) {
+            console.error(
+              `Failed to unwrap encrypted_dek for photo ${mediaId}, falling back to MediaProduct recovery:`,
+              err
+            );
+          }
+        }
+
+        // Legacy fallback: recover the DEK from an existing MediaProduct.
+        if (!dekBase64url) {
+          const existing = await MediaProduct.findOne({ media_id: mediaId });
+          if (!existing) {
+            return NextResponse.json(
+              {
+                error: `Cannot include photo media ${mediaId} in channel product: no encrypted_dek on Media and no existing MediaProduct to recover from. Run the photo-DEK backfill, or create a per-media product for this photo first.`,
+              },
+              { status: 422 }
+            );
+          }
+          const { key: otherKey } = await satsrail.getProductKey(
+            skLive,
+            existing.satsrail_product_id
+          );
+          dekBase64url = decryptSourceUrl(
+            existing.encrypted_source_url,
+            otherKey,
+            existing.satsrail_product_id
           );
         }
-        // Fetch the OTHER product's key so we can decrypt its encrypted DEK.
-        const { key: otherKey } = await satsrail.getProductKey(
-          skLive,
-          existing.satsrail_product_id
-        );
-        const dek = decryptSourceUrl(
-          existing.encrypted_source_url,
-          otherKey,
-          existing.satsrail_product_id
-        );
+
         encrypted_media.push({
           media_id: mediaId,
-          encrypted_source_url: encryptSourceUrl(dek, key, product.id),
+          encrypted_source_url: encryptSourceUrl(dekBase64url, key, product.id),
         });
         continue;
       }

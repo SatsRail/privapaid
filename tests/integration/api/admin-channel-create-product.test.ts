@@ -34,6 +34,13 @@ vi.mock("@/lib/content-encryption", () => ({
   decryptSourceUrl: mockDecryptSourceUrl,
 }));
 
+const { mockUnwrapDekToBase64url } = vi.hoisted(() => ({
+  mockUnwrapDekToBase64url: vi.fn(),
+}));
+vi.mock("@/lib/photo-dek", () => ({
+  unwrapDekToBase64url: mockUnwrapDekToBase64url,
+}));
+
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/admin/channels/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
@@ -225,9 +232,121 @@ describe("Admin Channel Create Product", () => {
       const body = await res.json();
 
       expect(res.status).toBe(422);
-      expect(body.error).toContain("no existing product to recover DEK from");
+      expect(body.error).toContain("no encrypted_dek on Media and no existing MediaProduct");
       // No decrypt or rewrap should have been attempted
       expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
+      expect(mockUnwrapDekToBase64url).not.toHaveBeenCalled();
+    });
+
+    it("prefers Media.encrypted_dek over the MediaProduct fallback (no SatsRail recovery call)", async () => {
+      const channel = await createChannel({
+        slug: "ch-photo-kek",
+        satsrail_product_type_id: "pt_1",
+        ref: 2001,
+      });
+      // Photo has KEK-wrapped DEK on Media — the preferred path. Even though
+      // a stale MediaProduct exists, the route must NOT fall back to it.
+      const photoMedia = await createMedia(channel._id.toString(), {
+        media_type: "photo",
+        source_url: "gridfs:photo-with-kek",
+        encrypted_dek: "kek-wrapped-blob",
+      });
+      await MediaProduct.create({
+        media_id: photoMedia._id,
+        satsrail_product_id: "prod_stale",
+        encrypted_source_url: "stale-blob",
+        key_fingerprint: "fp_stale",
+      });
+
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_new_kek_channel",
+        name: "Channel",
+        price_cents: 1000,
+        slug: "channel",
+        access_duration_seconds: null,
+        status: "active",
+      });
+      // Only ONE getProductKey call expected — the new channel product's key.
+      // The legacy "fetch other product's key to decrypt DEK" call must NOT fire.
+      mockSatsrailClient.getProductKey.mockResolvedValueOnce({
+        key: "new-channel-key",
+        key_fingerprint: "fp_new",
+      });
+      mockUnwrapDekToBase64url.mockReturnValueOnce("dek-from-kek");
+      mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-via-kek");
+
+      const [req, ctx] = buildRequest(channel._id.toString(), {
+        name: "Channel",
+        price_cents: 1000,
+      });
+      const res = await POST(req, ctx);
+      expect(res.status).toBe(201);
+
+      expect(mockUnwrapDekToBase64url).toHaveBeenCalledWith("kek-wrapped-blob");
+      expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
+      expect(mockSatsrailClient.getProductKey).toHaveBeenCalledTimes(1);
+      expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
+        "dek-from-kek",
+        "new-channel-key",
+        "prod_new_kek_channel"
+      );
+    });
+
+    it("falls back to MediaProduct recovery when encrypted_dek is corrupted", async () => {
+      const channel = await createChannel({
+        slug: "ch-photo-kek-bad",
+        satsrail_product_type_id: "pt_1",
+        ref: 2002,
+      });
+      const photoMedia = await createMedia(channel._id.toString(), {
+        media_type: "photo",
+        source_url: "gridfs:photo-broken-kek",
+        encrypted_dek: "corrupted-blob",
+      });
+      await MediaProduct.create({
+        media_id: photoMedia._id,
+        satsrail_product_id: "prod_backup",
+        encrypted_source_url: "encrypted-dek-blob",
+        key_fingerprint: "fp_backup",
+      });
+
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_new_fallback",
+        name: "Channel",
+        price_cents: 1000,
+        slug: "channel",
+        access_duration_seconds: null,
+        status: "active",
+      });
+      mockSatsrailClient.getProductKey
+        .mockResolvedValueOnce({ key: "new-channel-key", key_fingerprint: "fp_new" })
+        .mockResolvedValueOnce({ key: "backup-key", key_fingerprint: "fp_backup" });
+
+      // KEK unwrap throws → route falls back to MediaProduct recovery.
+      mockUnwrapDekToBase64url.mockImplementationOnce(() => {
+        throw new Error("auth tag mismatch");
+      });
+      mockDecryptSourceUrl.mockReturnValueOnce("dek-from-fallback");
+      mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-via-fallback");
+
+      const [req, ctx] = buildRequest(channel._id.toString(), {
+        name: "Channel",
+        price_cents: 1000,
+      });
+      const res = await POST(req, ctx);
+      expect(res.status).toBe(201);
+
+      expect(mockUnwrapDekToBase64url).toHaveBeenCalledWith("corrupted-blob");
+      expect(mockDecryptSourceUrl).toHaveBeenCalledWith(
+        "encrypted-dek-blob",
+        "backup-key",
+        "prod_backup"
+      );
+      expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
+        "dek-from-fallback",
+        "new-channel-key",
+        "prod_new_fallback"
+      );
     });
 
     it("recovers the DEK from an existing MediaProduct and re-wraps under the new product key", async () => {

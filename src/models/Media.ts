@@ -9,6 +9,16 @@ export interface IMedia extends Document {
   description: string;
   source_url: string; // plain URL, never exposed to client
   media_type: MediaType;
+  /**
+   * For photo media only: the per-photo DEK wrapped under the operator's
+   * PHOTO_KEK. Populated on photo creation so subsequent product creations
+   * can recover the DEK without a SatsRail round-trip and without depending
+   * on any other MediaProduct existing. See src/lib/photo-dek.ts.
+   *
+   * Undefined for non-photo media and for legacy photos that pre-date this
+   * field (the backfill script populates them).
+   */
+  encrypted_dek?: string;
   thumbnail_url: string;
   thumbnail_id: string;
   preview_image_ids: string[]; // GridFS image IDs (admin uploads)
@@ -52,6 +62,10 @@ const MediaSchema = new Schema<IMedia>(
       required: true,
       enum: ["video", "audio", "article", "photo", "podcast"],
       default: "video",
+    },
+    encrypted_dek: {
+      type: String,
+      default: undefined,
     },
     thumbnail_url: {
       type: String,
