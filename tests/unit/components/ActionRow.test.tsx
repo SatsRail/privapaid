@@ -17,6 +17,9 @@ const baseProps = {
   mediaName: "Test",
   initialLikesCount: 0,
   initialSharesCount: 0,
+  // Default: viewer has paid access. Tests that exercise the locked
+  // state pass `hasAccess={false}` explicitly.
+  hasAccess: true,
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -71,6 +74,49 @@ describe("ActionRow", () => {
     render(<ActionRow {...baseProps} initialLikesCount={42} initialSharesCount={7} />);
     expect(screen.getByTestId("likes-count")).toHaveTextContent("42");
     expect(screen.getByTestId("shares-count")).toHaveTextContent("7");
+  });
+
+  it("disables Like + Dislike when hasAccess is false", () => {
+    render(<ActionRow {...baseProps} hasAccess={false} />);
+    expect(screen.getByTestId("like-button")).toBeDisabled();
+    expect(screen.getByTestId("dislike-button")).toBeDisabled();
+    // Share + Save stay enabled — they are not payment-gated.
+    expect(screen.getByTestId("share-button")).not.toBeDisabled();
+    expect(screen.getByTestId("save-button")).not.toBeDisabled();
+  });
+
+  it("does not fire the like API when hasAccess is false", async () => {
+    render(<ActionRow {...baseProps} hasAccess={false} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    // aria-pressed stays false — the optimistic flip never happened.
+    expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("does not toggle Dislike state when hasAccess is false", () => {
+    render(<ActionRow {...baseProps} hasAccess={false} />);
+    fireEvent.click(screen.getByTestId("dislike-button"));
+    expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("Share still works even when hasAccess is false", async () => {
+    Object.defineProperty(window, "location", {
+      value: { href: "https://example.com/c/ch/m1" },
+      writable: true,
+    });
+    render(<ActionRow {...baseProps} hasAccess={false} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("share-button"));
+    });
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://example.com/c/ch/m1");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/media/m1/share",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
   });
 
   it("hides zero counts so brand-new media doesn't show 'Like 0'", () => {

@@ -270,6 +270,7 @@
   "viewer.actions.save": "Save",
   "viewer.actions.copied": "Link copied",
   "viewer.actions.copy_failed": "Couldn't copy",
+  "viewer.actions.locked_hint": "Pay to react",
   "viewer.description.show_more": "...more",
   "viewer.description.show_less": "Show less",
   "viewer.media.comments_one": "1 comment",

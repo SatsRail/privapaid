@@ -171,7 +171,7 @@ Each media item can include a `product` with pricing — the import automaticall
 
 | Layer | Choice |
 |-------|--------|
-| Framework | Next.js 15 (App Router) |
+| Framework | Next.js 16 (App Router) |
 | Language | TypeScript (strict mode) |
 | Database | MongoDB + Mongoose |
 | Auth | NextAuth.js v5 (credentials) |

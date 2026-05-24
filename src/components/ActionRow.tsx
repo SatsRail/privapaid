@@ -8,6 +8,14 @@ interface ActionRowProps {
   mediaName: string;
   initialLikesCount: number;
   initialSharesCount: number;
+  /**
+   * Whether the viewer has active paid access for this media. Like and
+   * Dislike are gated behind payment (same rule as Comments) — when
+   * `false` the buttons render disabled and clicks are no-ops. Share
+   * and Save remain available regardless. MediaLayout owns the source
+   * of truth via `useMediaAccess` and passes it down.
+   */
+  hasAccess: boolean;
 }
 
 /**
@@ -20,12 +28,18 @@ interface ActionRowProps {
  * localStorage — there is no server-side per-user uniqueness, so the
  * same browser remembers the user's gesture and the server only applies
  * the +1 / -1 delta. Dislike and Save do not hit the server.
+ *
+ * Payment gating: Like and Dislike require active paid access (matches
+ * the Comments pattern). Share and Save are free. When `hasAccess` is
+ * false the like/dislike buttons render with `disabled` + a "Pay to
+ * react" title, and click handlers no-op without hitting the API.
  */
 export default function ActionRow({
   mediaId,
   mediaName,
   initialLikesCount,
   initialSharesCount,
+  hasAccess,
 }: ActionRowProps) {
   const { t } = useLocale();
   const [liked, setLiked] = useState(false);
@@ -61,8 +75,11 @@ export default function ActionRow({
   }
 
   // Like and Dislike are mutually exclusive — clicking one clears the
-  // other. Matches YouTube's behavior.
+  // other. Matches YouTube's behavior. Both require paid access (same as
+  // Comments); the buttons are also disabled at the DOM level when
+  // `hasAccess` is false, this guard is defense-in-depth.
   async function handleLike() {
+    if (!hasAccess) return;
     const next = !liked;
     const action = next ? "like" : "unlike";
 
@@ -106,6 +123,7 @@ export default function ActionRow({
   }
 
   function handleDislike() {
+    if (!hasAccess) return;
     setDisliked((prev) => {
       const next = !prev;
       writeFlag(`privapaid:disliked:${mediaId}`, next);
@@ -186,9 +204,11 @@ export default function ActionRow({
         <button
           onClick={handleLike}
           data-testid="like-button"
-          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium hover:opacity-80"
+          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={liked}
+          disabled={!hasAccess}
+          title={!hasAccess ? t("viewer.actions.locked_hint") : undefined}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M7 10v12M15 5.88L14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7V10l4.34-7.34A1 1 0 0 1 13 4l2 1.88z" />
@@ -211,9 +231,11 @@ export default function ActionRow({
           onClick={handleDislike}
           data-testid="dislike-button"
           aria-label={t("viewer.actions.dislike")}
-          className="inline-flex h-full items-center px-3 hover:opacity-80"
+          className="inline-flex h-full items-center px-3 hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={disliked}
+          disabled={!hasAccess}
+          title={!hasAccess ? t("viewer.actions.locked_hint") : undefined}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill={disliked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17 14V2M9 18.12L10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H17v12l-4.34 7.34A1 1 0 0 1 11 20l-2-1.88z" />

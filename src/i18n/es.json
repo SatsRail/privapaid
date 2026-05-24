@@ -270,6 +270,7 @@
   "viewer.actions.save": "Guardar",
   "viewer.actions.copied": "Enlace copiado",
   "viewer.actions.copy_failed": "No se pudo copiar",
+  "viewer.actions.locked_hint": "Paga para reaccionar",
   "viewer.description.show_more": "...más",
   "viewer.description.show_less": "Mostrar menos",
   "viewer.media.comments_one": "1 comentario",

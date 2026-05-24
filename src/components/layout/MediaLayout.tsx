@@ -141,6 +141,7 @@ export default function MediaLayout({
             mediaName={media.name}
             initialLikesCount={media.likes_count}
             initialSharesCount={media.shares_count}
+            hasAccess={hasActiveAccess}
           />
 
           {/* Channel attribution + Subscribe pill. The Subscribe button is

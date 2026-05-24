@@ -1,22 +1,37 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import mongoose from "mongoose";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
 
 // Mocks — MUST be before route imports
-const { mockRateLimit } = vi.hoisted(() => ({
+const { mockRateLimit, mockAuth, mockVerifyMacaroon } = vi.hoisted(() => ({
   mockRateLimit: vi.fn().mockResolvedValue(null),
+  // Default: no session — falls through to macaroon path.
+  mockAuth: vi.fn().mockResolvedValue(null),
+  // Default: macaroon grants access — so existing happy-path tests stay green.
+  mockVerifyMacaroon: vi.fn().mockResolvedValue({ granted: true }),
 }));
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: mockRateLimit }));
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
 vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
+vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
+vi.mock("@/lib/access-gate", async (importOriginal) => {
+  // Keep getProductsForMedia real (it just queries MediaProduct/ChannelProduct
+  // and works against the in-memory test DB) but stub the macaroon check.
+  const original = await importOriginal<typeof import("@/lib/access-gate")>();
+  return {
+    ...original,
+    verifyMacaroonAccess: mockVerifyMacaroon,
+  };
+});
 
 import { POST as likeMedia } from "@/app/api/media/[id]/like/route";
 import Media from "@/models/Media";
 import Channel from "@/models/Channel";
-import { NextResponse } from "next/server";
+import Customer from "@/models/Customer";
+import MediaProduct from "@/models/MediaProduct";
 
 function jsonRequest(url: string, method: string, body?: Record<string, unknown>): NextRequest {
   const init: { method: string; headers: Record<string, string>; body?: string } = {
@@ -39,6 +54,8 @@ describe("Like API — POST /api/media/[id]/like", () => {
   afterEach(async () => {
     await clearCollections();
     mockRateLimit.mockResolvedValue(null);
+    mockAuth.mockResolvedValue(null);
+    mockVerifyMacaroon.mockResolvedValue({ granted: true });
     vi.clearAllMocks();
   });
 
@@ -56,6 +73,12 @@ describe("Like API — POST /api/media/[id]/like", () => {
       media_type: "video",
       position: 1,
       ...overrides,
+    });
+    // Attach a product so getProductsForMedia returns something.
+    await MediaProduct.create({
+      media_id: media._id,
+      satsrail_product_id: "prod_like",
+      encrypted_source_url: "encrypted_blob",
     });
     return { mediaId: String(media._id) };
   }
@@ -152,7 +175,7 @@ describe("Like API — POST /api/media/[id]/like", () => {
 
   it("propagates rate-limit 429", async () => {
     const { mediaId } = await seedMedia();
-    mockRateLimit.mockResolvedValueOnce(
+    mockRateLimit.mockResolvedValue(
       NextResponse.json({ error: "Too many requests" }, { status: 429 })
     );
 
@@ -163,5 +186,103 @@ describe("Like API — POST /api/media/[id]/like", () => {
     );
     const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
     expect(res.status).toBe(429);
+  });
+
+  // ── Payment gating (mirrors the comments-route pattern) ─────────────
+
+  it("returns 401 when neither session nor macaroon proves payment", async () => {
+    const { mediaId } = await seedMedia();
+    mockAuth.mockResolvedValue(null);
+    mockVerifyMacaroon.mockResolvedValue({ granted: false });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${mediaId}/like`,
+      "POST",
+      { action: "like" }
+    );
+    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(body.error).toBe("Payment required to like");
+
+    // Counter must not have moved.
+    const media = await Media.findById(mediaId);
+    expect(media!.likes_count).toBe(0);
+  });
+
+  it("allows logged-in customer with a matching purchase", async () => {
+    const { mediaId } = await seedMedia();
+    const customer = await Customer.create({
+      nickname: "liker1",
+      password_hash: "hashed",
+      purchases: [
+        {
+          satsrail_order_id: "ord_like_1",
+          satsrail_product_id: "prod_like",
+          purchased_at: new Date(),
+        },
+      ],
+    });
+    mockAuth.mockResolvedValue({
+      user: { id: String(customer._id), name: "liker1", role: "customer" },
+    });
+    // Even if the macaroon check would fail, the session path wins first.
+    mockVerifyMacaroon.mockResolvedValue({ granted: false });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${mediaId}/like`,
+      "POST",
+      { action: "like" }
+    );
+    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ likes_count: 1 });
+  });
+
+  it("rejects a logged-in customer whose purchases do not cover this media", async () => {
+    const { mediaId } = await seedMedia();
+    const customer = await Customer.create({
+      nickname: "nopurchase",
+      password_hash: "hashed",
+      purchases: [
+        {
+          satsrail_order_id: "ord_other",
+          satsrail_product_id: "prod_unrelated",
+          purchased_at: new Date(),
+        },
+      ],
+    });
+    mockAuth.mockResolvedValue({
+      user: { id: String(customer._id), name: "nopurchase", role: "customer" },
+    });
+    mockVerifyMacaroon.mockResolvedValue({ granted: false });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${mediaId}/like`,
+      "POST",
+      { action: "like" }
+    );
+    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(401);
+  });
+
+  it("allows anonymous payer via macaroon when no session is present", async () => {
+    const { mediaId } = await seedMedia();
+    mockAuth.mockResolvedValue(null);
+    mockVerifyMacaroon.mockResolvedValue({ granted: true });
+
+    const req = jsonRequest(
+      `http://localhost:3000/api/media/${mediaId}/like`,
+      "POST",
+      { action: "like" }
+    );
+    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ likes_count: 1 });
   });
 });
