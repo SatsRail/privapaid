@@ -6,7 +6,9 @@
 
 Open-source, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
 
-All content is encrypted at rest. The server never stores plaintext, never decrypts content, and never touches customer funds. Decryption happens entirely in the buyer's browser after payment. SatsRail manages encryption keys and payment verification but never sees your content.
+The buyer-facing copy of every piece of content is encrypted at rest, and decryption happens entirely in the buyer's browser after payment — the server never decrypts content for a buyer. SatsRail manages encryption keys and payment verification but never sees your content. PrivaPaid never touches customer funds.
+
+A second copy of each item — the source URL for video/audio/podcast, the body text for articles, the wrapped DEK for photos — is persisted on the `Media` document so admins can re-encrypt after a key rotation without depending on SatsRail returning the old key. That plaintext copy is admin-only by route convention; no public endpoint returns it. See [docs/ENCRYPTION.md](docs/ENCRYPTION.md) § "Threat model" for the trade-off and mitigations.
 
 Fork it, deploy it, sell whatever you want through it.
 
@@ -87,7 +89,7 @@ Every media item has a `media_type` that controls how content is stored, encrypt
 - For `video`, `audio`, `article`, `podcast` the *URL or text* is encrypted into `MediaProduct.encrypted_source_url` (or `ChannelProduct.encrypted_media[].encrypted_source_url`) under the SatsRail product key. The viewer decrypts client-side after payment.
 - For `photo`, the *bytes themselves* live encrypted in GridFS, and `MediaProduct.encrypted_source_url` holds the encrypted DEK (envelope). The viewer unwraps the DEK with the product key, fetches the ciphertext from `/api/photos/[id]`, and decrypts in the browser.
 
-In every case the SatsRail Portal holds the encryption keys and never sees content; the Stream app holds the content and never sees plaintext keys at rest.
+In every case the SatsRail Portal holds the encryption keys and never sees content; the Stream app holds the content (both an encrypted, buyer-facing copy and an admin-only plaintext copy for re-encryption — see Architecture below) and never persists product keys at rest.
 
 ## Content Import
 
@@ -180,15 +182,50 @@ Each media item can include a `product` with pricing — the import automaticall
 
 ## Architecture
 
-### Encryption at Rest
+### Encryption at Rest (and the plaintext recovery copy)
 
-Every piece of content in PrivaPaid is encrypted before it touches the database. There is no unencrypted storage path — this is enforced, not optional.
+Every piece of content has an **encrypted buyer-facing copy** in MongoDB:
+`MediaProduct.encrypted_source_url` (and `ChannelProduct.encrypted_media[].encrypted_source_url`)
+hold the AES-256-GCM ciphertext under the SatsRail product key, with the
+product's UUID bound as AAD so a blob encrypted for product A is mathematically
+useless in the context of product B. Photo bytes live encrypted in GridFS under
+a random per-photo DEK; the DEK itself is what the product key wraps. A single
+media item can be sold through multiple products (individually, as part of a
+bundle, etc.); each product-media combination produces a separately encrypted
+blob locked with that product's key.
 
-Each product in SatsRail carries a 32-byte AES-256-GCM encryption key. When an admin associates media with a product, the source URL is encrypted with that product's key and stored as a `MediaProduct` record in MongoDB. No plaintext source URL is ever persisted in the database. The URL exists in server memory only for the instant it takes to encrypt (at upload time and during key rotation re-encryption), then is discarded.
+The blob format is `Base64(IV[12] + ciphertext + auth_tag[16])`. The browser
+splits the IV from the ciphertext+tag and decrypts using the Web Crypto API
+after payment. The server plays no role in buyer-side decryption.
 
-A single media item can be sold through multiple products (individually, as part of a bundle, etc.). Each product-media combination produces a separately encrypted blob locked with that product's key. Media cannot be uploaded until a product exists and its encryption key is available — the upload gate enforces this.
+PrivaPaid also persists a **plaintext recovery copy** of each item on the
+`Media` document — `Media.source_url` for video/audio/article/podcast, and
+`Media.encrypted_dek` (the per-photo DEK wrapped under the operator's
+`PHOTO_KEK`, decryptable server-side without SatsRail) for photos. This copy
+exists so admin-triggered key rotation can re-encrypt every product blob in a
+single in-DB operation, without depending on SatsRail still returning the old
+product key — that pipeline has failed in practice and used to brick rotations
+mid-way through.
 
-The blob format is `Base64(IV[12] + ciphertext + auth_tag[16])`. The browser splits the IV from the ciphertext+tag and decrypts using the Web Crypto API. The server plays no role in decryption.
+The cost of that choice is that a full MongoDB dump now exposes the plaintext
+source for non-photo media (and the wrapped DEK for photos, which stays opaque
+unless `PHOTO_KEK` is also leaked). Mitigations:
+
+- **No public route returns these fields.** The viewer page deliberately
+  forwards `source_url` only when `media_type === 'photo'`, and only as a
+  GridFS pointer to encrypted bytes. Regression test:
+  `tests/integration/pages/viewer-photo-page.test.ts`.
+- **Admin-only API surface.** Every endpoint that reads the plaintext fields
+  lives under `/api/admin/*` and is gated by middleware + `requireOwnerApi()`
+  defense-in-depth.
+- **Sentry scrubber** redacts `source_url`, `encrypted_dek`, `password`,
+  `satsrail_api_key`, `macaroon`, `authorization`, `cookie`, and `sk_*`/`pk_*`
+  keys from every captured event so a mid-rotation error doesn't ship
+  plaintext to the error tracker. See `src/lib/sentry-scrub.ts`.
+- **`PHOTO_KEK` lives in env**, not the DB. Photo DEKs stay opaque under a
+  Mongo-only breach.
+
+Full discussion lives in [docs/ENCRYPTION.md](docs/ENCRYPTION.md) § "Threat model".
 
 ### Content Gating
 

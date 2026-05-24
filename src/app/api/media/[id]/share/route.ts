@@ -28,5 +28,5 @@ export async function POST(
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ shares_count: updated.shares_count ?? 0 });
+  return NextResponse.json({ shares_count: updated.shares_count });
 }

@@ -35,7 +35,7 @@ export async function POST(
     if (!updated) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
-    return NextResponse.json({ likes_count: updated.likes_count ?? 0 });
+    return NextResponse.json({ likes_count: updated.likes_count });
   }
 
   // unlike — conditional decrement so the counter never goes below 0.
@@ -46,7 +46,7 @@ export async function POST(
   );
 
   if (updated) {
-    return NextResponse.json({ likes_count: updated.likes_count ?? 0 });
+    return NextResponse.json({ likes_count: updated.likes_count });
   }
 
   // Either the doc doesn't exist or the counter is already at 0.
@@ -56,5 +56,5 @@ export async function POST(
   if (!current) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
-  return NextResponse.json({ likes_count: current.likes_count ?? 0 });
+  return NextResponse.json({ likes_count: current.likes_count });
 }

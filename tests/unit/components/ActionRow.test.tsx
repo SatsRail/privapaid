@@ -226,6 +226,146 @@ describe("ActionRow", () => {
     });
   });
 
+  it("does not reconcile like count when response omits likes_count", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({}),
+    });
+    render(<ActionRow {...baseProps} initialLikesCount={5} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
+
+    await waitFor(() => {
+      // Optimistic +1 stays — no server value to overwrite with.
+      expect(screen.getByTestId("likes-count")).toHaveTextContent("6");
+    });
+  });
+
+  it("does not reconcile share count when fetch returns non-OK", async () => {
+    Object.defineProperty(window, "location", {
+      value: { href: "https://example.com/c/ch/m1" },
+      writable: true,
+    });
+    // Override the share POST specifically — clipboard write stays ok, share POST returns 500.
+    fetchMock.mockImplementationOnce((url: string) => {
+      if (url.includes("/share")) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ error: "boom" }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    });
+    render(<ActionRow {...baseProps} initialSharesCount={2} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("share-button"));
+    });
+
+    await waitFor(() => {
+      // Optimistic +1 stays even when telemetry POST fails.
+      expect(screen.getByTestId("shares-count")).toHaveTextContent("3");
+    });
+  });
+
+  it("does not reconcile share count when response omits shares_count", async () => {
+    Object.defineProperty(window, "location", {
+      value: { href: "https://example.com/c/ch/m1" },
+      writable: true,
+    });
+    fetchMock.mockImplementationOnce((url: string) => {
+      if (url.includes("/share")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({}),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    });
+    render(<ActionRow {...baseProps} initialSharesCount={4} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("share-button"));
+    });
+
+    await waitFor(() => {
+      // Optimistic +1 holds — nothing to reconcile to.
+      expect(screen.getByTestId("shares-count")).toHaveTextContent("5");
+    });
+  });
+
+  it("restores prior Dislike when the like POST is rejected by the server", async () => {
+    // Hydrate with both a previous "disliked" state and an explicitly-zero like count.
+    (localStorage.getItem as ReturnType<typeof vi.fn>).mockImplementation(
+      (k: string) => (k === "privapaid:disliked:m1" ? "true" : null)
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: "boom" }),
+    });
+    render(<ActionRow {...baseProps} />);
+    // Wait for hydration.
+    await waitFor(() => {
+      expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
+
+    await waitFor(() => {
+      // Like reverted.
+      expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
+      // And the prior dislike is restored.
+      expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
+  it("falls back to clipboard when navigator.share rejects (user cancels native sheet)", async () => {
+    const shareSpy = vi.fn().mockRejectedValue(new Error("AbortError"));
+    Object.defineProperty(navigator, "share", { value: shareSpy, configurable: true });
+    Object.defineProperty(window, "location", {
+      value: { href: "https://example.com/c/ch/m1" },
+      writable: true,
+    });
+
+    render(<ActionRow {...baseProps} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("share-button"));
+    });
+
+    expect(shareSpy).toHaveBeenCalled();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://example.com/c/ch/m1");
+  });
+
+  it("shows the copy_failed toast when clipboard write rejects", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    Object.defineProperty(window, "location", {
+      value: { href: "https://example.com/c/ch/m1" },
+      writable: true,
+    });
+
+    render(<ActionRow {...baseProps} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("share-button"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("viewer.actions.copy_failed")).toBeInTheDocument();
+    });
+  });
+
   it("prefers the native Share API when available + still posts the share count", async () => {
     const shareSpy = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "share", {
