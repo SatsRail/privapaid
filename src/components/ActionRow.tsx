@@ -126,8 +126,8 @@ export default function ActionRow({
   }
 
   async function handleShare() {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    const url = window.location.href;
+    if (typeof navigator.share === "function") {
       try {
         await navigator.share({ title: mediaName, url });
       } catch {
