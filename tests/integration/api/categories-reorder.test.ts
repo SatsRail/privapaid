@@ -27,9 +27,10 @@ vi.mock("@/lib/auth-helpers", () => ({
   }),
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { PATCH } from "@/app/api/admin/categories/reorder/route";
 import Category from "@/models/Category";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildRequest(body: unknown): NextRequest {
   return new NextRequest(
@@ -114,5 +115,14 @@ describe("PATCH /api/admin/categories/reorder", () => {
     const res = await PATCH(req);
 
     expect(res.status).toBe(400);
+  });
+
+  it("returns the auth response when requireAdminApi rejects the request", async () => {
+    vi.mocked(requireAdminApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const req = buildRequest({ items: [{ id: "x".repeat(24), position: 0 }] });
+    const res = await PATCH(req);
+    expect(res.status).toBe(401);
   });
 });

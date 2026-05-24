@@ -12,27 +12,27 @@ interface ActionRowProps {
    * Whether the viewer has active paid access for this media. Like and
    * Dislike are gated behind payment (same rule as Comments) — when
    * `false` the buttons render disabled and clicks are no-ops. Share
-   * and Save remain available regardless. MediaLayout owns the source
-   * of truth via `useMediaAccess` and passes it down.
+   * remains available regardless. MediaLayout owns the source of truth
+   * via `useMediaAccess` and passes it down.
    */
   hasAccess: boolean;
 }
 
 /**
- * YouTube-style action row: a segmented Like/Dislike pill + Share pill +
- * Save pill, sized to match YouTube exactly (~36px tall, 20px icons,
- * tight horizontal padding).
+ * YouTube-style action row: a segmented Like/Dislike pill + Share pill,
+ * sized to match YouTube exactly (~36px tall, 20px icons, tight
+ * horizontal padding).
  *
  * Like and Share counts persist server-side via POST /api/media/[id]/like
- * and /share. Per-user toggle state for Like/Dislike/Save stays in
+ * and /share. Per-user toggle state for Like/Dislike stays in
  * localStorage — there is no server-side per-user uniqueness, so the
  * same browser remembers the user's gesture and the server only applies
- * the +1 / -1 delta. Dislike and Save do not hit the server.
+ * the +1 / -1 delta. Dislike does not hit the server.
  *
  * Payment gating: Like and Dislike require active paid access (matches
- * the Comments pattern). Share and Save are free. When `hasAccess` is
- * false the like/dislike buttons render with `disabled` + a "Pay to
- * react" title, and click handlers no-op without hitting the API.
+ * the Comments pattern). Share is free. When `hasAccess` is false the
+ * like/dislike buttons render with `disabled` + a "Pay to react" title,
+ * and click handlers no-op without hitting the API.
  */
 export default function ActionRow({
   mediaId,
@@ -44,7 +44,6 @@ export default function ActionRow({
   const { t } = useLocale();
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [likesCount, setLikesCount] = useState(initialLikesCount);
   const [sharesCount, setSharesCount] = useState(initialSharesCount);
   const [actionToast, setActionToast] = useState<string | null>(null);
@@ -54,7 +53,6 @@ export default function ActionRow({
     try {
       setLiked(localStorage.getItem(`privapaid:liked:${mediaId}`) === "true");
       setDisliked(localStorage.getItem(`privapaid:disliked:${mediaId}`) === "true");
-      setSaved(localStorage.getItem(`privapaid:saved:${mediaId}`) === "true");
     } catch {
       // Storage disabled — session-only state.
     }
@@ -131,14 +129,6 @@ export default function ActionRow({
         setLiked(false);
         writeFlag(`privapaid:liked:${mediaId}`, false);
       }
-      return next;
-    });
-  }
-
-  function handleSave() {
-    setSaved((prev) => {
-      const next = !prev;
-      writeFlag(`privapaid:saved:${mediaId}`, next);
       return next;
     });
   }
@@ -264,19 +254,6 @@ export default function ActionRow({
             </span>
           )}
         </span>
-      </button>
-
-      <button
-        onClick={handleSave}
-        data-testid="save-button"
-        className={`${pillBase} rounded-full hover:opacity-80`}
-        style={{ ...pillBg, color: "var(--theme-text)" }}
-        aria-pressed={saved}
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill={saved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-        </svg>
-        <span>{t("viewer.actions.save")}</span>
       </button>
 
       {actionToast && (

@@ -267,7 +267,6 @@
   "viewer.actions.like": "Like",
   "viewer.actions.dislike": "Dislike",
   "viewer.actions.share": "Share",
-  "viewer.actions.save": "Save",
   "viewer.actions.copied": "Link copied",
   "viewer.actions.copy_failed": "Couldn't copy",
   "viewer.actions.locked_hint": "Pay to react",

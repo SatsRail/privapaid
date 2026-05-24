@@ -226,6 +226,57 @@ describe("sentry-scrub", () => {
       scrubEvent(event);
       expect(event.extra!.password).toBe(`${SCRUB_MARKER}:9`);
     });
+
+    it("scrubs null and undefined values to a bare marker (no length)", () => {
+      const event: ErrorEvent = {
+        extra: { password: null, sk_live: undefined },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      expect(event.extra!.password).toBe(SCRUB_MARKER);
+      expect(event.extra!.sk_live).toBe(SCRUB_MARKER);
+    });
+
+    it("annotates non-string sensitive values with their serialized length", () => {
+      const event: ErrorEvent = {
+        extra: {
+          // Object — must go through JSON.stringify path.
+          authorization: { token: "abc", refresh: "def" },
+          // Number — also non-string, also JSON.stringify path.
+          encryption_key: 1234567,
+        },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      expect(String(event.extra!.authorization)).toMatch(/^\[scrubbed\]:\d+$/);
+      expect(String(event.extra!.encryption_key)).toBe(`${SCRUB_MARKER}:7`);
+    });
+
+    it("falls back to a bare marker when JSON.stringify throws (BigInt, cyclic, ...)", () => {
+      // BigInt is not JSON-serializable and JSON.stringify throws a TypeError.
+      // The scrubber's try/catch must swallow it and return the bare marker.
+      const event: ErrorEvent = {
+        extra: { dek: BigInt(42) as unknown },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      expect(event.extra!.dek).toBe(SCRUB_MARKER);
+    });
+
+    it("recurses into arrays in non-sensitive containers", () => {
+      // Top-level container is not sensitive, but the array's element is a
+      // dict containing a sensitive key. Must be scrubbed inside the array.
+      const event: ErrorEvent = {
+        extra: {
+          requests: [
+            { method: "POST", password: "p1" },
+            { method: "GET", password: "p2" },
+          ],
+        },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      const list = event.extra!.requests as Array<Record<string, unknown>>;
+      expect(list[0].method).toBe("POST");
+      expect(String(list[0].password)).toMatch(/^\[scrubbed\]/);
+      expect(String(list[1].password)).toMatch(/^\[scrubbed\]/);
+    });
   });
 
   describe("scrubBreadcrumb", () => {

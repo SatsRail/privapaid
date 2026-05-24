@@ -157,4 +157,78 @@ describe("POST /api/admin/settings/reset", () => {
       expect.arrayContaining([expect.any(String)])
     );
   });
+
+  it("logs an error for each failed collection drop but still returns 200", async () => {
+    await createChannel({ name: "Ch1", slug: "ch1" });
+    await createCategory({ name: "Cat1", slug: "cat1" });
+
+    // Force every drop to reject — the route's per-collection catch must
+    // log each failure and finish the loop with an (empty) dropped list
+    // rather than bubbling out to the outer 500 handler.
+    const db = mongoose.connection.db!;
+    const dropSpy = vi
+      .spyOn(db, "dropCollection")
+      .mockRejectedValue(new Error("simulated drop failure"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const res = await POST(resetRequest({ confirm: "RESET" }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.reset).toBe(true);
+      expect(body.collections_dropped).toEqual([]);
+      expect(errSpy).toHaveBeenCalled();
+      expect(errSpy.mock.calls[0]?.[0]).toMatch(/Failed to drop collection/);
+    } finally {
+      dropSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("returns 500 when listCollections throws (outer catch)", async () => {
+    const db = mongoose.connection.db!;
+    const listSpy = vi.spyOn(db, "listCollections").mockImplementation(() => {
+      throw new Error("listCollections boom");
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const res = await POST(resetRequest({ confirm: "RESET" }));
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("Failed to reset application");
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      listSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  // Kept last on purpose — it overrides connectDB and the `mongoose.connection.db`
+  // getter, both of which can leak into adjacent tests if they run before.
+  it("returns 500 when no Mongo db handle is available after connect", async () => {
+    const mongodb = await import("@/lib/mongodb");
+    const connectSpy = vi
+      .spyOn(mongodb, "connectDB")
+      .mockResolvedValueOnce({ connection: {} } as unknown as typeof mongoose);
+    const originalDb = mongoose.connection.db;
+    Object.defineProperty(mongoose.connection, "db", {
+      configurable: true,
+      get: () => undefined,
+    });
+
+    try {
+      const res = await POST(resetRequest({ confirm: "RESET" }));
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("Database connection not ready");
+    } finally {
+      Object.defineProperty(mongoose.connection, "db", {
+        configurable: true,
+        value: originalDb,
+        writable: true,
+      });
+      connectSpy.mockRestore();
+    }
+  });
 });

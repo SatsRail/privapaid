@@ -63,11 +63,10 @@ beforeEach(() => {
 });
 
 describe("ActionRow", () => {
-  it("renders Like / Share / Save buttons", () => {
+  it("renders Like / Share buttons", () => {
     render(<ActionRow {...baseProps} />);
     expect(screen.getByTestId("like-button")).toBeInTheDocument();
     expect(screen.getByTestId("share-button")).toBeInTheDocument();
-    expect(screen.getByTestId("save-button")).toBeInTheDocument();
   });
 
   it("renders initial like/share counts when greater than 0", () => {
@@ -80,9 +79,8 @@ describe("ActionRow", () => {
     render(<ActionRow {...baseProps} hasAccess={false} />);
     expect(screen.getByTestId("like-button")).toBeDisabled();
     expect(screen.getByTestId("dislike-button")).toBeDisabled();
-    // Share + Save stay enabled — they are not payment-gated.
+    // Share stays enabled — it is not payment-gated.
     expect(screen.getByTestId("share-button")).not.toBeDisabled();
-    expect(screen.getByTestId("save-button")).not.toBeDisabled();
   });
 
   it("does not fire the like API when hasAccess is false", async () => {
@@ -204,15 +202,6 @@ describe("ActionRow", () => {
       expect(btn).toHaveAttribute("aria-pressed", "false");
     });
     expect(screen.getByTestId("likes-count")).toHaveTextContent("5");
-  });
-
-  it("toggles Save state independently of Like (Save stays local-only)", () => {
-    render(<ActionRow {...baseProps} />);
-    fireEvent.click(screen.getByTestId("save-button"));
-    expect(screen.getByTestId("save-button")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
-    // Save does NOT hit the server.
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("renders a Dislike button alongside Like (YouTube split pill)", () => {
@@ -442,13 +431,12 @@ describe("ActionRow", () => {
     });
   });
 
-  it("hydrates Liked + Saved from localStorage on mount", async () => {
+  it("hydrates Liked from localStorage on mount", async () => {
     (localStorage.getItem as ReturnType<typeof vi.fn>).mockImplementation(
-      (k: string) => (k.startsWith("privapaid:liked:") || k.startsWith("privapaid:saved:")) ? "true" : null
+      (k: string) => k.startsWith("privapaid:liked:") ? "true" : null
     );
     render(<ActionRow {...baseProps} mediaId="hydrated" />);
     await Promise.resolve();
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("save-button")).toHaveAttribute("aria-pressed", "true");
   });
 });

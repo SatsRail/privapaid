@@ -126,4 +126,43 @@ describe("GET /api/search", () => {
     expect(channelResults).toHaveLength(1);
     expect(channelResults[0].name).toBe("Safe Channel");
   });
+
+  it("includes NSFW channels when config.nsfw is true", async () => {
+    // Flip config — both branches of `!config.nsfw ? ...` need coverage.
+    mockConfig.nsfw = true;
+    await createChannel({ name: "Safe Channel", slug: "safe-channel", active: true, nsfw: false });
+    await createChannel({ name: "NSFW Channel", slug: "nsfw-channel", active: true, nsfw: true });
+
+    const req = buildSearchRequest("Channel");
+    const res = await GET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const channelResults = body.results.filter((r: { type: string }) => r.type === "channel");
+    expect(channelResults).toHaveLength(2);
+  });
+
+  it("drops media whose channel is hidden by the NSFW filter", async () => {
+    // config.nsfw is false — media on an NSFW channel must be excluded
+    // even when the media name matches. Exercises the
+    // `if (!channelSlug) continue` skip branch (line 77).
+    const hidden = await createChannel({
+      name: "Adult Channel",
+      slug: "adult-channel",
+      active: true,
+      nsfw: true,
+    });
+    await createMedia(hidden._id.toString(), {
+      name: "Spicy Tutorial",
+      media_type: "video",
+    });
+
+    const req = buildSearchRequest("Spicy");
+    const res = await GET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const mediaResults = body.results.filter((r: { type: string }) => r.type === "media");
+    expect(mediaResults).toHaveLength(0);
+  });
 });

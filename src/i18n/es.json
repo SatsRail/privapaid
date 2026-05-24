@@ -267,7 +267,6 @@
   "viewer.actions.like": "Me gusta",
   "viewer.actions.dislike": "No me gusta",
   "viewer.actions.share": "Compartir",
-  "viewer.actions.save": "Guardar",
   "viewer.actions.copied": "Enlace copiado",
   "viewer.actions.copy_failed": "No se pudo copiar",
   "viewer.actions.locked_hint": "Paga para reaccionar",

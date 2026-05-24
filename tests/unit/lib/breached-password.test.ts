@@ -104,6 +104,45 @@ describe("checkBreachedPassword", () => {
     expect(result.count).toBe(7);
   });
 
+  it("falls back to count=1 when the line's COUNT is not a finite number", async () => {
+    // Covers the `Number.isFinite(count) ? count : 1` else branch.
+    // Real HIBP rows are always digits, but corrupt/intercepted responses
+    // could carry garbage and must not crash the auth path.
+    const password = "BadCountPass";
+    const digest = sha1Upper(password);
+    const suffix = digest.slice(5);
+    const body = `${suffix}:not-a-number`;
+
+    const result = await checkBreachedPassword(password, mockFetchReturning(body));
+    expect(result.breached).toBe(true);
+    expect(result.count).toBe(1);
+  });
+
+  it("uses the global fetch when no fetchImpl is supplied", async () => {
+    // Covers the default-parameter branch (`fetchImpl: typeof fetch = fetch`).
+    const password = "GlobalFetchPass";
+    const digest = sha1Upper(password);
+    const suffix = digest.slice(5);
+    const body = `${suffix}:9`;
+
+    const realFetch = globalThis.fetch;
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(body),
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const result = await checkBreachedPassword(password);
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(result.breached).toBe(true);
+      expect(result.count).toBe(9);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it("opts out of HIBP padding via Add-Padding: false header", async () => {
     const captured: { headers?: HeadersInit } = {};
     const captureFetch = vi

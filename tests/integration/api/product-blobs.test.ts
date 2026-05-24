@@ -29,6 +29,8 @@ vi.mock("@/lib/auth-helpers", () => ({
 
 import { GET } from "@/app/api/admin/products/[id]/blobs/route";
 import MediaProduct from "@/models/MediaProduct";
+import { NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildRequest(
   productId: string
@@ -137,6 +139,62 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     expect(body.data[0].media_name).toBe("Unknown");
     expect(body.data[0].media_type).toBe("unknown");
     expect(body.data[0].media_ref).toBeNull();
+  });
+
+  it("returns the auth response when requireAdminApi rejects the request", async () => {
+    vi.mocked(requireAdminApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+    const [req, ctx] = buildRequest("prod-anything");
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("renders null blob_preview and zero blob_length when encrypted_source_url is missing", async () => {
+    const channel = await createChannel();
+    const media = await createMedia(String(channel._id));
+
+    // Insert the document with no encrypted_source_url. The schema marks
+    // the field required, so we go through the raw collection to bypass
+    // validation — the route must still gracefully handle legacy rows.
+    await MediaProduct.collection.insertOne({
+      media_id: media._id,
+      satsrail_product_id: "prod-missing-blob",
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const [req, ctx] = buildRequest("prod-missing-blob");
+    const res = await GET(req, ctx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toHaveLength(1);
+    const blob = body.data[0];
+    expect(blob.blob_preview).toBeNull();
+    expect(blob.blob_length).toBe(0);
+    expect(blob.key_fingerprint).toBeNull();
+  });
+
+  it("renders null created_at when the MediaProduct has no timestamp", async () => {
+    const channel = await createChannel();
+    const media = await createMedia(String(channel._id));
+
+    // Raw insert again — bypasses Mongoose timestamps so created_at is
+    // genuinely absent and the route hits its `created_at ? ... : null`
+    // else branch.
+    await MediaProduct.collection.insertOne({
+      media_id: media._id,
+      satsrail_product_id: "prod-no-ts",
+      encrypted_source_url: "blob-bytes",
+    });
+
+    const [req, ctx] = buildRequest("prod-no-ts");
+    const res = await GET(req, ctx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data[0].created_at).toBeNull();
   });
 
   it("truncates blob_preview correctly", async () => {
