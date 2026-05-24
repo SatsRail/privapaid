@@ -88,6 +88,71 @@ describe("CommentSection", () => {
     expect(screen.getByText("Alice")).toBeInTheDocument();
   });
 
+  describe("YouTube-exact typography", () => {
+    // Pin the EXACT sizes/weights so future "polish" passes can't drift
+    // away from the YouTube parity the founder asked for.
+
+    beforeEach(() => {
+      (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: [
+          { _id: "c1", body: "Great body text.", created_at: "2025-01-01T00:00:00Z", customer: { nickname: "Alice" } },
+        ],
+        mutate: mockMutate,
+      });
+    });
+
+    it("heading uses text-base font-bold (16px / 700) — YouTube's comments heading weight", () => {
+      render(<CommentSection {...baseProps} productIds={[]} />);
+      const heading = screen.getByRole("heading", { level: 3 });
+      expect(heading.className).toContain("text-base");
+      expect(heading.className).toContain("font-bold");
+    });
+
+    it("author name uses 13px / 500 medium (exact YouTube comment author sizing)", () => {
+      render(<CommentSection {...baseProps} productIds={[]} />);
+      const author = screen.getByText("Alice");
+      expect(author.className).toContain("text-[13px]");
+      expect(author.className).toContain("font-medium");
+    });
+
+    it("timestamp uses text-xs (12px) — visually de-emphasized vs author", () => {
+      const { container } = render(<CommentSection {...baseProps} productIds={[]} />);
+      // The timestamp is the second span in the author/timestamp row.
+      const timestamp = container.querySelector('[data-testid="comment-item"] span:last-child');
+      expect(timestamp?.className).toContain("text-xs");
+    });
+
+    it("comment body uses text-sm with leading-[1.43] for YouTube's reading rhythm", () => {
+      render(<CommentSection {...baseProps} productIds={[]} />);
+      const body = screen.getByText("Great body text.");
+      expect(body.className).toContain("text-sm");
+      expect(body.className).toContain("leading-[1.43]");
+    });
+
+    it("renders a 40px circular avatar with the nickname's first letter", () => {
+      const { container } = render(<CommentSection {...baseProps} productIds={[]} />);
+      const item = container.querySelector('[data-testid="comment-item"]');
+      const avatar = item?.querySelector("div");
+      expect(avatar?.className).toContain("h-10");
+      expect(avatar?.className).toContain("w-10");
+      expect(avatar?.className).toContain("rounded-full");
+      expect(avatar?.textContent).toBe("A"); // Alice → "A"
+    });
+
+    it("falls back to '?' in the avatar when the nickname is empty", () => {
+      (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: [
+          { _id: "c2", body: "Hi", created_at: "2025-01-01T00:00:00Z", customer: { nickname: "" } },
+        ],
+        mutate: mockMutate,
+      });
+      const { container } = render(<CommentSection {...baseProps} productIds={[]} />);
+      const item = container.querySelector('[data-testid="comment-item"]');
+      const avatar = item?.querySelector("div");
+      expect(avatar?.textContent).toBe("?");
+    });
+  });
+
   it("shows access-denied message when no access and has productIds", () => {
     render(<CommentSection {...baseProps} hasAccess={false} />);
     expect(screen.getByText(/Only paying viewers can comment/)).toBeInTheDocument();

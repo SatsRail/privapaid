@@ -246,7 +246,16 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       // fetch the encrypted bytes after unwrapping the DEK.
       photo_gridfs_id: media.media_type === "photo" ? media.source_url : undefined,
     },
-    channel: { name: channel.name, slug: channel.slug },
+    channel: {
+      name: channel.name,
+      slug: channel.slug,
+      // Avatar for the under-video ChannelBlock. Falls back gracefully to
+      // an initial when both fields are absent.
+      profileImageUrl: resolveImageUrl(
+        channel.profile_image_id,
+        channel.profile_image_url
+      ),
+    },
     products,
     storedProductIds,
     previewImages,

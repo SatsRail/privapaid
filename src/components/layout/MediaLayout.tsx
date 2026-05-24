@@ -9,6 +9,9 @@ import PaymentWall from "@/components/PaymentWall";
 import PreviewGallery from "@/components/PreviewGallery";
 import CommentSection from "@/components/CommentSection";
 import ChannelSidebar from "@/components/ChannelSidebar";
+import ChannelBlock from "@/components/ChannelBlock";
+import ActionRow from "@/components/ActionRow";
+import ExpandableDescription from "@/components/ExpandableDescription";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AdminPreviewBanner from "@/components/AdminPreviewBanner";
 import AdminPreviewContent from "@/components/AdminPreviewContent";
@@ -125,15 +128,29 @@ export default function MediaLayout({
           />
 
           {/* YouTube-style meta row: views sit under the title, above the
-              description. Now that the title also sits under the video,
-              the title + meta + description form a coherent "info block"
-              directly beneath the player. */}
+              action row. Now that the title also sits under the video,
+              the title + meta + action row + channel block form a coherent
+              "info block" directly beneath the player. */}
           <MediaMeta viewsCount={media.views_count} locale={locale} />
 
-          {/* Description */}
-          {media.description && (
-            <p className="mt-4" style={{ color: "var(--theme-text)" }}>{media.description}</p>
-          )}
+          {/* YouTube-style action row — Like / Share / Save pills. The
+              visual presence is the goal; backend wiring is local-storage
+              only for now. Real "like feed" / "watch later" lift later. */}
+          <ActionRow mediaId={media._id} mediaName={media.name} />
+
+          {/* Channel attribution + Subscribe pill. The Subscribe button is
+              localStorage-only today; the visual surface is what makes the
+              page feel YouTube-shaped, not a real subscriber count. */}
+          <ChannelBlock
+            name={channel.name}
+            slug={channel.slug}
+            profileImageUrl={channel.profileImageUrl}
+          />
+
+          {/* Description — auto-collapses to 2 lines with a "...more"
+              toggle when the content overflows. Tight, scannable info
+              block above the comments. */}
+          {media.description && <ExpandableDescription text={media.description} />}
 
           {/* Preview images */}
           {hasPreview && (

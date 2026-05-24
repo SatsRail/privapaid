@@ -128,11 +128,11 @@ export default function CommentSection({
       className="mt-8 border-t pt-6"
       style={{ borderColor: "var(--theme-border)" }}
     >
-      {/* YouTube's comments section heading is medium-weight base size,
-          not a heavy title. The number sits inline ("Comments (12)") with
-          the same comfortable weight as the rest of the body. */}
+      {/* YouTube's comments heading: 16px (text-base) at weight 700 (bold).
+          The count + "Comments" string read as a single solid label rather
+          than a soft heading. */}
       <h3
-        className="mb-4 text-base font-medium"
+        className="mb-4 text-base font-bold"
         style={{ color: "var(--theme-heading)" }}
       >
         {t("viewer.comments.title", { count: comments.length })}
@@ -185,34 +185,55 @@ export default function CommentSection({
       ) : null}
 
       {comments.length > 0 ? (
-        <div className="divide-y divide-[var(--theme-border)]">
-          {comments.map((c) => (
-            <div key={c._id} className="py-4 first:pt-0 last:pb-0">
-              {/* Author + timestamp row. YouTube uses smaller timestamps
-                  (xs) than the author name (sm) to de-emphasize the date.
-                  Author keeps medium weight so the name pops. */}
-              <div className="mb-1 flex items-baseline gap-2">
-                <span
-                  className="text-sm font-medium"
-                  style={{ color: "var(--theme-text)" }}
+        <div className="flex flex-col gap-4">
+          {comments.map((c) => {
+            // Anonymous-user style avatar: 40px circle, first letter of the
+            // nickname inside. Exactly the pattern YouTube uses for users
+            // without a custom avatar. Falls back to "?" for empty nicknames.
+            const avatarInitial =
+              c.customer.nickname.trim().charAt(0).toUpperCase() || "?";
+            return (
+              <div key={c._id} className="flex gap-3" data-testid="comment-item">
+                <div
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-sm font-medium"
+                  style={{
+                    backgroundColor: "var(--theme-bg-secondary)",
+                    color: "var(--theme-text)",
+                  }}
+                  aria-hidden="true"
                 >
-                  {c.customer.nickname}
-                </span>
-                <span
-                  className="text-xs"
-                  style={{ color: "var(--theme-text-secondary)" }}
-                >
-                  {new Date(c.created_at).toLocaleDateString(locale, { timeZone: "UTC" })}
-                </span>
+                  {avatarInitial}
+                </div>
+                <div className="min-w-0 flex-1">
+                  {/* Author + timestamp row. Exact YouTube sizing:
+                        - Author: 13px, weight 500 (medium)
+                        - Timestamp: 12px (text-xs), weight 400, muted color */}
+                  <div className="mb-1 flex items-baseline gap-2">
+                    <span
+                      className="text-[13px] font-medium"
+                      style={{ color: "var(--theme-text)" }}
+                    >
+                      {c.customer.nickname}
+                    </span>
+                    <span
+                      className="text-xs"
+                      style={{ color: "var(--theme-text-secondary)" }}
+                    >
+                      {new Date(c.created_at).toLocaleDateString(locale, { timeZone: "UTC" })}
+                    </span>
+                  </div>
+                  {/* Body: 14px (text-sm), weight 400, line-height 1.43 —
+                      the comfortable reading rhythm YouTube uses. */}
+                  <p
+                    className="text-sm leading-[1.43] whitespace-pre-wrap"
+                    style={{ color: "var(--theme-text)" }}
+                  >
+                    {c.body}
+                  </p>
+                </div>
               </div>
-              <p
-                className="text-sm leading-snug"
-                style={{ color: "var(--theme-text)" }}
-              >
-                {c.body}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>

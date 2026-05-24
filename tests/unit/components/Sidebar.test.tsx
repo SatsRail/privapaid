@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPathname = vi.fn(() => "/");
 const mockSignOut = vi.fn();
@@ -240,7 +240,8 @@ describe("Sidebar", () => {
 
   it("calls toggle when backdrop clicked", () => {
     render(<Sidebar {...defaultProps} />);
-    const backdrop = document.querySelector(".fixed.inset-0.bg-black\\/50");
+    // Backdrop bumped to bg-black/70 to match YouTube's overlay intensity.
+    const backdrop = document.querySelector(".fixed.inset-0.bg-black\\/70");
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
     expect(mockToggle).toHaveBeenCalled();

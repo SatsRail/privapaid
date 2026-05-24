@@ -29,6 +29,15 @@ vi.mock("@/components/ChannelSidebar", () => ({
     <div data-testid="channel-sidebar">{props.items.length} siblings</div>
   ),
 }));
+vi.mock("@/components/ChannelBlock", () => ({
+  default: (props: { name: string }) => <div data-testid="channel-block">{props.name}</div>,
+}));
+vi.mock("@/components/ActionRow", () => ({
+  default: (props: { mediaId: string }) => <div data-testid="action-row">{props.mediaId}</div>,
+}));
+vi.mock("@/components/ExpandableDescription", () => ({
+  default: (props: { text: string }) => <div data-testid="expandable-description">{props.text}</div>,
+}));
 vi.mock("@/components/ErrorBoundary", () => ({
   default: ({ children }: { children: React.ReactNode }) => <div data-testid="error-boundary">{children}</div>,
 }));

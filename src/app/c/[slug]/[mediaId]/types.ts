@@ -26,6 +26,9 @@ export interface MediaPageData {
   channel: {
     name: string;
     slug: string;
+    /** Resolved avatar URL — either /api/images/<gridfs_id> or a raw URL.
+     *  Used by the YouTube-style ChannelBlock under the video. */
+    profileImageUrl?: string;
   };
   products: SerializedProduct[];
   storedProductIds: string[];
