@@ -1,30 +1,39 @@
 /**
  * Opt-in Redis backend for `rate-limit.ts`.
  *
- * Activated by setting `REDIS_URL` in env and calling
- * `installRedisRateLimitStoreFromEnv()` from `src/instrumentation.ts`.
- * The dependency is dynamically imported so single-process self-hosters
- * who don't need it can avoid the install.
+ * This module deliberately does NOT import a Redis client. Operators who
+ * want distributed rate limiting pick their own client (Upstash REST,
+ * ioredis, node-redis, etc.) and wire it in from `src/instrumentation.ts`:
  *
- * Why this exists: the default in-memory store is process-local. Multi-
- * instance deployments (Railway with replicas, Vercel serverless, any
- * autoscaling target) need a shared bucket so the documented 5/min
- * signup limit actually means 5/min across the fleet.
+ *   import { Redis } from "@upstash/redis";
+ *   import { createRedisRateLimitStore } from "@/lib/rate-limit-redis";
+ *   import { setRateLimitStore } from "@/lib/rate-limit";
+ *
+ *   if (process.env.REDIS_URL) {
+ *     const client = new Redis({ url: process.env.REDIS_URL });
+ *     setRateLimitStore(createRedisRateLimitStore(client));
+ *   }
+ *
+ * Why this is on the operator and not auto-installed here: the previous
+ * design dynamically imported `@upstash/redis`, which Turbopack flagged
+ * as "module not found" during builds (the dep is intentionally absent
+ * from package.json). Pushing the import to the caller keeps the build
+ * clean and lets operators swap the underlying client without touching
+ * this file.
  *
  * Counter strategy: per-bucket Redis key with `INCR` + `PEXPIRE NX` so
- * the TTL is only set on the first increment of a window. Reads neither
- * `GET` nor `TTL` after the increment — the count returned by `INCR` is
- * authoritative, and we compute `resetAt` from the local clock + window.
- * Clock skew across replicas is a non-issue because `resetAt` is only
- * used to populate response headers.
+ * the TTL is only set on the first increment of a window. The count
+ * returned by `INCR` is authoritative; we compute `resetAt` from the
+ * local clock + window. Clock skew across replicas is fine because
+ * `resetAt` is only used to populate response headers.
  */
 
 import type { RateLimitStore } from "@/lib/rate-limit";
-import { setRateLimitStore } from "@/lib/rate-limit";
 
 /**
- * Minimal subset of the Upstash/ioredis surface we depend on. Both
- * libraries satisfy this shape; pick one in your deployment.
+ * Minimal subset of the Upstash/ioredis surface this adapter depends on.
+ * Both libraries satisfy this shape — pick whichever you prefer and
+ * pass the client into `createRedisRateLimitStore`.
  */
 export interface RedisLike {
   incr(key: string): Promise<number>;
@@ -47,39 +56,4 @@ export function createRedisRateLimitStore(redis: RedisLike): RateLimitStore {
       return { count, resetAt: Date.now() + windowMs };
     },
   };
-}
-
-/**
- * Convenience: parse REDIS_URL, build a client, install the store.
- * Returns true when a Redis store was installed; false when REDIS_URL
- * was absent (caller can decide whether to log a warning).
- *
- * Imports the `@upstash/redis` client dynamically so projects that
- * don't ship it can skip the install. Swap the import for `ioredis`
- * if you prefer a TCP client over the REST flavor.
- */
-export async function installRedisRateLimitStoreFromEnv(): Promise<boolean> {
-  const url = process.env.REDIS_URL;
-  if (!url) return false;
-
-  try {
-    // Resolved at runtime so missing-package errors fall through to the
-    // try/catch instead of breaking the build. The @ts-expect-error
-    // acknowledges that `@upstash/redis` is an optional peer — operators
-    // who set REDIS_URL install it themselves.
-    // @ts-expect-error optional peer dependency, resolved at runtime
-    const mod = (await import("@upstash/redis")) as unknown as {
-      Redis: { new (opts: { url: string }): RedisLike };
-    };
-    const client = new mod.Redis({ url });
-    setRateLimitStore(createRedisRateLimitStore(client));
-    return true;
-  } catch (err) {
-    // Don't crash the process — fall back to in-memory and log loudly.
-    console.error(
-      "rate-limit-redis: REDIS_URL set but failed to initialize. Falling back to in-memory limiter.",
-      err instanceof Error ? err.message : err
-    );
-    return false;
-  }
 }

@@ -16,12 +16,14 @@ export async function register() {
 
     // Opt-in distributed rate limiting. Without REDIS_URL the in-memory
     // store stays active (fine for a single-process deploy).
-    if (process.env.REDIS_URL) {
-      const { installRedisRateLimitStoreFromEnv } = await import(
-        "@/lib/rate-limit-redis"
-      );
-      await installRedisRateLimitStoreFromEnv();
-    }
+    //
+    // To enable: install a Redis client (Upstash REST, ioredis, node-redis),
+    // construct it here, and pass it through createRedisRateLimitStore +
+    // setRateLimitStore. The wiring is left to the operator because the
+    // client package is intentionally NOT in package.json — bundling
+    // @upstash/redis (or ioredis) would bloat single-process deploys that
+    // don't need it. See src/lib/rate-limit-redis.ts for the example
+    // snippet.
 
     // OpenTelemetry — opt-in via OTEL_EXPORTER_OTLP_ENDPOINT env var
     if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {

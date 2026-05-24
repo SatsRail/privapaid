@@ -295,6 +295,100 @@ docker stats                   # CPU/memory usage
 
 ---
 
+## Rotating `SK_ENCRYPTION_KEY`
+
+`SK_ENCRYPTION_KEY` is the envelope key that protects every
+`Settings.satsrail_api_key_encrypted` row — i.e. your merchant's live
+`sk_live_` SatsRail API key at rest. Rotate it when you suspect leakage
+(stolen container, compromised env file, departed contractor with access),
+on a regular cadence (annually is a reasonable baseline), or after migrating
+to a different secret store.
+
+The rotation is a single offline operation. **Schedule a brief maintenance
+window** — the app must be stopped or in a read-only state while it runs,
+because the script atomically swaps the ciphertext on every Settings row
+and a request mid-rotation could read a row encrypted with one key while
+the runtime is configured for the other.
+
+### Procedure
+
+1. **Generate a new key.** Use the same format the entrypoint uses (32
+   random bytes, hex-encoded):
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+   Save it somewhere safe NOW — losing this between steps 2 and 5 means
+   losing access to every encrypted merchant key.
+
+2. **Back up MongoDB.** A `mongodump` snapshot makes any failed rotation
+   trivially reversible.
+
+3. **Stop the app** (or take it offline behind a maintenance page). This
+   removes the request-mid-rotation race window.
+
+4. **Dry-run the rotation** to confirm it would succeed before touching
+   anything:
+
+   ```bash
+   OLD_SK_ENCRYPTION_KEY=<current key> \
+   NEW_SK_ENCRYPTION_KEY=<key from step 1> \
+   MONGODB_URI=mongodb://... \
+   npx tsx scripts/rotate-encryption-key.ts --dry-run
+   ```
+
+   Exit code 0 = every row decrypts cleanly with the old key. Exit code 2
+   means at least one row failed — investigate before proceeding (likely
+   a previously-interrupted rotation, hand-edited ciphertext, or wrong
+   `OLD_SK_ENCRYPTION_KEY`).
+
+5. **Apply the rotation:**
+
+   ```bash
+   OLD_SK_ENCRYPTION_KEY=<current key> \
+   NEW_SK_ENCRYPTION_KEY=<key from step 1> \
+   MONGODB_URI=mongodb://... \
+   npx tsx scripts/rotate-encryption-key.ts
+   ```
+
+   The script reports each row as it rewraps. Idempotent — re-running on
+   already-rewrapped rows will fail the decrypt step and exit 2, which is
+   the safe behavior (it won't double-encrypt).
+
+6. **Update runtime env.** Set `SK_ENCRYPTION_KEY=<key from step 1>` in
+   your secret store / `.env`. If you use the auto-generated file at
+   `/app/data/.generated-env`, also update the value there so subsequent
+   restarts don't fall back to the old key.
+
+7. **Restart the app.** The startup probe at
+   [src/lib/startup-checks.ts](src/lib/startup-checks.ts) will trial-decrypt
+   the stored ciphertext on boot. In production, a key mismatch causes
+   `process.exit(1)` — a clean signal that the rotation didn't take.
+
+8. **Verify on a real request.** Hit any admin endpoint that touches
+   SatsRail (e.g., open the products page in the admin UI). If the
+   merchant key was rewrapped correctly, the SatsRail call succeeds.
+
+9. **Scrub the old key.** Remove `OLD_SK_ENCRYPTION_KEY` from your secret
+   store and shell history. You no longer need it.
+
+### Recovery if step 5 fails partway
+
+The script processes rows one at a time, so a crash mid-run leaves a mix
+of old-wrapped and new-wrapped rows. Two recovery paths:
+
+- **Forward:** re-run the script with the same OLD/NEW pair. Already-new
+  rows fail the OLD-key decrypt and are reported as failures; the rest
+  finish. Exit code 2 is expected; the summary line tells you how many
+  were already done.
+- **Rollback:** swap OLD and NEW in env and re-run. The newly-wrapped
+  rows decrypt with NEW (now treated as the "old"), and the un-touched
+  rows fail. Combined with the MongoDB backup from step 2, this is a
+  belt-and-braces option.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

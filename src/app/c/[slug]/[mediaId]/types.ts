@@ -19,6 +19,8 @@ export interface MediaPageData {
     thumbnail_id?: string;
     views_count: number;
     comments_count: number;
+    likes_count: number;
+    shares_count: number;
     // For media_type === "photo" only: the GridFS ID of the encrypted bytes.
     // Not sensitive on its own (bytes are ciphertext without the DEK).
     photo_gridfs_id?: string;

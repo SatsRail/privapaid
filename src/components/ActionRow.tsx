@@ -6,6 +6,8 @@ import { useLocale } from "@/i18n/useLocale";
 interface ActionRowProps {
   mediaId: string;
   mediaName: string;
+  initialLikesCount: number;
+  initialSharesCount: number;
 }
 
 /**
@@ -13,17 +15,25 @@ interface ActionRowProps {
  * Save pill, sized to match YouTube exactly (~36px tall, 20px icons,
  * tight horizontal padding).
  *
- * Local-only behaviour for now — Like/Dislike/Save persist via localStorage
- * so the same browser remembers the user's gesture across visits. Real
- * server-side likes / save-to-watch-later can wire later; the visual
- * surface is what makes the page feel YouTube-shaped.
+ * Like and Share counts persist server-side via POST /api/media/[id]/like
+ * and /share. Per-user toggle state for Like/Dislike/Save stays in
+ * localStorage — there is no server-side per-user uniqueness, so the
+ * same browser remembers the user's gesture and the server only applies
+ * the +1 / -1 delta. Dislike and Save do not hit the server.
  */
-export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
+export default function ActionRow({
+  mediaId,
+  mediaName,
+  initialLikesCount,
+  initialSharesCount,
+}: ActionRowProps) {
   const { t } = useLocale();
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [shareToast, setShareToast] = useState<string | null>(null);
+  const [likesCount, setLikesCount] = useState(initialLikesCount);
+  const [sharesCount, setSharesCount] = useState(initialSharesCount);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Hydrate from localStorage on mount.
   useEffect(() => {
@@ -45,18 +55,54 @@ export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
     }
   }
 
+  function showToast(message: string) {
+    setActionToast(message);
+    setTimeout(() => setActionToast(null), 2000);
+  }
+
   // Like and Dislike are mutually exclusive — clicking one clears the
   // other. Matches YouTube's behavior.
-  function handleLike() {
-    setLiked((prev) => {
-      const next = !prev;
-      writeFlag(`privapaid:liked:${mediaId}`, next);
-      if (next && disliked) {
-        setDisliked(false);
-        writeFlag(`privapaid:disliked:${mediaId}`, false);
+  async function handleLike() {
+    const next = !liked;
+    const action = next ? "like" : "unlike";
+
+    // Optimistic UI: flip state, adjust count (clamp at 0), clear dislike
+    // if needed, write localStorage. Roll back if the server rejects.
+    const previousLiked = liked;
+    const previousDisliked = disliked;
+    const previousLikes = likesCount;
+
+    setLiked(next);
+    setLikesCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
+    writeFlag(`privapaid:liked:${mediaId}`, next);
+    if (next && disliked) {
+      setDisliked(false);
+      writeFlag(`privapaid:disliked:${mediaId}`, false);
+    }
+
+    try {
+      const res = await fetch(`/api/media/${mediaId}/like`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as { likes_count?: number };
+      if (typeof data.likes_count === "number") {
+        // Reconcile with the server in case of drift (rate-limit retries,
+        // concurrent edits from other users).
+        setLikesCount(data.likes_count);
       }
-      return next;
-    });
+    } catch {
+      setLiked(previousLiked);
+      setLikesCount(previousLikes);
+      writeFlag(`privapaid:liked:${mediaId}`, previousLiked);
+      if (next && previousDisliked) {
+        setDisliked(previousDisliked);
+        writeFlag(`privapaid:disliked:${mediaId}`, previousDisliked);
+      }
+      showToast(t("viewer.actions.copy_failed"));
+    }
   }
 
   function handleDislike() {
@@ -84,19 +130,40 @@ export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       try {
         await navigator.share({ title: mediaName, url });
-        return;
       } catch {
         // User cancelled or share unsupported — fall through to clipboard.
+        await copyToClipboard(url);
       }
+    } else {
+      await copyToClipboard(url);
     }
+    incrementShareCount();
+  }
+
+  async function copyToClipboard(url: string) {
     try {
       await navigator.clipboard.writeText(url);
-      setShareToast(t("viewer.actions.copied"));
-      setTimeout(() => setShareToast(null), 2000);
+      showToast(t("viewer.actions.copied"));
     } catch {
-      setShareToast(t("viewer.actions.copy_failed"));
-      setTimeout(() => setShareToast(null), 2000);
+      showToast(t("viewer.actions.copy_failed"));
     }
+  }
+
+  function incrementShareCount() {
+    // Optimistic bump — the share already happened client-side, the POST
+    // is best-effort telemetry. We don't roll back on failure.
+    setSharesCount((c) => c + 1);
+    fetch(`/api/media/${mediaId}/share`, { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as { shares_count?: number };
+        if (typeof data.shares_count === "number") {
+          setSharesCount(data.shares_count);
+        }
+      })
+      .catch(() => {
+        // swallow — counts will reconcile on next page load.
+      });
   }
 
   // Pill styling — h-9 (~36px) is YouTube's exact button height; px-3 +
@@ -126,7 +193,14 @@ export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
           <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M7 10v12M15 5.88L14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7V10l4.34-7.34A1 1 0 0 1 13 4l2 1.88z" />
           </svg>
-          <span>{t("viewer.actions.like")}</span>
+          <span>
+            {t("viewer.actions.like")}
+            {likesCount > 0 && (
+              <span data-testid="likes-count" className="ml-1">
+                {likesCount}
+              </span>
+            )}
+          </span>
         </button>
         <span
           aria-hidden="true"
@@ -160,7 +234,14 @@ export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
           <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
           <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
         </svg>
-        <span>{t("viewer.actions.share")}</span>
+        <span>
+          {t("viewer.actions.share")}
+          {sharesCount > 0 && (
+            <span data-testid="shares-count" className="ml-1">
+              {sharesCount}
+            </span>
+          )}
+        </span>
       </button>
 
       <button
@@ -176,13 +257,13 @@ export default function ActionRow({ mediaId, mediaName }: ActionRowProps) {
         <span>{t("viewer.actions.save")}</span>
       </button>
 
-      {shareToast && (
+      {actionToast && (
         <span
           role="status"
           className="text-xs"
           style={{ color: "var(--theme-text-secondary)" }}
         >
-          {shareToast}
+          {actionToast}
         </span>
       )}
     </div>

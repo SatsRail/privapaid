@@ -19,6 +19,16 @@ vi.mock("@/lib/mongodb", () => ({
   connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
+// Mock HIBP breach check. The real signup hits api.pwnedpasswords.com;
+// in tests we always return "not breached" so the existing fixtures
+// (some of which use well-known passwords like "MySecurePass123!") keep
+// working. There's a dedicated unit suite at
+// tests/unit/lib/breached-password.test.ts that exercises the helper
+// itself, including the breached path.
+vi.mock("@/lib/breached-password", () => ({
+  checkBreachedPassword: vi.fn().mockResolvedValue({ breached: false }),
+}));
+
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/customer/signup/route";
 
@@ -161,5 +171,25 @@ describe("POST /api/customer/signup", () => {
     expect(res.status).toBe(500);
     expect((await res.json()).error).toMatch(/Internal server error/i);
     spy.mockRestore();
+  });
+
+  it("returns 422 when the password appears in HIBP breach data", async () => {
+    const { checkBreachedPassword } = await import("@/lib/breached-password");
+    (checkBreachedPassword as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      breached: true,
+      count: 12345,
+    });
+
+    const req = signupRequest({
+      nickname: "breachuser",
+      password: "common-leaked-password-99",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/known data breaches/i);
+
+    // And the Customer was NOT created.
+    const exists = await Customer.findOne({ nickname: "breachuser" }).lean();
+    expect(exists).toBeNull();
   });
 });

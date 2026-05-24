@@ -217,6 +217,13 @@ export const schemas = {
     flag_type: z.string().min(1, "Flag type is required"),
   }),
 
+  // Like toggle — paired with POST /api/media/[id]/like.
+  // Client tracks its own like state in localStorage; the server just
+  // applies the +1 or -1 delta.
+  likeAction: z.object({
+    action: z.enum(["like", "unlike"]),
+  }),
+
   // Admin create
   adminCreate: z.object({
     email: z.string().email("Invalid email"),

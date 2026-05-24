@@ -11,6 +11,16 @@ vi.mock("@/i18n/useLocale", () => ({
 
 import ActionRow from "@/components/ActionRow";
 
+// Default props for ActionRow — covers the new required count props.
+const baseProps = {
+  mediaId: "m1",
+  mediaName: "Test",
+  initialLikesCount: 0,
+  initialSharesCount: 0,
+};
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   const store: Record<string, string> = {};
   vi.stubGlobal("localStorage", {
@@ -25,68 +35,178 @@ beforeEach(() => {
   });
   // Default: no native share API. Tests that want it set it manually.
   delete (navigator as { share?: unknown }).share;
+
+  // Default fetch mock — successful response, ok=true. Tests can override.
+  fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const isLike = typeof url === "string" && url.includes("/like");
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as { action?: string })
+      : null;
+    if (isLike) {
+      const next = body?.action === "like" ? 1 : 0;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ likes_count: next }),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ shares_count: 1 }),
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 describe("ActionRow", () => {
   it("renders Like / Share / Save buttons", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    render(<ActionRow {...baseProps} />);
     expect(screen.getByTestId("like-button")).toBeInTheDocument();
     expect(screen.getByTestId("share-button")).toBeInTheDocument();
     expect(screen.getByTestId("save-button")).toBeInTheDocument();
   });
 
-  it("toggles Like state on click + persists to localStorage", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+  it("renders initial like/share counts when greater than 0", () => {
+    render(<ActionRow {...baseProps} initialLikesCount={42} initialSharesCount={7} />);
+    expect(screen.getByTestId("likes-count")).toHaveTextContent("42");
+    expect(screen.getByTestId("shares-count")).toHaveTextContent("7");
+  });
+
+  it("hides zero counts so brand-new media doesn't show 'Like 0'", () => {
+    render(<ActionRow {...baseProps} />);
+    expect(screen.queryByTestId("likes-count")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shares-count")).not.toBeInTheDocument();
+  });
+
+  it("toggles Like state on click + persists to localStorage", async () => {
+    render(<ActionRow {...baseProps} />);
     const btn = screen.getByTestId("like-button");
     expect(btn).toHaveAttribute("aria-pressed", "false");
 
-    fireEvent.click(btn);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
     expect(btn).toHaveAttribute("aria-pressed", "true");
     expect(localStorage.setItem).toHaveBeenCalledWith("privapaid:liked:m1", "true");
 
-    fireEvent.click(btn);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
     expect(btn).toHaveAttribute("aria-pressed", "false");
     expect(localStorage.removeItem).toHaveBeenCalledWith("privapaid:liked:m1");
   });
 
-  it("toggles Save state independently of Like", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+  it("POSTs action:like on first click and action:unlike on second", async () => {
+    render(<ActionRow {...baseProps} />);
+    const btn = screen.getByTestId("like-button");
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/media/m1/like",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ action: "like" }),
+      })
+    );
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/media/m1/like",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ action: "unlike" }),
+      })
+    );
+  });
+
+  it("optimistically updates the like count and reconciles with the server", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ likes_count: 11 }),
+    });
+    render(<ActionRow {...baseProps} initialLikesCount={10} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("likes-count")).toHaveTextContent("11");
+    });
+  });
+
+  it("reverts the like count + pressed state when the server rejects", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: "boom" }),
+    });
+    render(<ActionRow {...baseProps} initialLikesCount={5} />);
+
+    const btn = screen.getByTestId("like-button");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    await waitFor(() => {
+      expect(btn).toHaveAttribute("aria-pressed", "false");
+    });
+    expect(screen.getByTestId("likes-count")).toHaveTextContent("5");
+  });
+
+  it("toggles Save state independently of Like (Save stays local-only)", () => {
+    render(<ActionRow {...baseProps} />);
     fireEvent.click(screen.getByTestId("save-button"));
     expect(screen.getByTestId("save-button")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
+    // Save does NOT hit the server.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("renders a Dislike button alongside Like (YouTube split pill)", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    render(<ActionRow {...baseProps} />);
     expect(screen.getByTestId("dislike-button")).toBeInTheDocument();
   });
 
-  it("clicking Dislike clears Like (mutually exclusive — matches YouTube)", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
-    // First, like.
-    fireEvent.click(screen.getByTestId("like-button"));
+  it("dislike does not hit the server (local-only)", () => {
+    render(<ActionRow {...baseProps} />);
+    fireEvent.click(screen.getByTestId("dislike-button"));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clicking Dislike clears Like (mutually exclusive — matches YouTube)", async () => {
+    render(<ActionRow {...baseProps} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
-    // Then dislike — should clear the like.
     fireEvent.click(screen.getByTestId("dislike-button"));
     expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("clicking Like clears a prior Dislike (the reverse case)", () => {
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+  it("clicking Like clears a prior Dislike (the reverse case)", async () => {
+    render(<ActionRow {...baseProps} />);
     fireEvent.click(screen.getByTestId("dislike-button"));
-    fireEvent.click(screen.getByTestId("like-button"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("like-button"));
+    });
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("share copies the current URL to clipboard and shows a toast", async () => {
-    // jsdom defaults to "about:blank"; override.
+  it("share copies the current URL to clipboard, fires POST, and bumps count", async () => {
     Object.defineProperty(window, "location", {
       value: { href: "https://example.com/c/ch/m1" },
       writable: true,
     });
-    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    render(<ActionRow {...baseProps} />);
 
     await act(async () => {
       fireEvent.click(screen.getByTestId("share-button"));
@@ -95,9 +215,18 @@ describe("ActionRow", () => {
     await waitFor(() => {
       expect(screen.getByText("viewer.actions.copied")).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/media/m1/share",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("shares-count")).toHaveTextContent("1");
+    });
   });
 
-  it("prefers the native Share API when available", async () => {
+  it("prefers the native Share API when available + still posts the share count", async () => {
     const shareSpy = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "share", {
       value: shareSpy,
@@ -108,7 +237,7 @@ describe("ActionRow", () => {
       writable: true,
     });
 
-    render(<ActionRow mediaId="m2" mediaName="Mobile Share" />);
+    render(<ActionRow {...baseProps} mediaId="m2" mediaName="Mobile Share" />);
     await act(async () => {
       fireEvent.click(screen.getByTestId("share-button"));
     });
@@ -118,13 +247,20 @@ describe("ActionRow", () => {
     });
     // Clipboard NOT used when native share succeeded.
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    // Telemetry still fires.
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/media/m2/share",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
   });
 
   it("hydrates Liked + Saved from localStorage on mount", async () => {
     (localStorage.getItem as ReturnType<typeof vi.fn>).mockImplementation(
       (k: string) => (k.startsWith("privapaid:liked:") || k.startsWith("privapaid:saved:")) ? "true" : null
     );
-    render(<ActionRow mediaId="hydrated" mediaName="Test" />);
+    render(<ActionRow {...baseProps} mediaId="hydrated" />);
     await Promise.resolve();
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("save-button")).toHaveAttribute("aria-pressed", "true");

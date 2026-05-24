@@ -57,6 +57,8 @@ const baseData: MediaPageData = {
     media_type: "video",
     views_count: 10,
     comments_count: 3,
+    likes_count: 0,
+    shares_count: 0,
   },
   channel: { name: "Test Channel", slug: "test-channel" },
   products: [],

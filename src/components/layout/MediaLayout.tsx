@@ -136,7 +136,12 @@ export default function MediaLayout({
           {/* YouTube-style action row — Like / Share / Save pills. The
               visual presence is the goal; backend wiring is local-storage
               only for now. Real "like feed" / "watch later" lift later. */}
-          <ActionRow mediaId={media._id} mediaName={media.name} />
+          <ActionRow
+            mediaId={media._id}
+            mediaName={media.name}
+            initialLikesCount={media.likes_count}
+            initialSharesCount={media.shares_count}
+          />
 
           {/* Channel attribution + Subscribe pill. The Subscribe button is
               localStorage-only today; the visual surface is what makes the

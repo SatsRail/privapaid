@@ -245,6 +245,8 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       thumbnail_id: media.thumbnail_id,
       views_count: media.views_count,
       comments_count: media.comments_count,
+      likes_count: media.likes_count ?? 0,
+      shares_count: media.shares_count ?? 0,
       // For photo media, surface the GridFS pointer to the client so it can
       // fetch the encrypted bytes after unwrapping the DEK.
       photo_gridfs_id: media.media_type === "photo" ? media.source_url : undefined,

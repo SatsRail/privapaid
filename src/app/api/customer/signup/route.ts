@@ -4,6 +4,7 @@ import { connectDB } from "@/lib/mongodb";
 import Customer from "@/models/Customer";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { rateLimit } from "@/lib/rate-limit";
+import { checkBreachedPassword } from "@/lib/breached-password";
 
 export async function POST(req: Request) {
   try {
@@ -14,6 +15,22 @@ export async function POST(req: Request) {
     if (isValidationError(result)) return result;
 
     const { nickname, password } = result;
+
+    // Refuse passwords known to appear in breach corpuses. Uses HIBP's
+    // k-anonymity API — only the first 5 hex chars of SHA1(password) ever
+    // leave the process. If HIBP is unreachable we fail OPEN: the 10-char
+    // minimum + bcrypt-12 hashing at rest still apply, and gating signup
+    // on a third party's uptime is the worse outcome.
+    const breach = await checkBreachedPassword(password);
+    if (breach.breached) {
+      return NextResponse.json(
+        {
+          error:
+            "This password has appeared in known data breaches. Please choose a different one.",
+        },
+        { status: 422 }
+      );
+    }
 
     await connectDB();
 

@@ -27,6 +27,8 @@ export interface IMedia extends Document {
   comments_count: number;
   views_count: number;
   flags_count: number;
+  likes_count: number;
+  shares_count: number;
   deleted_at: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -106,6 +108,14 @@ const MediaSchema = new Schema<IMedia>(
       default: 0,
     },
     flags_count: {
+      type: Number,
+      default: 0,
+    },
+    likes_count: {
+      type: Number,
+      default: 0,
+    },
+    shares_count: {
       type: Number,
       default: 0,
     },
