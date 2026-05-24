@@ -72,10 +72,11 @@ export default function MediaHeader({
     // it breathing room from the player; mb-2 keeps the meta row close
     // since they form a coherent info block together.
     <div className="mt-4 mb-2">
-      {/* YouTube's watch-page title is medium-weight, slightly smaller than
-          a typical bold h1. Roboto medium at this size reads as authoritative
-          without shouting. */}
-      <h1 className="text-xl font-medium">{name}</h1>
+      {/* YouTube's watch-page title: 20px (text-xl) at Roboto weight 600
+          (semibold). Heavier than `medium` so the title actually anchors
+          the info block — but not as loud as `bold`, which would feel
+          shouty under a 1280px video. */}
+      <h1 className="text-xl font-semibold">{name}</h1>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {hasActiveTimedAccess && (
           <AccessTimerPill serverSeconds={remainingSeconds!} locale={locale} />

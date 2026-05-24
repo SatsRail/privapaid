@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { t } from "@/i18n";
+import { formatTimeAgo } from "@/lib/relative-time";
 import type { SiblingMediaItem } from "@/app/c/[slug]/[mediaId]/types";
 
 interface ChannelSidebarItemProps {
@@ -24,6 +25,9 @@ export default function ChannelSidebarItem({ item, locale }: ChannelSidebarItemP
   // Reuse the existing pluralized translation keys so the sidebar matches
   // the rest of the app's "N views / 1 view" copy.
   const localizedViews = t(locale, "viewer.media.views", { count: item.viewsCount });
+  // YouTube's sub-label is "12K views • 3 days ago" — relative time turns
+  // the static list of recommendations into a freshness signal.
+  const relativeTime = formatTimeAgo(item.createdAt, locale);
 
   return (
     <Link
@@ -58,12 +62,16 @@ export default function ChannelSidebarItem({ item, locale }: ChannelSidebarItemP
         >
           {item.name}
         </p>
-        {item.viewsCount > 0 && (
+        {(item.viewsCount > 0 || relativeTime) && (
           <p
             className="mt-1 text-xs"
             style={{ color: "var(--theme-text-secondary)" }}
           >
-            {localizedViews}
+            {item.viewsCount > 0 && relativeTime
+              ? `${localizedViews} • ${relativeTime}`
+              : item.viewsCount > 0
+                ? localizedViews
+                : relativeTime}
           </p>
         )}
       </div>

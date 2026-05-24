@@ -59,4 +59,6 @@ export interface SiblingMediaItem {
   viewsCount: number;
   /** Pre-built canonical href: /c/<slug>/<id>. Sidebar doesn't need to know the slug. */
   href: string;
+  /** ISO-8601 created_at — drives the "3 days ago" sub-label, YouTube-style. */
+  createdAt: string;
 }

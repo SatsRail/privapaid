@@ -73,6 +73,7 @@ const baseData: MediaPageData = {
       mediaType: "video",
       viewsCount: 100,
       href: "/c/test-channel/s1",
+      createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     },
     {
       _id: "s2",
@@ -81,6 +82,7 @@ const baseData: MediaPageData = {
       mediaType: "photo",
       viewsCount: 50,
       href: "/c/test-channel/s2",
+      createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     },
   ],
 };

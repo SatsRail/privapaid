@@ -192,7 +192,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     channel_id: channel._id,
     _id: { $ne: media._id },
   })
-    .select("name thumbnail_id thumbnail_url media_type views_count")
+    .select("name thumbnail_id thumbnail_url media_type views_count created_at")
     .sort({ views_count: -1, _id: 1 })
     .limit(20)
     .lean();
@@ -204,6 +204,9 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     mediaType: m.media_type,
     viewsCount: m.views_count ?? 0,
     href: `/c/${slug}/${String(m._id)}`,
+    // YouTube-style "X views • Y days ago" — the createdAt is serialized as
+    // an ISO string so the client component can format it via Intl.
+    createdAt: (m.created_at instanceof Date ? m.created_at : new Date(m.created_at ?? Date.now())).toISOString(),
   }));
 
   // JSON-LD structured data

@@ -56,6 +56,30 @@ describe("ActionRow", () => {
     expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("renders a Dislike button alongside Like (YouTube split pill)", () => {
+    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    expect(screen.getByTestId("dislike-button")).toBeInTheDocument();
+  });
+
+  it("clicking Dislike clears Like (mutually exclusive — matches YouTube)", () => {
+    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    // First, like.
+    fireEvent.click(screen.getByTestId("like-button"));
+    expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
+    // Then dislike — should clear the like.
+    fireEvent.click(screen.getByTestId("dislike-button"));
+    expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("clicking Like clears a prior Dislike (the reverse case)", () => {
+    render(<ActionRow mediaId="m1" mediaName="Test" />);
+    fireEvent.click(screen.getByTestId("dislike-button"));
+    fireEvent.click(screen.getByTestId("like-button"));
+    expect(screen.getByTestId("like-button")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("dislike-button")).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("share copies the current URL to clipboard and shows a toast", async () => {
     // jsdom defaults to "about:blank"; override.
     Object.defineProperty(window, "location", {

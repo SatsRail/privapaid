@@ -42,8 +42,10 @@ export default function ExpandableDescription({ text }: ExpandableDescriptionPro
   return (
     <div
       data-testid="expandable-description"
-      className="mt-4 rounded-lg p-3"
-      style={{ backgroundColor: "var(--theme-bg-secondary)" }}
+      // YouTube's description sits inline on the page, no card. Just text
+      // + a small expand toggle. The card-with-background pattern reads as
+      // "form input" rather than "content," so we drop it.
+      className="mt-4"
     >
       <p
         ref={textRef}
@@ -56,7 +58,7 @@ export default function ExpandableDescription({ text }: ExpandableDescriptionPro
         <button
           onClick={() => setExpanded((p) => !p)}
           data-testid="description-toggle"
-          className="mt-2 text-xs font-medium hover:underline"
+          className="mt-1 text-xs font-medium hover:underline"
           style={{ color: "var(--theme-text-secondary)" }}
         >
           {expanded

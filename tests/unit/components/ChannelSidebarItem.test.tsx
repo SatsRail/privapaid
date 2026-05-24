@@ -26,6 +26,8 @@ const baseItem = {
   mediaType: "video",
   viewsCount: 1234,
   href: "/c/platform-showcase/media-1",
+  // Recent enough that any reasonable "ago" rendering shows.
+  createdAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
 };
 
 describe("ChannelSidebarItem", () => {
@@ -46,20 +48,26 @@ describe("ChannelSidebarItem", () => {
     expect(img).toHaveAttribute("src", "/api/images/thumb1");
   });
 
-  it("renders the localized view count (uses viewer.media.views key)", () => {
+  it("renders the localized view count + relative time joined by a dot — YouTube's exact sub-label format", () => {
     render(<ChannelSidebarItem item={baseItem} locale="en" />);
-    // Our mock outputs `viewer.media.views:1234`.
-    expect(screen.getByText("viewer.media.views:1234")).toBeInTheDocument();
+    // Joint format: "<views> • <relative time>". The relative-time value
+    // is rendered by Intl.RelativeTimeFormat and includes "day"/"days".
+    const subLabel = screen.getByText(/viewer\.media\.views:1234.*•.*day/);
+    expect(subLabel).toBeInTheDocument();
   });
 
-  it("hides the view count when zero (no '0 views' noise on fresh uploads)", () => {
+  it("hides the view count when zero but still shows the relative time", () => {
+    // YouTube freshness signal — even 0 views should show "uploaded 5
+    // minutes ago" so the recommendation feels alive. We just drop the
+    // "0 views" half and keep the time half.
     render(
       <ChannelSidebarItem
         item={{ ...baseItem, viewsCount: 0 }}
         locale="en"
       />
     );
-    expect(screen.queryByText(/viewer\.media\.views/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/viewer\.media\.views:0/)).not.toBeInTheDocument();
+    expect(screen.getByText(/day/)).toBeInTheDocument();
   });
 
   it("falls back to a placeholder when thumbnailSrc is missing", () => {

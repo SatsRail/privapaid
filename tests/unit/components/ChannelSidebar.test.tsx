@@ -16,6 +16,7 @@ vi.mock("next/link", () => ({
 
 import ChannelSidebar from "@/components/ChannelSidebar";
 
+const baseCreatedAt = new Date(Date.now() - 86_400_000).toISOString();
 const items = [
   {
     _id: "m1",
@@ -24,6 +25,7 @@ const items = [
     mediaType: "video",
     viewsCount: 100,
     href: "/c/ch/m1",
+    createdAt: baseCreatedAt,
   },
   {
     _id: "m2",
@@ -32,6 +34,7 @@ const items = [
     mediaType: "photo",
     viewsCount: 50,
     href: "/c/ch/m2",
+    createdAt: baseCreatedAt,
   },
 ];
 
@@ -70,11 +73,11 @@ describe("ChannelSidebar", () => {
     expect(screen.getByLabelText("viewer.sidebar.more_from_channel")).toBeInTheDocument();
   });
 
-  it("passes the locale down to each item (views count picks up the right pluralization)", () => {
+  it("passes the locale down to each item (views count + relative time both render)", () => {
     render(<ChannelSidebar items={items} locale="es" />);
-    // Our mock returns `viewer.media.views:100`; locale doesn't change the
-    // mock output, but we verify the items receive the count via the key.
-    expect(screen.getByText("viewer.media.views:100")).toBeInTheDocument();
-    expect(screen.getByText("viewer.media.views:50")).toBeInTheDocument();
+    // Joint format: "<views> • <relative time>". The relative time is
+    // rendered via Intl.RelativeTimeFormat so we use a regex matcher.
+    expect(screen.getByText(/viewer\.media\.views:100/)).toBeInTheDocument();
+    expect(screen.getByText(/viewer\.media\.views:50/)).toBeInTheDocument();
   });
 });

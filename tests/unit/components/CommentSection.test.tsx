@@ -151,6 +151,18 @@ describe("CommentSection", () => {
       const avatar = item?.querySelector("div");
       expect(avatar?.textContent).toBe("?");
     });
+
+    it("shows skeleton placeholders while SWR is loading", () => {
+      (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: undefined,
+        mutate: mockMutate,
+        isLoading: true,
+      });
+      render(<CommentSection {...baseProps} productIds={[]} />);
+      expect(screen.getByTestId("comment-skeleton")).toBeInTheDocument();
+      // No "no comments yet" message during loading — that would lie about state.
+      expect(screen.queryByText(/No comments yet/i)).not.toBeInTheDocument();
+    });
   });
 
   it("shows access-denied message when no access and has productIds", () => {
