@@ -263,7 +263,7 @@
   "viewer.media.views_other": "{count} vistas",
   "viewer.sidebar.more_from_channel": "Más de este canal",
   "viewer.channel.subscribe": "Suscribirme",
-  "viewer.channel.subscribed": "Suscrito",
+  "viewer.channel.subscribe_hint": "Suscríbete vía RSS — se abre en tu lector",
   "viewer.actions.like": "Me gusta",
   "viewer.actions.dislike": "No me gusta",
   "viewer.actions.share": "Compartir",
