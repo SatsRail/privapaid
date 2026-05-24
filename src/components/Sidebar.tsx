@@ -58,20 +58,20 @@ export default function Sidebar({
       {/* Backdrop — always on when the rail is open, on every breakpoint.
           YouTube watch-page model: the rail is an overlay drawer, not a
           flex sibling that pushes content. Click outside to dismiss.
-          bg-black/70 matches YouTube's overlay intensity — anything lighter
-          and the video appears to still be playable, defeating the modal
-          intent. z-30 sits above all default-flow content (incl. iframes
-          and <video>), below the aside drawer at z-40. */}
+          bg-black/70 matches YouTube's overlay intensity.
+          z-40 sits above ALL page content including sticky elements that
+          claim z-30 (e.g. the HomeContent category chips). The aside
+          drawer at z-50 sits one level above the backdrop. */}
       {!collapsed && (
         <div
-          className="fixed inset-0 top-14 z-30 bg-black/70"
+          className="fixed inset-0 top-14 z-40 bg-black/70"
           onClick={toggle}
         />
       )}
 
       <aside
         className={`
-          fixed left-0 top-14 z-40 flex h-[calc(100vh-3.5rem)] w-60 flex-col
+          fixed left-0 top-14 z-50 flex h-[calc(100vh-3.5rem)] w-60 flex-col
           transition-transform duration-200
           ${collapsed ? "-translate-x-full" : "translate-x-0"}
         `}

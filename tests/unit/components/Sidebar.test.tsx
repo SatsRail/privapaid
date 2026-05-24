@@ -247,6 +247,23 @@ describe("Sidebar", () => {
     expect(mockToggle).toHaveBeenCalled();
   });
 
+  it("backdrop sits at z-40 — above page-level sticky elements that claim z-30", () => {
+    // Regression guard: the home page's CategoryChips wrapper is
+    // `sticky top-14 z-30`. If the backdrop is also z-30, the chips win
+    // (later in DOM order) and stay un-dimmed when the rail opens, which
+    // the founder caught on the index page. Backdrop must outrank z-30.
+    render(<Sidebar {...defaultProps} />);
+    const backdrop = document.querySelector(".fixed.inset-0.bg-black\\/70");
+    expect(backdrop?.className).toContain("z-40");
+  });
+
+  it("aside drawer sits at z-50 — above the backdrop so it stays interactive", () => {
+    mockUseSidebar.mockReturnValue({ collapsed: false, toggle: mockToggle });
+    render(<Sidebar {...defaultProps} />);
+    const aside = document.querySelector("aside");
+    expect(aside?.className).toContain("z-50");
+  });
+
   it("translates the aside fully off-screen when collapsed (no more 72px icon rail)", () => {
     // The collapsed state used to render a 72px-wide icon rail on desktop.
     // Now collapsed = -translate-x-full on every breakpoint. The aside is
