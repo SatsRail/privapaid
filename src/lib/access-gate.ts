@@ -231,11 +231,29 @@ export async function verifyMacaroonAccess(
   const cookieStore = await cookies();
   const macaroons = parseMacaroonCookie(cookieStore.get(COOKIE_NAME)?.value);
 
-  for (const pid of productIds) {
-    const macaroon = macaroons[pid];
-    if (!macaroon) continue;
+  // Verify in parallel. The portal call is the dominant cost (network
+  // round-trip), so N serial awaits used to make a 5-product media item
+  // wait for ~5x portal latency on cache miss. Promise.all collapses
+  // that to one round-trip's worth.
+  //
+  // We preserve iteration order for the "first valid wins" tiebreak:
+  // when a user has macaroons for multiple products that all gate the
+  // same media, the earliest one in `productIds` wins (matches the
+  // serial behavior).
+  const present = productIds
+    .map((pid) => ({ pid, m: macaroons[pid]?.m }))
+    .filter((x): x is { pid: string; m: string } => !!x.m);
 
-    const result = await verifySatsrailToken(macaroon);
+  if (present.length === 0) return { granted: false };
+
+  const results = await Promise.all(
+    present.map(async ({ pid, m }) => ({
+      pid,
+      result: await verifySatsrailToken(m),
+    }))
+  );
+
+  for (const { pid, result } of results) {
     if (result.status === "valid") {
       return {
         granted: true,
@@ -245,7 +263,6 @@ export async function verifyMacaroonAccess(
         remainingSeconds: result.remainingSeconds,
       };
     }
-    // status: "invalid" or "transient" — try next product
   }
 
   return { granted: false };

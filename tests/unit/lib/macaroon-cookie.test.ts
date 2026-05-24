@@ -4,8 +4,13 @@ import {
   parseMacaroonExp,
   findMostRecentExpiry,
   getStoredProductIds,
+  getMacaroon,
+  serializeMacaroonCookie,
+  insertWithCap,
   COOKIE_NAME,
   COOKIE_MAX_AGE,
+  MAX_BYTES,
+  MAX_ENTRIES,
 } from "@/lib/macaroon-cookie";
 
 /**
@@ -48,17 +53,107 @@ describe("macaroon-cookie", () => {
       expect(parseMacaroonCookie("{broken")).toEqual({});
     });
 
-    it("parses a valid JSON cookie", () => {
+    it("upgrades a legacy string-valued cookie to the {m, t} shape", () => {
       const raw = JSON.stringify({ "prod-1": "mac-a", "prod-2": "mac-b" });
       expect(parseMacaroonCookie(raw)).toEqual({
-        "prod-1": "mac-a",
-        "prod-2": "mac-b",
+        "prod-1": { m: "mac-a", t: 0 },
+        "prod-2": { m: "mac-b", t: 0 },
       });
     });
 
-    it("handles a single-entry cookie", () => {
-      const raw = JSON.stringify({ "prod-1": "mac-a" });
-      expect(parseMacaroonCookie(raw)).toEqual({ "prod-1": "mac-a" });
+    it("parses a current-shape cookie verbatim", () => {
+      const raw = JSON.stringify({
+        "prod-1": { m: "mac-a", t: 1700000000000 },
+      });
+      expect(parseMacaroonCookie(raw)).toEqual({
+        "prod-1": { m: "mac-a", t: 1700000000000 },
+      });
+    });
+
+    it("returns empty object when the JSON has shape violations", () => {
+      // Zod rejects non-string / non-object entries — the whole cookie
+      // is treated as malformed rather than half-trusted.
+      const raw = JSON.stringify({ "prod-1": 42 });
+      expect(parseMacaroonCookie(raw)).toEqual({});
+    });
+
+    it("mixes legacy and current shapes in the same cookie", () => {
+      const raw = JSON.stringify({
+        legacy: "mac-legacy",
+        current: { m: "mac-current", t: 12345 },
+      });
+      expect(parseMacaroonCookie(raw)).toEqual({
+        legacy: { m: "mac-legacy", t: 0 },
+        current: { m: "mac-current", t: 12345 },
+      });
+    });
+  });
+
+  describe("getMacaroon", () => {
+    it("returns the macaroon string for a stored product", () => {
+      const raw = JSON.stringify({ p1: { m: "mac-1", t: 1 } });
+      expect(getMacaroon(raw, "p1")).toBe("mac-1");
+    });
+
+    it("returns undefined when not stored", () => {
+      expect(getMacaroon(JSON.stringify({}), "p1")).toBeUndefined();
+    });
+
+    it("handles legacy string entries", () => {
+      const raw = JSON.stringify({ p1: "legacy-mac" });
+      expect(getMacaroon(raw, "p1")).toBe("legacy-mac");
+    });
+  });
+
+  describe("insertWithCap", () => {
+    it("inserts a new entry without eviction when under cap", () => {
+      const { map, evicted } = insertWithCap({}, "p1", "mac", 100);
+      expect(map).toEqual({ p1: { m: "mac", t: 100 } });
+      expect(evicted).toBe(0);
+    });
+
+    it("overwrites an existing entry without eviction", () => {
+      const initial = { p1: { m: "old", t: 50 } };
+      const { map, evicted } = insertWithCap(initial, "p1", "new", 100);
+      expect(map.p1).toEqual({ m: "new", t: 100 });
+      expect(evicted).toBe(0);
+    });
+
+    it("evicts oldest entries when MAX_ENTRIES would be exceeded", () => {
+      const map: Record<string, { m: string; t: number }> = {};
+      for (let i = 0; i < MAX_ENTRIES; i++) {
+        map[`p${i}`] = { m: "x", t: i };
+      }
+      const result = insertWithCap(map, "new", "y", MAX_ENTRIES + 1);
+      // Should have evicted p0 (oldest) to make room.
+      expect(result.evicted).toBeGreaterThanOrEqual(1);
+      expect(result.map.p0).toBeUndefined();
+      expect(result.map.new).toEqual({ m: "y", t: MAX_ENTRIES + 1 });
+      expect(Object.keys(result.map).length).toBeLessThanOrEqual(MAX_ENTRIES);
+    });
+
+    it("evicts when serialized size would exceed MAX_BYTES", () => {
+      const big = "x".repeat(100);
+      const map: Record<string, { m: string; t: number }> = {};
+      let i = 0;
+      while (serializeMacaroonCookie(map).length < MAX_BYTES - 200) {
+        map[`p${i}`] = { m: big, t: i };
+        i++;
+      }
+      const startSize = Object.keys(map).length;
+      const result = insertWithCap(map, "newer", big, i + 1);
+      expect(serializeMacaroonCookie(result.map).length).toBeLessThanOrEqual(MAX_BYTES);
+      expect(result.map.newer).toEqual({ m: big, t: i + 1 });
+      // Older entries are gone.
+      expect(Object.keys(result.map).length).toBeLessThan(startSize + 1);
+      expect(result.evicted).toBeGreaterThan(0);
+    });
+
+    it("throws MACAROON_TOO_LARGE when a single entry exceeds the cap", () => {
+      const huge = "y".repeat(MAX_BYTES + 100);
+      expect(() => insertWithCap({}, "p1", huge, 1)).toThrow(
+        "MACAROON_TOO_LARGE"
+      );
     });
   });
 
@@ -101,9 +196,11 @@ describe("macaroon-cookie", () => {
       expect(getStoredProductIds(raw, ["prod-1", "prod-2"])).toEqual(["prod-2"]);
     });
 
-    it("excludes products with null or undefined macaroon values", () => {
+    it("returns empty when null appears (whole cookie fails schema)", () => {
+      // null is no longer an allowed entry value — schema rejection drops
+      // the entire cookie. Better than silently keeping bad shapes.
       const raw = JSON.stringify({ "prod-1": null, "prod-2": "mac-b" });
-      expect(getStoredProductIds(raw, ["prod-1", "prod-2"])).toEqual(["prod-2"]);
+      expect(getStoredProductIds(raw, ["prod-1", "prod-2"])).toEqual([]);
     });
   });
 

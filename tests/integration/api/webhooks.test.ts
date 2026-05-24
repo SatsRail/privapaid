@@ -137,6 +137,36 @@ describe("POST /api/webhooks/satsrail", () => {
     expect(body.received).toBe(true);
   });
 
+  it("concurrent identical deliveries produce exactly one DB row", async () => {
+    // Regression: pre-fix the handler did findOne + create, so two
+    // racing requests could both miss findOne and both call create. The
+    // unique index would still survive (one insert wins) but the loser
+    // returned 500 instead of a clean duplicate ack. Now it's an atomic
+    // upsert read.
+    const payload = JSON.stringify({
+      id: "evt_race",
+      type: "merchant.plan_changed",
+      payload: {},
+    });
+
+    const [r1, r2] = await Promise.all([
+      POST(createWebhookRequest(payload)),
+      POST(createWebhookRequest(payload)),
+    ]);
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const b1 = await r1.json();
+    const b2 = await r2.json();
+    // Exactly one of them should be the duplicate ack.
+    const duplicates = [b1, b2].filter((b) => b.duplicate === true);
+    expect(duplicates).toHaveLength(1);
+
+    // Only one row in the collection.
+    const count = await WebhookEvent.countDocuments({ event_id: "evt_race" });
+    expect(count).toBe(1);
+  });
+
   it("handles unknown event types gracefully", async () => {
     const payload = JSON.stringify({
       id: "evt_unknown",

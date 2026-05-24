@@ -53,6 +53,9 @@ const { mockCookieStore, mockFetch } = vi.hoisted(() => {
 
 vi.mock("next/headers", () => ({
   cookies: vi.fn().mockResolvedValue(mockCookieStore),
+  headers: vi
+    .fn()
+    .mockResolvedValue(new Headers({ "x-forwarded-for": "127.0.0.1" })),
 }));
 
 vi.mock("@/config/instance", () => ({
@@ -139,7 +142,7 @@ describe("/api/macaroons storage round-trip", () => {
     const cookieValue = getSetCookieValue(res, "satsrail_macaroons");
     expect(cookieValue).toBeTruthy();
     const parsed = JSON.parse(cookieValue!);
-    expect(parsed["prod-1"]).toBe("mac-abc-123");
+    expect(parsed["prod-1"].m).toBe("mac-abc-123");
   });
 
   it("POST then PUT: portal verify proxy returns the verify response when macaroon is stored", async () => {
@@ -201,7 +204,8 @@ describe("/api/macaroons storage round-trip", () => {
     persistCookies(await POST(jsonRequest("http://localhost:3000/api/macaroons", { product_id: "p2", macaroon: "m2" })));
 
     const cookie = JSON.parse(mockCookieStore._cookies["satsrail_macaroons"]);
-    expect(cookie).toEqual({ p1: "m1", p2: "m2" });
+    expect(cookie.p1.m).toBe("m1");
+    expect(cookie.p2.m).toBe("m2");
   });
 
   it("POST rejects missing fields with 400", async () => {
@@ -225,7 +229,8 @@ describe("/api/macaroons storage round-trip", () => {
     expect(res.status).toBe(200);
 
     const cookie = JSON.parse(mockCookieStore._cookies["satsrail_macaroons"]);
-    expect(cookie).toEqual({ p2: "m2" });
+    expect(Object.keys(cookie)).toEqual(["p2"]);
+    expect(cookie.p2.m).toBe("m2");
   });
 
   it("end-to-end: store → verify → matches what PaymentWall expects", async () => {

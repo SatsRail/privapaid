@@ -38,10 +38,29 @@ export function encryptSecretKey(plaintext: string): EncryptedValue {
 
 /**
  * Decrypt a SatsRail sk_live_ key from MongoDB.
+ *
+ * Validates the envelope shape (`iv:authTag:ciphertext`, all hex)
+ * before passing anything to `createDecipheriv` so callers get a clear
+ * error message on malformed input instead of an opaque OpenSSL throw.
  */
 export function decryptSecretKey(encryptedValue: EncryptedValue | string): string {
   const key = getEncryptionKey();
-  const [ivHex, authTagHex, ciphertext] = encryptedValue.split(":");
+  const parts = encryptedValue.split(":");
+  if (parts.length !== 3 || parts[0].length === 0 || parts[1].length === 0) {
+    // ciphertext may legitimately be empty (encrypting "" produces an
+    // envelope of `iv:tag:`); IV and auth tag must be present.
+    throw new Error(
+      "decryptSecretKey: malformed envelope (expected iv:authTag:ciphertext)"
+    );
+  }
+  const [ivHex, authTagHex, ciphertext] = parts;
+  if (
+    !/^[0-9a-fA-F]+$/.test(ivHex) ||
+    !/^[0-9a-fA-F]+$/.test(authTagHex) ||
+    (ciphertext.length > 0 && !/^[0-9a-fA-F]+$/.test(ciphertext))
+  ) {
+    throw new Error("decryptSecretKey: envelope parts must be hex-encoded");
+  }
 
   const iv = Buffer.from(ivHex, "hex");
   const authTag = Buffer.from(authTagHex, "hex");

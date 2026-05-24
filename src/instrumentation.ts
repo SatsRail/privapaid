@@ -5,6 +5,24 @@ export async function register() {
     const { validateEnv } = await import("@/lib/env-check");
     validateEnv();
 
+    // Trial-decrypt the stored merchant key against SK_ENCRYPTION_KEY.
+    // Skipped in test runs (vitest setup creates fresh memory Mongo).
+    if (process.env.NODE_ENV !== "test") {
+      const { checkEncryptionKeyMatchesDb } = await import(
+        "@/lib/startup-checks"
+      );
+      await checkEncryptionKeyMatchesDb();
+    }
+
+    // Opt-in distributed rate limiting. Without REDIS_URL the in-memory
+    // store stays active (fine for a single-process deploy).
+    if (process.env.REDIS_URL) {
+      const { installRedisRateLimitStoreFromEnv } = await import(
+        "@/lib/rate-limit-redis"
+      );
+      await installRedisRateLimitStoreFromEnv();
+    }
+
     // OpenTelemetry — opt-in via OTEL_EXPORTER_OTLP_ENDPOINT env var
     if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
       const { NodeSDK } = await import("@opentelemetry/sdk-node");

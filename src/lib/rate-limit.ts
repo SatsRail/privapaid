@@ -1,39 +1,94 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 
+/**
+ * Shape of an "increment-and-report" rate-limit backend.
+ *
+ * `incr(bucketKey, windowMs)` atomically:
+ *   1. Increments the request count for `bucketKey`.
+ *   2. Returns `{ count, resetAt }` for that bucket.
+ *
+ * `resetAt` is a Unix ms timestamp. The store decides when to start a new
+ * window — the only contract is that `count` reflects requests in the
+ * current window.
+ *
+ * Self-hosters who deploy a single Next.js process keep the in-memory
+ * default. Multi-instance / serverless deploys should set REDIS_URL so
+ * the rate limit is enforced across replicas — see
+ * `src/lib/rate-limit-redis.ts`.
+ */
+export interface RateLimitStore {
+  incr(bucketKey: string, windowMs: number): Promise<{ count: number; resetAt: number }>;
+}
+
+// ── In-memory store (default) ─────────────────────────────────────────
+
 interface RateLimitEntry {
   count: number;
   resetAt: number;
 }
 
-const store = new Map<string, RateLimitEntry>();
+const memStore = new Map<string, RateLimitEntry>();
 
-// Clean expired entries every 60 seconds
 let lastCleanup = Date.now();
 function cleanup() {
   const now = Date.now();
   if (now - lastCleanup < 60_000) return;
   lastCleanup = now;
-  for (const [key, entry] of store) {
-    if (entry.resetAt <= now) store.delete(key);
+  for (const [key, entry] of memStore) {
+    if (entry.resetAt <= now) memStore.delete(key);
   }
 }
 
+const inMemoryStore: RateLimitStore = {
+  async incr(bucketKey, windowMs) {
+    cleanup();
+    const now = Date.now();
+    let entry = memStore.get(bucketKey);
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      memStore.set(bucketKey, entry);
+    }
+    entry.count++;
+    return { count: entry.count, resetAt: entry.resetAt };
+  },
+};
+
+// ── Active store selection ────────────────────────────────────────────
+
+let activeStore: RateLimitStore = inMemoryStore;
+
 /**
- * Simple in-memory rate limiter.
- * Returns null if allowed, or a 429 NextResponse if rate limit exceeded.
+ * Swap the rate-limit backend. Used by the Redis adapter at startup, and
+ * by tests that need to substitute a stub. If `null` is passed, falls
+ * back to the in-memory default.
  *
- * @param key - Unique identifier (e.g., "signup", "login")
+ * Single-process default: in-memory. Multi-instance deployments should
+ * call this from `instrumentation.ts` after constructing the Redis store.
+ */
+export function setRateLimitStore(store: RateLimitStore | null): void {
+  activeStore = store ?? inMemoryStore;
+}
+
+// Exported for tests that want to introspect the default store directly.
+export const __defaultInMemoryStore = inMemoryStore;
+
+// ── Public API (unchanged signature) ──────────────────────────────────
+
+/**
+ * Apply a per-IP rate limit. Returns null if the request is allowed, or
+ * a 429 NextResponse with `Retry-After` / `X-RateLimit-*` headers when
+ * the bucket is over the limit.
+ *
+ * @param key - Bucket name (e.g., "signup", "macaroon_write")
  * @param limit - Max requests per window
- * @param windowMs - Window duration in milliseconds (default: 60s)
+ * @param windowMs - Window size, defaults to 60s
  */
 export async function rateLimit(
   key: string,
   limit: number,
   windowMs = 60_000
 ): Promise<NextResponse | null> {
-  cleanup();
-
   const h = await headers();
   const ip =
     h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -41,20 +96,11 @@ export async function rateLimit(
     "unknown";
 
   const bucketKey = `${key}:${ip}`;
-  const now = Date.now();
+  const { count, resetAt } = await activeStore.incr(bucketKey, windowMs);
 
-  let entry = store.get(bucketKey);
-  if (!entry || entry.resetAt <= now) {
-    entry = { count: 0, resetAt: now + windowMs };
-    store.set(bucketKey, entry);
-  }
+  const resetSec = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000));
 
-  entry.count++;
-
-  const remaining = Math.max(0, limit - entry.count);
-  const resetSec = Math.ceil((entry.resetAt - now) / 1000);
-
-  if (entry.count > limit) {
+  if (count > limit) {
     const res = NextResponse.json(
       { error: "Too many requests. Please try again later." },
       { status: 429 }
@@ -66,6 +112,5 @@ export async function rateLimit(
     return res;
   }
 
-  // Rate limit headers are added by the caller if needed
   return null;
 }

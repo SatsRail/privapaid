@@ -2,39 +2,152 @@
  * Shared macaroon cookie utilities.
  *
  * The `satsrail_macaroons` httpOnly cookie stores a JSON map of
- * `{ product_id: macaroon_string }`. These helpers parse and filter
- * that map so callers avoid duplicating the logic.
+ * product-id → entry. Two entry shapes are supported so we can roll
+ * forward without invalidating user state:
+ *
+ *   - Legacy: `{ product_id: macaroon_string }`
+ *   - Current: `{ product_id: { m: macaroon_string, t: storedAt_ms } }`
+ *
+ * The current shape carries the issuance time so the cookie can evict
+ * the oldest entries when it would otherwise blow past the browser's
+ * ~4KB single-cookie limit. Legacy entries are migrated lazily on the
+ * next POST.
  */
+
+import { z } from "zod";
 
 export const COOKIE_NAME = "satsrail_macaroons";
 export const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
 
 /**
- * Parse the raw cookie value into a product-id → macaroon map.
- * Returns an empty object on missing or malformed input.
+ * Hard caps on the stored map. The browser hard-limit is roughly 4KB
+ * per cookie (RFC 6265); we leave headroom for the cookie name, flags,
+ * and JSON overhead. MAX_ENTRIES is a defense-in-depth in case a single
+ * abnormally-long macaroon slips past the byte budget.
  */
-export function parseMacaroonCookie(
-  raw: string | undefined
-): Record<string, string> {
+export const MAX_ENTRIES = 100;
+export const MAX_BYTES = 3000;
+
+const EntrySchema = z.union([
+  z.string(),
+  z.object({ m: z.string(), t: z.number() }),
+]);
+const CookieSchema = z.record(z.string(), EntrySchema);
+
+export interface MacaroonEntry {
+  m: string;
+  t: number;
+}
+
+export type MacaroonMap = Record<string, MacaroonEntry>;
+
+/**
+ * Parse the raw cookie value into a normalized product-id → entry map.
+ *
+ * Legacy entries (plain strings) are upgraded to `{m, t: 0}` so callers
+ * can rely on the unified shape. `t: 0` makes legacy entries the first
+ * to be evicted when room is needed — they have unknown freshness, so
+ * preferring newer entries is the safe call.
+ *
+ * Returns an empty object on missing, malformed, or schema-violating
+ * input. Never throws.
+ */
+export function parseMacaroonCookie(raw: string | undefined): MacaroonMap {
   if (!raw) return {};
+  let parsed: unknown;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return {};
   }
+  const result = CookieSchema.safeParse(parsed);
+  if (!result.success) return {};
+
+  const out: MacaroonMap = {};
+  for (const [pid, entry] of Object.entries(result.data)) {
+    if (typeof entry === "string") {
+      out[pid] = { m: entry, t: 0 };
+    } else {
+      out[pid] = entry;
+    }
+  }
+  return out;
+}
+
+/**
+ * Serialize a normalized map back to the wire shape.
+ */
+export function serializeMacaroonCookie(map: MacaroonMap): string {
+  return JSON.stringify(map);
+}
+
+/**
+ * Insert `{m: macaroon, t: now}` into the map and ensure it still fits
+ * the caps. If the resulting serialization would exceed `MAX_BYTES` or
+ * `MAX_ENTRIES`, evict by ascending `t` (oldest first) until it fits.
+ *
+ * Returns the mutated map and a count of evicted entries.
+ *
+ * Throws when the new entry alone exceeds `MAX_BYTES` — that shouldn't
+ * happen for valid macaroons (~250 bytes) but we surface it loudly so
+ * the API route can return a 413.
+ */
+export function insertWithCap(
+  map: MacaroonMap,
+  productId: string,
+  macaroon: string,
+  now: number
+): { map: MacaroonMap; evicted: number } {
+  const next: MacaroonMap = { ...map, [productId]: { m: macaroon, t: now } };
+
+  // Quick check on the new entry alone.
+  const singleBytes = JSON.stringify({ [productId]: next[productId] }).length;
+  if (singleBytes > MAX_BYTES) {
+    throw new Error("MACAROON_TOO_LARGE");
+  }
+
+  let evicted = 0;
+  while (
+    Object.keys(next).length > MAX_ENTRIES ||
+    serializeMacaroonCookie(next).length > MAX_BYTES
+  ) {
+    // Find the oldest entry that isn't the one we just inserted.
+    let oldestPid: string | null = null;
+    let oldestT = Infinity;
+    for (const [pid, entry] of Object.entries(next)) {
+      if (pid === productId) continue;
+      if (entry.t < oldestT) {
+        oldestT = entry.t;
+        oldestPid = pid;
+      }
+    }
+    if (!oldestPid) break;
+    delete next[oldestPid];
+    evicted++;
+  }
+
+  return { map: next, evicted };
 }
 
 /**
  * Return the subset of `candidateIds` that have a stored macaroon.
- * Used by the server component to tell PaymentWall which products
- * are worth verifying against SatsRail.
  */
 export function getStoredProductIds(
   cookieValue: string | undefined,
   candidateIds: string[]
 ): string[] {
   const store = parseMacaroonCookie(cookieValue);
-  return candidateIds.filter((id) => !!store[id]);
+  return candidateIds.filter((id) => !!store[id]?.m);
+}
+
+/**
+ * Convenience: return the macaroon string for a product, or undefined.
+ */
+export function getMacaroon(
+  cookieValue: string | undefined,
+  productId: string
+): string | undefined {
+  return parseMacaroonCookie(cookieValue)[productId]?.m;
 }
 
 /**
@@ -47,14 +160,6 @@ export function getStoredProductIds(
  * the signing key to forge anything the portal would accept), so if the
  * encoded exp is in the past, we know for sure the portal would reject it.
  *
- * Lets us:
- *   1. Skip portal calls for obviously-expired macaroons (cheap optimization).
- *   2. Tell the user "your access expired on [date]" without asking the portal.
- *
- * The macaroon format is `base64(payload)--signature`, where payload is a
- * JSON object with shape:
- *   { _rails: { data: {...}, exp: "ISO-8601", pur: "access_token" } }
- *
  * Returns null on any malformed input — callers treat that as "unknown
  * expiry" rather than crashing. Never throws.
  */
@@ -63,15 +168,11 @@ export function parseMacaroonExp(macaroon: string): Date | null {
   const sepIdx = macaroon.indexOf("--");
   const b64Payload = sepIdx > 0 ? macaroon.slice(0, sepIdx) : macaroon;
   try {
-    // Rails base64 encoding may use either standard `+/=` or URL-safe `-_`.
-    // Buffer.from handles standard; normalize URL-safe to standard first.
     const normalized = b64Payload.replace(/-/g, "+").replace(/_/g, "/");
     const decoded = Buffer.from(normalized, "base64").toString("utf-8");
     const parsed = JSON.parse(decoded) as {
       _rails?: { exp?: string; data?: { exp?: number } };
     };
-    // Prefer the outer `_rails.exp` (ISO string) — that's what Rails uses
-    // for the cookie expiry. Fall back to the inner numeric exp if needed.
     const iso = parsed?._rails?.exp;
     if (iso) {
       const d = new Date(iso);
@@ -79,7 +180,6 @@ export function parseMacaroonExp(macaroon: string): Date | null {
     }
     const innerExp = parsed?._rails?.data?.exp;
     if (typeof innerExp === "number") {
-      // Unix seconds → ms.
       return new Date(innerExp * 1000);
     }
     return null;
@@ -92,11 +192,6 @@ export function parseMacaroonExp(macaroon: string): Date | null {
  * For a cookie value and a list of candidate product IDs, return the
  * most-recent expiry date among matching macaroons whose exp is in the
  * past. Returns null when nothing matches or everything is still valid.
- *
- * "Most-recent" so when a user has paid for the same product multiple
- * times, we show them the latest expiry rather than a stale one. The
- * cookie only holds one macaroon per product so this is mostly relevant
- * across DIFFERENT products that cover the same media.
  */
 export function findMostRecentExpiry(
   cookieValue: string | undefined,
@@ -106,9 +201,9 @@ export function findMostRecentExpiry(
   const now = new Date();
   let mostRecent: { productId: string; expiredAt: Date } | null = null;
   for (const id of candidateIds) {
-    const mac = store[id];
-    if (!mac) continue;
-    const exp = parseMacaroonExp(mac);
+    const entry = store[id];
+    if (!entry?.m) continue;
+    const exp = parseMacaroonExp(entry.m);
     if (!exp || exp >= now) continue;
     if (!mostRecent || exp > mostRecent.expiredAt) {
       mostRecent = { productId: id, expiredAt: exp };

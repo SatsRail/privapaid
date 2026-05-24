@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubEvent, scrubBreadcrumb } from "@/lib/sentry-scrub";
 
 declare global {
   interface Window {
@@ -22,4 +23,6 @@ Sentry.init({
   tracesSampleRate: 0.1,
   environment: process.env.NODE_ENV,
   enabled: !!dsn,
+  beforeSend: scrubEvent,
+  beforeBreadcrumb: scrubBreadcrumb,
 });

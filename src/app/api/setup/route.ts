@@ -44,7 +44,8 @@ export async function POST(request: Request) {
       logo_url: logo_url?.trim() || "",
       nsfw_enabled: nsfw_enabled === true,
       theme_primary: theme_primary || "#3b82f6",
-      satsrail_api_url: "https://satsrail.com/api/v1",
+      satsrail_api_url:
+        process.env.SATSRAIL_API_URL || "https://satsrail.com/api/v1",
       satsrail_api_key_encrypted: encryptSecretKey(satsrail_api_key.trim()),
       merchant_id: merchant_id.trim(),
       merchant_name: merchant_name?.trim() || "",

@@ -285,7 +285,7 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
     expect(res.status).toBe(400);
   });
 
-  it("uses submitted nickname over customer nickname when provided", async () => {
+  it("authenticated path ignores submittedNickname (anti-impersonation)", async () => {
     const { mediaId, productId } = await seedWithProduct();
 
     const customer = await Customer.create({
@@ -306,11 +306,12 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
       body: "Hi there",
+      // Tries to impersonate someone else; must be ignored.
       nickname: "aliasName",
     });
     const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
     expect(res.status).toBe(201);
-    expect((await res.json()).customer.nickname).toBe("aliasName");
+    expect((await res.json()).customer.nickname).toBe("realname");
   });
 });
 

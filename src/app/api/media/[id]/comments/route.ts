@@ -72,7 +72,12 @@ export async function POST(
     );
 
     if (hasPurchase) {
-      const nickname = submittedNickname || customer?.nickname || session.user.name || "Anonymous";
+      // Authenticated customers post under their registered nickname.
+      // Ignoring submittedNickname here prevents impersonation
+      // ("ElonMusk", "AdminBob") and prevents nickname-flipping per
+      // comment as an obfuscation tactic.
+      const nickname =
+        customer?.nickname || session.user.name || "Anonymous";
       const comment = await Comment.create({
         media_id: id,
         customer_id: session.user.id,

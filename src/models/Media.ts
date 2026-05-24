@@ -53,6 +53,14 @@ const MediaSchema = new Schema<IMedia>(
       type: String,
       default: "",
     },
+    // Holds the plaintext source: a URL for video/audio/podcast, the body
+    // text for articles, or a GridFS pointer to ciphertext bytes for photos.
+    // For photos, the bytes at the GridFS pointer are encrypted at rest.
+    // For everything else, this is sensitive plaintext — public routes MUST
+    // filter it out (see `src/app/c/[slug]/[mediaId]/page.tsx` for the
+    // canonical photo-only conditional). The re-encryption flow reads this
+    // field directly so rotation doesn't depend on SatsRail still returning
+    // the old_key — that pipeline has proven unreliable.
     source_url: {
       type: String,
       required: true,

@@ -53,10 +53,37 @@ export async function POST(req: NextRequest) {
 
   await connectDB();
 
-  // Idempotency check — skip if we've already processed this event
+  // Idempotency claim — atomically insert the event_id so two concurrent
+  // deliveries can't both proceed past this point. The unique index on
+  // event_id (WebhookEvent.ts) provides the underlying guarantee; the
+  // upsert here is the application-level read/write that consumes it
+  // without a TOCTOU window. The PRE-image (`new: false`) tells us whether
+  // we won the race: null = we just inserted, non-null = a prior request
+  // already claimed it and we should bail out.
   if (event.id && typeof event.id === "string") {
-    const existing = await WebhookEvent.findOne({ event_id: String(event.id) }).lean();
-    if (existing) {
+    let prior: { _id: unknown } | null = null;
+    try {
+      prior = await WebhookEvent.findOneAndUpdate(
+        { event_id: String(event.id) },
+        {
+          $setOnInsert: {
+            event_id: String(event.id),
+            event_type: event.type,
+          },
+        },
+        { upsert: true, returnDocument: "before", lean: true }
+      );
+    } catch (err) {
+      // E11000 races at the unique index level also mean "already claimed."
+      // findOneAndUpdate with upsert: true should not normally throw this,
+      // but driver versions differ — treat it the same as a duplicate.
+      const code = (err as { code?: number } | null)?.code;
+      if (code === 11000) {
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      throw err;
+    }
+    if (prior) {
       return NextResponse.json({ received: true, duplicate: true });
     }
   }
@@ -86,13 +113,8 @@ export async function POST(req: NextRequest) {
         console.log("Unknown webhook event:", event.type);
     }
 
-    // Record event for idempotency
-    if (event.id) {
-      await WebhookEvent.create({
-        event_id: event.id,
-        event_type: event.type,
-      });
-    }
+    // The idempotency record was inserted atomically above. No second
+    // write needed here.
 
     return NextResponse.json({ received: true });
   } catch (err) {

@@ -22,6 +22,9 @@ const { mockCookieStore, mockGetInstanceConfig, mockFetch } = vi.hoisted(() => {
 
 vi.mock("next/headers", () => ({
   cookies: vi.fn().mockResolvedValue(mockCookieStore),
+  headers: vi
+    .fn()
+    .mockResolvedValue(new Headers({ "x-forwarded-for": "127.0.0.1" })),
 }));
 
 vi.mock("@/config/instance", () => ({
@@ -62,7 +65,8 @@ describe("Macaroons API — POST /api/macaroons", () => {
     const setCookie = res.cookies.get("satsrail_macaroons");
     expect(setCookie).toBeDefined();
     const parsed = JSON.parse(setCookie!.value);
-    expect(parsed.prod_1).toBe("mac_abc");
+    expect(parsed.prod_1.m).toBe("mac_abc");
+    expect(typeof parsed.prod_1.t).toBe("number");
   });
 
   it("appends to existing macaroons", async () => {
@@ -74,8 +78,9 @@ describe("Macaroons API — POST /api/macaroons", () => {
 
     expect(body.stored).toBe(true);
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
-    expect(parsed.prod_old).toBe("mac_old");
-    expect(parsed.prod_new).toBe("mac_new");
+    // Legacy entry migrated to {m, t: 0} on re-serialize.
+    expect(parsed.prod_old.m).toBe("mac_old");
+    expect(parsed.prod_new.m).toBe("mac_new");
   });
 
   it("returns 400 when product_id is missing", async () => {
@@ -99,7 +104,7 @@ describe("Macaroons API — POST /api/macaroons", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
-    expect(parsed.prod_1).toBe("mac_1");
+    expect(parsed.prod_1.m).toBe("mac_1");
   });
 });
 
@@ -120,7 +125,8 @@ describe("Macaroons API — DELETE /api/macaroons", () => {
     expect(body.removed).toBe(true);
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
     expect(parsed.prod_1).toBeUndefined();
-    expect(parsed.prod_2).toBe("m2");
+    // Legacy survivor migrated to {m, t: 0}.
+    expect(parsed.prod_2.m).toBe("m2");
   });
 
   it("deletes cookie when last macaroon is removed", async () => {
@@ -171,10 +177,10 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toBe("No macaroon found");
-    // prod_1 should be removed, prod_2 remains
+    // prod_1 should be removed, prod_2 remains (migrated to {m, t: 0}).
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
     expect(parsed.prod_1).toBeUndefined();
-    expect(parsed.prod_2).toBe("mac_ok");
+    expect(parsed.prod_2.m).toBe("mac_ok");
   });
 
   it("deletes cookie entirely when cleaning up the only empty entry", async () => {

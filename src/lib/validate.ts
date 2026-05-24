@@ -63,7 +63,8 @@ const nickname = z
 
 const customerPassword = z
   .string()
-  .min(6, "Must be at least 6 characters");
+  .min(10, "Must be at least 10 characters")
+  .max(128, "Must be 128 characters or fewer");
 
 // ─── Schemas ────────────────────────────────────────────────────────
 

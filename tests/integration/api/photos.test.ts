@@ -67,7 +67,9 @@ describe("GET /api/photos/[id]", () => {
     // false confidence about what's being served).
     const ciphertext = Buffer.from([0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe]);
     mockBucketFind.mockReturnValue({
-      toArray: vi.fn().mockResolvedValue([{ _id: "507f1f77bcf86cd799439011" }]),
+      toArray: vi.fn().mockResolvedValue([
+        { _id: "507f1f77bcf86cd799439011", length: ciphertext.length },
+      ]),
     });
     mockBucketOpenDownloadStream.mockReturnValue(asyncIter([ciphertext]));
 
