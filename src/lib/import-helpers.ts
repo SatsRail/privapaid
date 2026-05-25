@@ -513,10 +513,12 @@ export async function createNewMedia(
     select: { position: true },
   });
 
-  // Postgres assigns Media.ref via the sequence — we read it back for the
-  // SatsRail external_ref below.
+  // If the import payload specifies a `ref`, honor it (preserves the source
+  // identity on replay/restore). Otherwise Postgres's autoincrement assigns
+  // one. Either way we read `media.ref` back for the SatsRail external_ref.
   const media = await prisma.media.create({
     data: {
+      ...(mData.ref ? { ref: mData.ref } : {}),
       channelId: channelDoc.id,
       name: mData.name,
       description: mData.description || "",
