@@ -249,5 +249,73 @@ describe("Customer Purchases routes", () => {
         "order_verified"
       );
     });
+
+    it("returns 401 when requireCustomerApi returns a response (POST unauthenticated)", async () => {
+      const { NextResponse } = await import("next/server");
+      const authHelpers = await import("@/lib/auth-helpers");
+      vi.mocked(authHelpers.requireCustomerApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      );
+
+      const req = buildPostRequest({
+        order_id: "from_checkout",
+        product_id: "prod_unauth",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 401 when requireCustomerApi returns a response (GET unauthenticated)", async () => {
+      const { NextResponse } = await import("next/server");
+      const authHelpers = await import("@/lib/auth-helpers");
+      vi.mocked(authHelpers.requireCustomerApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      );
+
+      const res = await GET();
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 409 when Prisma raises P2002 during race-condition concurrent insert", async () => {
+      const customer = await createCustomer({ nickname: "racer" });
+      customerIdRef.id = customer.id;
+
+      const { Prisma } = await import("@prisma/client");
+      // Simulate concurrent insert race: existence check missed it, but
+      // INSERT trips the unique constraint.
+      const p2002 = new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed",
+        { code: "P2002", clientVersion: "test" }
+      );
+      const spy = vi
+        .spyOn(prisma.purchase, "create")
+        .mockRejectedValueOnce(p2002);
+
+      const req = buildPostRequest({
+        order_id: "from_checkout",
+        product_id: "prod_race",
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("Already purchased");
+      spy.mockRestore();
+    });
+
+    it("propagates non-P2002 Prisma errors during purchase insert", async () => {
+      const customer = await createCustomer({ nickname: "errorbuyer" });
+      customerIdRef.id = customer.id;
+
+      // Generic error (not Prisma P2002) — should propagate
+      const spy = vi
+        .spyOn(prisma.purchase, "create")
+        .mockRejectedValueOnce(new Error("db connection lost"));
+
+      const req = buildPostRequest({
+        order_id: "from_checkout",
+        product_id: "prod_dberr",
+      });
+      await expect(POST(req)).rejects.toThrow("db connection lost");
+      spy.mockRestore();
+    });
   });
 });

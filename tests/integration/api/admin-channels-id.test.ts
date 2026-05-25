@@ -291,5 +291,122 @@ describe("Admin Channels [id] routes", () => {
 
       expect(res.status).toBe(404);
     });
+
+    it("skips SatsRail archive when merchant key is unavailable but still hard-deletes", async () => {
+      const channel = await createChannel({ name: "No Key", slug: "no-key-ch" });
+      const media = await createMedia(channel.id, { name: "V" });
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: media.id,
+          satsrailProductId: "prod_skip",
+          encryptedSourceUrl: "blob",
+        },
+      });
+
+      const merchantKey = await import("@/lib/merchant-key");
+      vi.mocked(merchantKey.getMerchantKey).mockResolvedValueOnce(null);
+
+      const [req, ctx] = buildRequest("DELETE", channel.id);
+      const res = await DELETE(req, ctx);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(mockDeleteProduct).not.toHaveBeenCalled();
+
+      // Local rows still removed
+      expect(await prisma.channel.findUnique({ where: { id: channel.id } })).toBeNull();
+      expect(await prisma.mediaProduct.count()).toBe(0);
+    });
+
+    it("handles a non-Error throw from SatsRail.deleteProduct (falls back to 'Unknown error')", async () => {
+      const channel = await createChannel({ name: "Weird Err", slug: "weird-err-ch" });
+      const media = await createMedia(channel.id, { name: "V" });
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: media.id,
+          satsrailProductId: "prod_string_err",
+          encryptedSourceUrl: "blob",
+        },
+      });
+
+      // Throw a non-Error so we hit the "Unknown error" fallback branch
+      mockDeleteProduct.mockImplementationOnce(async () => {
+        throw "string thrown not Error";
+      });
+
+      const [req, ctx] = buildRequest("DELETE", channel.id);
+      const res = await DELETE(req, ctx);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.archive_errors).toEqual([
+        { productId: "prod_string_err", error: "Unknown error" },
+      ]);
+    });
+  });
+
+  describe("PATCH /api/admin/channels/:id — optional field updates", () => {
+    it("PATCH updates every optional field (full field-set coverage)", async () => {
+      const channel = await createChannel({
+        name: "Original",
+        slug: "orig-slug",
+      });
+      const category = await prisma.category.create({
+        data: { name: "Cat", slug: "cat-slug" },
+      });
+      const [req, ctx] = buildRequest("PATCH", channel.id, {
+        name: "Renamed",
+        slug: "renamed-slug",
+        bio: "new bio",
+        category_id: category.id,
+        nsfw: true,
+        profile_image_url: "https://example.com/p.jpg",
+        social_links: { twitter: "https://x.com/y" },
+        active: false,
+        is_live: true,
+        stream_url: "rtmp://example.com/live",
+      });
+      const res = await PATCH(req, ctx);
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.data.name).toBe("Renamed");
+      expect(body.data.slug).toBe("renamed-slug");
+      expect(body.data.bio).toBe("new bio");
+      expect(body.data.categoryId).toBe(category.id);
+      expect(body.data.nsfw).toBe(true);
+      expect(body.data.profileImageUrl).toBe("https://example.com/p.jpg");
+      expect(body.data.socialLinks).toEqual({ twitter: "https://x.com/y" });
+      expect(body.data.active).toBe(false);
+      expect(body.data.isLive).toBe(true);
+      expect(body.data.streamUrl).toBe("rtmp://example.com/live");
+    });
+
+    it("PATCH disconnects category when category_id is null", async () => {
+      const category = await prisma.category.create({
+        data: { name: "Cat", slug: "cat-disconnect" },
+      });
+      const channel = await createChannel({
+        name: "With cat",
+        slug: "with-cat",
+        categoryId: category.id,
+      });
+      const [req, ctx] = buildRequest("PATCH", channel.id, {
+        category_id: null,
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(200);
+      const fresh = await prisma.channel.findUnique({ where: { id: channel.id } });
+      expect(fresh!.categoryId).toBeNull();
+    });
+
+    it("PATCH returns 400 for invalid payload", async () => {
+      const channel = await createChannel({ name: "ValidatorTest", slug: "vt-slug" });
+      const [req, ctx] = buildRequest("PATCH", channel.id, {
+        nsfw: "not-a-boolean",
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(400);
+    });
   });
 });

@@ -180,4 +180,43 @@ describe("auth-helpers", () => {
       expect(hasPurchaseForProduct(purchases, [])).toBe(false);
     });
   });
+
+  describe("fallback branches (null name/email/role)", () => {
+    it("requireAdmin fills empty defaults when session user lacks email/name/role", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin-bare", type: "admin" },
+      });
+      const result = await requireAdmin();
+      expect(result.id).toBe("admin-bare");
+      expect(result.email).toBe("");
+      expect(result.name).toBe("");
+      expect(result.role).toBe("admin"); // fallback default
+    });
+
+    it("requireAdminApi fills empty defaults when user lacks email/name/role", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin-bare", type: "admin" },
+      });
+      const result = await requireAdminApi();
+      expect(result).not.toBeInstanceOf(NextResponse);
+      expect(result).toMatchObject({ id: "admin-bare", email: "", name: "", role: "admin" });
+    });
+
+    it("requireCustomer returns empty name when user.name is missing", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "cust-bare", type: "customer" },
+      });
+      const result = await requireCustomer();
+      expect(result).toMatchObject({ id: "cust-bare", name: "", type: "customer" });
+    });
+
+    it("requireCustomerApi returns empty name when user.name is missing", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "cust-bare", type: "customer" },
+      });
+      const result = await requireCustomerApi();
+      expect(result).not.toBeInstanceOf(NextResponse);
+      expect(result).toMatchObject({ id: "cust-bare", name: "", type: "customer" });
+    });
+  });
 });

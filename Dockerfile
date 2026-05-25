@@ -3,7 +3,8 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 RUN npm install -g npm@11
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY prisma ./prisma
+RUN npm ci --ignore-scripts && npx prisma generate
 
 # --- Stage 2: Build the application ---
 FROM node:22-alpine AS build
@@ -53,6 +54,7 @@ COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
+RUN mkdir -p ./node_modules/.bin && ln -sf ../prisma/build/index.js ./node_modules/.bin/prisma && chown -h nextjs:nodejs ./node_modules/.bin/prisma
 
 # Copy entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./

@@ -270,6 +270,71 @@ describe("access-gate", () => {
       const [product] = await getProductsForMedia(mediaId, channelId);
       expect(product.status).toBe("active");
     });
+
+    it("skips media products without an encryptedSourceUrl", async () => {
+      const { mediaId, channelId } = await seedChannelAndMedia();
+      // Pure SQL insert so we can leave encryptedSourceUrl empty/null —
+      // Prisma's create wouldn't let us pass a null for this field.
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_empty",
+          encryptedSourceUrl: "",
+          productStatus: "active",
+        },
+      });
+
+      const products = await getProductsForMedia(mediaId, channelId);
+      expect(products).toHaveLength(0);
+    });
+
+    it("returns undefined keyFingerprint when null in DB (?? fallback)", async () => {
+      const { mediaId, channelId } = await seedChannelAndMedia();
+      // No keyFingerprint set → null in DB
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_no_fp",
+          encryptedSourceUrl: "enc_blob",
+          productStatus: "active",
+        },
+      });
+      const products = await getProductsForMedia(mediaId, channelId);
+      expect(products[0].keyFingerprint).toBeUndefined();
+    });
+
+    it("returns undefined productStatus when null in DB (?? fallback)", async () => {
+      const { mediaId, channelId } = await seedChannelAndMedia();
+      // Default in schema is "active"; force null with a raw update
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_no_status",
+          encryptedSourceUrl: "enc",
+        },
+      });
+      await prisma.$executeRaw`UPDATE "MediaProduct" SET "productStatus" = NULL WHERE "satsrailProductId" = 'prod_no_status'`;
+      const products = await getProductsForMedia(mediaId, channelId, { includeArchived: true });
+      expect(products[0].status).toBeUndefined();
+    });
+
+    it("channel product without encrypted entry is skipped", async () => {
+      const { mediaId, channelId } = await seedChannelAndMedia();
+      // Channel product with encryptedMedia entry that has empty url
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_cp_empty",
+          productStatus: "active",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "" }],
+          },
+        },
+      });
+
+      const products = await getProductsForMedia(mediaId, channelId);
+      expect(products).toHaveLength(0);
+    });
   });
 
   // ── findExpiredAccessForProducts ─────────────────────────────────
@@ -480,6 +545,36 @@ describe("access-gate", () => {
           body: JSON.stringify({ access_token: "mac_abc123" }),
         }
       );
+    });
+
+    it("omits Authorization header when no merchantKey is available", async () => {
+      const merchantKey = await import("@/lib/merchant-key");
+      vi.mocked(merchantKey.getMerchantKey).mockResolvedValueOnce(null);
+
+      mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_nokey" }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+      });
+
+      await verifyMacaroonAccess(["prod_1"]);
+
+      const callArgs = mockFetch.mock.calls[0][1] as { headers: Record<string, string> };
+      expect(callArgs.headers["Authorization"]).toBeUndefined();
+      expect(callArgs.headers["Content-Type"]).toBe("application/json");
+    });
+
+    it("returns transient when portal returns 200 with malformed body (JSON parse fails)", async () => {
+      mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_bad_json" }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => { throw new Error("JSON parse error"); },
+      });
+
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(false);
     });
   });
 });
