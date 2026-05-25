@@ -1,8 +1,8 @@
 # PrivaPaid Stream
 
-[![Tests](https://github.com/SatsRail/privapaid_app/actions/workflows/test.yml/badge.svg)](https://github.com/SatsRail/privapaid_app/actions/workflows/test.yml)
-[![CodeQL](https://github.com/SatsRail/privapaid_app/actions/workflows/codeql.yml/badge.svg)](https://github.com/SatsRail/privapaid_app/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/SatsRail/privapaid_app/branch/main/graph/badge.svg)](https://codecov.io/gh/SatsRail/privapaid_app)
+[![Tests](https://github.com/SatsRail/privapaid/actions/workflows/test.yml/badge.svg)](https://github.com/SatsRail/privapaid/actions/workflows/test.yml)
+[![CodeQL](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml/badge.svg)](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/SatsRail/privapaid/branch/main/graph/badge.svg)](https://codecov.io/gh/SatsRail/privapaid)
 
 Open-source, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
 
@@ -17,8 +17,8 @@ Fork it, deploy it, sell whatever you want through it.
 You need [Docker](https://www.docker.com/products/docker-desktop/) installed. That's it.
 
 ```bash
-git clone https://github.com/SatsRail/privapaid_app.git
-cd privapaid_app
+git clone https://github.com/SatsRail/privapaid.git
+cd privapaid
 cp .env.docker.example .env
 docker compose up -d
 ```
@@ -36,14 +36,14 @@ Encryption keys and auth secrets are generated automatically on first run.
 
 ### Railway
 
-1. **Create the project:** in [Railway](https://railway.com/), click **New Project** → **Deploy from GitHub repo** → pick your fork of `privapaid_app`. Railway will detect the `Dockerfile` and start a build.
+1. **Create the project:** in [Railway](https://railway.com/), click **New Project** → **Deploy from GitHub repo** → pick your fork of `privapaid`. Railway will detect the `Dockerfile` and start a build.
 2. **Add Postgres:** on the project canvas, click **+ Create** → **Database** → **Add PostgreSQL**.
 3. **Generate secrets locally:**
    ```bash
    echo "NEXTAUTH_SECRET=$(openssl rand -base64 32)"
    echo "SK_ENCRYPTION_KEY=$(openssl rand -hex 32)"
    ```
-4. **Set variables** on the `privapaid_app` service → **Variables** tab:
+4. **Set variables** on the `privapaid` service → **Variables** tab:
    ```
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    NEXTAUTH_SECRET=<paste from step 3>

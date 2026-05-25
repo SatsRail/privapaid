@@ -14,8 +14,8 @@ Thank you for your interest in contributing! This guide covers everything you ne
 
 ```bash
 # Clone the repo
-git clone https://github.com/SatsRail/privapaid_app.git
-cd privapaid_app
+git clone https://github.com/SatsRail/privapaid.git
+cd privapaid
 
 # Install dependencies
 npm install

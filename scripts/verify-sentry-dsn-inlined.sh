@@ -15,7 +15,7 @@
 #   3. Searches the built client chunks for the marker
 #   4. Exits 0 if found (DSN was inlined), 1 if not
 #
-# Run from the privapaid_app directory:
+# Run from the privapaid directory:
 #   bash scripts/verify-sentry-dsn-inlined.sh
 #
 # Recommended: run this in CI before any production deploy.
