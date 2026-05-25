@@ -1,16 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 import { NextRequest } from "next/server";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { prisma } from "@/lib/prisma";
+import { decryptBytes } from "@/lib/content-encryption";
 
-// ── Hoisted mocks (must come before route import) ─────────────────────
+// ── Hoisted mocks (must come before route imports) ─────────────────────
+// requireAdminApi, file-type, sharp stay mocked — same reasoning as
+// images.test.ts (auth pipeline + slow native sharp binding).
 const {
   mockRequireAdminApi,
   mockFileTypeFromBuffer,
   mockSharpMeta,
   mockSharpRotate,
   mockSharpToBuffer,
-  mockBucketOpenUploadStream,
-  mockUploadOn,
-  mockUploadEnd,
   mockRateLimit,
 } = vi.hoisted(() => ({
   mockRequireAdminApi: vi.fn(),
@@ -18,9 +29,6 @@ const {
   mockSharpMeta: vi.fn(),
   mockSharpRotate: vi.fn(),
   mockSharpToBuffer: vi.fn(),
-  mockBucketOpenUploadStream: vi.fn(),
-  mockUploadOn: vi.fn(),
-  mockUploadEnd: vi.fn(),
   mockRateLimit: vi.fn().mockResolvedValue(null),
 }));
 
@@ -30,12 +38,6 @@ const mockSharpInstance = {
   toBuffer: mockSharpToBuffer,
 };
 
-const mockUploadStream = {
-  id: { toString: () => "gridfs_photo_id_123" },
-  on: mockUploadOn,
-  end: mockUploadEnd,
-};
-
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: mockRateLimit }));
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
@@ -43,20 +45,12 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: mockRequireAdminApi,
 }));
-vi.mock("@/lib/gridfs", () => ({
-  getEncryptedPhotosBucket: vi.fn().mockResolvedValue({
-    openUploadStream: mockBucketOpenUploadStream,
-  }),
-  ALLOWED_IMAGE_TYPES: ["image/jpeg", "image/png", "image/webp", "image/gif"],
-  MAX_IMAGE_SIZE: 5 * 1024 * 1024,
-}));
 vi.mock("file-type", () => ({ fileTypeFromBuffer: mockFileTypeFromBuffer }));
 vi.mock("sharp", () => ({
   default: vi.fn().mockImplementation(() => mockSharpInstance),
 }));
 
 import { POST } from "@/app/api/admin/photos/route";
-import { decryptBytes } from "@/lib/content-encryption";
 
 function buildFormRequest(file: File | null): NextRequest {
   const formData = new FormData();
@@ -79,6 +73,14 @@ function base64urlToBuffer(b64url: string): Buffer {
 }
 
 describe("Admin Photos API — POST /api/admin/photos", () => {
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockRequireAdminApi.mockResolvedValue({
@@ -93,11 +95,10 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     // Sharp returns a known plaintext buffer — encrypting this gives us a
     // verifiable ciphertext we can decrypt later in the test.
     mockSharpToBuffer.mockResolvedValue(Buffer.from("PHOTO PLAINTEXT BYTES"));
-    mockUploadOn.mockImplementation((event: string, cb: () => void) => {
-      if (event === "finish") setTimeout(cb, 0);
-      return mockUploadStream;
-    });
-    mockBucketOpenUploadStream.mockReturnValue(mockUploadStream);
+  });
+
+  afterEach(async () => {
+    await clearCollections();
   });
 
   // -------------------------------------------------------
@@ -165,42 +166,62 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
   // -------------------------------------------------------
   // Encryption-at-rest contract
   // -------------------------------------------------------
-  it("encrypts the bytes before writing to GridFS — plaintext never persisted", async () => {
+  it("encrypts the bytes before writing to Postgres — plaintext never persisted", async () => {
     const res = await POST(buildFormRequest(makeJpegFile()));
+    const body = await res.json();
     expect(res.status).toBe(201);
 
-    // The bytes passed to GridFS.end() must NOT equal the original plaintext.
-    expect(mockUploadEnd).toHaveBeenCalledTimes(1);
-    const written = mockUploadEnd.mock.calls[0][0] as Buffer;
-    expect(Buffer.isBuffer(written)).toBe(true);
+    // Fetch the bytes that the route persisted and verify they're NOT the
+    // original plaintext.
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.gridFsId },
+      select: { bytes: true },
+    });
+    expect(blob).not.toBeNull();
+    const written = Buffer.from(blob!.bytes);
     expect(written.equals(Buffer.from("PHOTO PLAINTEXT BYTES"))).toBe(false);
     // AES-256-GCM overhead is IV(12) + tag(16) = 28 bytes
     expect(written.length).toBe("PHOTO PLAINTEXT BYTES".length + 28);
   });
 
-  it("returns a DEK that successfully decrypts the GridFS ciphertext", async () => {
+  it("returns a DEK that successfully decrypts the persisted ciphertext", async () => {
     const res = await POST(buildFormRequest(makeJpegFile()));
     const body = await res.json();
     expect(res.status).toBe(201);
-    expect(body.gridFsId).toBe("gridfs_photo_id_123");
+    expect(typeof body.gridFsId).toBe("string");
+    expect(body.gridFsId.length).toBeGreaterThan(0);
     expect(typeof body.dek).toBe("string");
     expect(body.mime).toBe("image/jpeg");
 
-    // Round-trip: take the ciphertext that was written + the returned DEK
+    // Round-trip: take the ciphertext from Postgres + the returned DEK
     // and confirm the original plaintext comes back. This is the strongest
     // end-to-end guarantee — if it fails, the photo is unrecoverable.
-    const ciphertext = mockUploadEnd.mock.calls[0][0] as Buffer;
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.gridFsId },
+      select: { bytes: true },
+    });
+    expect(blob).not.toBeNull();
+    const ciphertext = Buffer.from(blob!.bytes);
     const dek = base64urlToBuffer(body.dek);
     expect(dek.length).toBe(32);
     const decrypted = decryptBytes(ciphertext, dek);
     expect(decrypted.equals(Buffer.from("PHOTO PLAINTEXT BYTES"))).toBe(true);
   });
 
-  it("does not include the DEK in the GridFS metadata", async () => {
-    await POST(buildFormRequest(makeJpegFile()));
-    expect(mockBucketOpenUploadStream).toHaveBeenCalledTimes(1);
-    const [, opts] = mockBucketOpenUploadStream.mock.calls[0];
-    expect(JSON.stringify(opts)).not.toMatch(/dek/i);
+  it("stores the detected MIME type — not literally 'dek' — alongside the row", async () => {
+    // Sanity check that the row stores the image MIME and that the DEK
+    // string is not somehow leaked into the row itself.
+    const res = await POST(buildFormRequest(makeJpegFile()));
+    const body = await res.json();
+    expect(res.status).toBe(201);
+
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.gridFsId },
+    });
+    expect(blob).not.toBeNull();
+    expect(blob!.mimeType).toBe("image/jpeg");
+    // No DEK anywhere on the row.
+    expect(JSON.stringify(blob)).not.toContain(body.dek);
   });
 
   it("generates a fresh DEK per upload (no DEK reuse across requests)", async () => {
@@ -209,5 +230,14 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     const res2 = await POST(buildFormRequest(makeJpegFile()));
     const body2 = await res2.json();
     expect(body1.dek).not.toBe(body2.dek);
+    // And the persisted ciphertexts should differ (fresh DEK → fresh IV →
+    // different ciphertext even for identical plaintext).
+    const blobs = await prisma.encryptedPhotoBlob.findMany({
+      where: { id: { in: [body1.gridFsId, body2.gridFsId] } },
+      select: { id: true, bytes: true },
+    });
+    expect(blobs).toHaveLength(2);
+    const [a, b] = blobs;
+    expect(Buffer.from(a.bytes).equals(Buffer.from(b.bytes))).toBe(false);
   });
 });
