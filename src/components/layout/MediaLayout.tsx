@@ -133,20 +133,22 @@ export default function MediaLayout({
               "info block" directly beneath the player. */}
           <MediaMeta viewsCount={media.views_count} locale={locale} />
 
-          {/* YouTube-style action row — Like / Share / Save pills. The
-              visual presence is the goal; backend wiring is local-storage
-              only for now. Real "like feed" / "watch later" lift later. */}
+          {/* YouTube-style action row — Like / Dislike / Share on the
+              left, RSS Subscribe pushed to the right edge. ActionRow
+              owns the layout (single flex row); passing channelSlug
+              activates the Subscribe pill. */}
           <ActionRow
             mediaId={media._id}
             mediaName={media.name}
             initialLikesCount={media.likes_count}
             initialSharesCount={media.shares_count}
             hasAccess={hasActiveAccess}
+            channelSlug={channel.slug}
           />
 
-          {/* Channel attribution + Subscribe pill. The Subscribe button is
-              localStorage-only today; the visual surface is what makes the
-              page feel YouTube-shaped, not a real subscriber count. */}
+          {/* Channel attribution — avatar + name. Subscribe lives in the
+              action row above; this block is purely the YouTube-style
+              channel link beneath the engagement controls. */}
           <ChannelBlock
             name={channel.name}
             slug={channel.slug}

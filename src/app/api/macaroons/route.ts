@@ -8,6 +8,7 @@ import {
   getMacaroon,
   COOKIE_NAME,
   COOKIE_MAX_AGE,
+  MAX_BYTES,
 } from "@/lib/macaroon-cookie";
 import { verifySatsrailToken } from "@/lib/access-gate";
 import { rateLimit } from "@/lib/rate-limit";
@@ -80,13 +81,24 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
+  const cookieValueLength = serializeMacaroonCookie(next.map).length;
+  // Promote to "warning" when we had to evict — that means we're operating
+  // close to the cookie size cap, which is a leading indicator of users
+  // running out of room. With Sentry dashboards filterable by level, a
+  // sudden spike of warnings here would alert us to either raise MAX_BYTES
+  // or shrink the per-macaroon size (the latter requires portal changes).
   Sentry.captureMessage("macaroons.POST: stored", {
-    level: "info",
-    tags: { context: "macaroons.POST" },
+    level: next.evicted > 0 ? "warning" : "info",
+    tags: {
+      context: "macaroons.POST",
+      // `evictedAny` makes Sentry filtering trivial: tag:macaroons.POST evictedAny:true
+      evictedAny: String(next.evicted > 0),
+    },
     extra: {
       product_id,
       macaroonLength: macaroon.length,
-      cookieValueLength: serializeMacaroonCookie(next.map).length,
+      cookieValueLength,
+      cookieBudgetUsedPct: Math.round((cookieValueLength / MAX_BYTES) * 100),
       existingProductsCount: Object.keys(next.map).length,
       isNewProduct: wasNewProduct,
       evicted: next.evicted,
@@ -157,14 +169,30 @@ export async function PUT(req: NextRequest) {
   const macaroon = getMacaroon(rawCookie, product_id);
 
   if (!macaroon) {
+    // Promote to "error" when the cookie EXISTS and has OTHER products but
+    // not the one we just asked for. That's the exact symptom of Chrome
+    // dropping a Set-Cookie that pushed the value over its 4096-byte cap
+    // (or our own LRU evicting the wrong entry — defense in depth tells
+    // us if either failure mode shows up). A plain "cookie missing"
+    // (fresh visitor) stays at "warning" — that's expected behavior.
+    const hasOtherProducts = Object.keys(macaroons).length > 0;
     Sentry.captureMessage("macaroons.PUT: no entry for product", {
-      level: "warning",
-      tags: { context: "macaroons.PUT", outcome: "404" },
+      level: hasOtherProducts ? "error" : "warning",
+      tags: {
+        context: "macaroons.PUT",
+        outcome: hasOtherProducts ? "404_cookie_present_entry_missing" : "404",
+      },
       extra: {
         product_id,
         cookiePresent: !!rawCookie,
         cookieValueLength: rawCookie?.length ?? 0,
         otherProductsInCookie: Object.keys(macaroons),
+        // If this number stays well under MAX_BYTES, we know it's NOT a
+        // size-cap issue and have to look elsewhere (e.g. concurrent
+        // overwrite, SameSite, browser quirk).
+        cookieBudgetUsedPct: rawCookie
+          ? Math.round((rawCookie.length / MAX_BYTES) * 100)
+          : 0,
       },
     });
     if (product_id in macaroons) {

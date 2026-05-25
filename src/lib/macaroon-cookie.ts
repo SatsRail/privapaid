@@ -20,13 +20,28 @@ export const COOKIE_NAME = "satsrail_macaroons";
 export const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
 
 /**
- * Hard caps on the stored map. The browser hard-limit is roughly 4KB
- * per cookie (RFC 6265); we leave headroom for the cookie name, flags,
- * and JSON overhead. MAX_ENTRIES is a defense-in-depth in case a single
- * abnormally-long macaroon slips past the byte budget.
+ * Hard caps on the stored map. The browser hard-limit is roughly 4096
+ * bytes per cookie (RFC 6265, enforced strictly by Chrome — Safari is
+ * more lenient). MAX_BYTES is the raw JSON length budget; we leave a
+ * generous ~1500-byte cushion for:
+ *
+ *   - Percent-encoding overhead in Set-Cookie (URL-safe JSON adds 20–30%
+ *     after encoding `{`, `}`, `"`, etc.)
+ *   - Cookie attributes (Max-Age, Path, SameSite, HttpOnly, Secure ~ 90B)
+ *   - Header framing
+ *   - A small future-proofing margin so adding ~1 average macaroon doesn't
+ *     immediately push the next user over the line.
+ *
+ * Cause-of-pain log: we discovered users accumulating 6+ macaroons in
+ * Chrome would silently lose access on the *next* purchase because the
+ * full Set-Cookie header exceeded Chrome's per-cookie limit and got
+ * dropped. Lowering MAX_BYTES from 3000 → 2500 trades extra eviction
+ * (LRU-by-storage-time, never the just-added entry) for reliable writes.
+ * MAX_ENTRIES is a defense-in-depth ceiling in case a single abnormally-
+ * long macaroon slips past the byte budget.
  */
 export const MAX_ENTRIES = 100;
-export const MAX_BYTES = 3000;
+export const MAX_BYTES = 2500;
 
 const EntrySchema = z.union([
   z.string(),

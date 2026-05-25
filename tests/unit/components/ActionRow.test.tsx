@@ -69,6 +69,22 @@ describe("ActionRow", () => {
     expect(screen.getByTestId("share-button")).toBeInTheDocument();
   });
 
+  it("renders an RSS Subscribe link aligned right when channelSlug is provided", () => {
+    render(<ActionRow {...baseProps} channelSlug="my-channel" />);
+    const subscribe = screen.getByTestId("subscribe-button");
+    expect(subscribe).toBeInTheDocument();
+    expect(subscribe).toHaveAttribute("href", "/c/my-channel/feed.xml");
+    expect(subscribe).toHaveAttribute("target", "_blank");
+    expect(subscribe).toHaveAttribute("rel", "noopener noreferrer");
+    // ml-auto pushes Subscribe to the right edge of the action row.
+    expect(subscribe.className).toMatch(/\bml-auto\b/);
+  });
+
+  it("omits the Subscribe link when channelSlug is not provided", () => {
+    render(<ActionRow {...baseProps} />);
+    expect(screen.queryByTestId("subscribe-button")).not.toBeInTheDocument();
+  });
+
   it("renders initial like/share counts when greater than 0", () => {
     render(<ActionRow {...baseProps} initialLikesCount={42} initialSharesCount={7} />);
     expect(screen.getByTestId("likes-count")).toHaveTextContent("42");

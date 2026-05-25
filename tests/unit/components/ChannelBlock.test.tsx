@@ -50,16 +50,8 @@ describe("ChannelBlock", () => {
     expect(screen.getByText("?")).toBeInTheDocument();
   });
 
-  it("renders the Subscribe button labeled 'Subscribe' (never toggles)", () => {
+  it("does not render a Subscribe button (Subscribe lives in ActionRow now)", () => {
     render(<ChannelBlock name="Test" slug="test" />);
-    expect(screen.getByTestId("subscribe-button")).toHaveTextContent("viewer.channel.subscribe");
-  });
-
-  it("Subscribe button points at the channel's RSS feed and opens in a new tab", () => {
-    render(<ChannelBlock name="Test" slug="my-channel" />);
-    const btn = screen.getByTestId("subscribe-button");
-    expect(btn).toHaveAttribute("href", "/c/my-channel/feed.xml");
-    expect(btn).toHaveAttribute("target", "_blank");
-    expect(btn).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.queryByTestId("subscribe-button")).not.toBeInTheDocument();
   });
 });
