@@ -17,7 +17,7 @@ async function createPhotoBlob(opts: { createdAt?: Date } = {}) {
   });
   if (opts.createdAt) {
     await prisma.$executeRaw`
-      UPDATE "EncryptedPhotoBlob" SET "createdAt" = ${opts.createdAt} WHERE id = ${blob.id}
+      UPDATE "EncryptedPhotoBlob" SET "createdAt" = ${opts.createdAt.toISOString()}::timestamp WHERE id = ${blob.id}
     `;
   }
   return blob;

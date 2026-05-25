@@ -28,6 +28,29 @@ const SETTINGS_SELECT = {
   sentryDsn: true,
 } as const;
 
+// Map Prisma's camelCase row to the snake_case API contract the admin UI
+// (and existing tests) consume. The DB is the new shape; the wire stays old.
+function serializeSettings(s: Record<string, unknown>): Record<string, unknown> {
+  return {
+    instance_name: s.instanceName,
+    logo_url: s.logoUrl,
+    about_text: s.aboutText,
+    nsfw_enabled: s.nsfwEnabled,
+    adult_disclaimer: s.adultDisclaimer,
+    theme_primary: s.themePrimary,
+    theme_bg: s.themeBg,
+    theme_bg_secondary: s.themeBgSecondary,
+    theme_text: s.themeText,
+    theme_text_secondary: s.themeTextSecondary,
+    theme_heading: s.themeHeading,
+    theme_border: s.themeBorder,
+    theme_font: s.themeFont,
+    google_analytics_id: s.googleAnalyticsId,
+    google_site_verification: s.googleSiteVerification,
+    sentry_dsn: s.sentryDsn,
+  };
+}
+
 export async function GET() {
   const authResult = await requireOwnerApi();
   if (authResult instanceof NextResponse) return authResult;
@@ -41,7 +64,7 @@ export async function GET() {
     return NextResponse.json({ error: "Settings not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ settings });
+  return NextResponse.json({ settings: serializeSettings(settings) });
 }
 
 export async function PUT(request: Request) {
@@ -124,7 +147,7 @@ export async function PUT(request: Request) {
     // Revalidate all pages so theme changes apply everywhere
     revalidatePath("/", "layout");
 
-    return NextResponse.json({ settings });
+    return NextResponse.json({ settings: serializeSettings(settings) });
   } catch (error) {
     console.error("Settings update error:", error);
     return NextResponse.json(

@@ -256,6 +256,10 @@ model Customer {
   id                    String    @id @default(cuid())
   nickname              String    @unique @db.Citext
   passwordHash          String
+  /// Opaque external blob-storage reference. Set by clients via the profile
+  /// PATCH endpoint when images live outside the bytes column (e.g. an S3
+  /// key, a legacy GridFS id during migration, a CDN slug).
+  profileImageId        String?
   profileImageBytes     Bytes?
   profileImageMimeType  String?
   deletedAt             DateTime?

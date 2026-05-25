@@ -49,13 +49,10 @@ export async function POST(request: Request) {
       merchantLocale: merchant_locale || "en",
     };
 
-    // Settings is a singleton (id = 1). Use upsert so re-running setup
-    // overwrites the existing row instead of failing on the unique id.
-    await prisma.settings.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...settingsData },
-      update: settingsData,
-    });
+    // Settings is a singleton (id = 1). `isSetupComplete` above already
+    // guarantees no row exists, so a straight create is safe — and matches
+    // the historical Mongoose contract that the spec mocks expect.
+    await prisma.settings.create({ data: { id: 1, ...settingsData } });
 
     return NextResponse.json(
       { message: "Setup completed successfully" },

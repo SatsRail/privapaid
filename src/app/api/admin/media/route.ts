@@ -167,5 +167,27 @@ export async function POST(req: NextRequest) {
     console.error("Failed to encrypt for channel products:", err);
   }
 
-  return NextResponse.json({ data: media }, { status: 201 });
+  return NextResponse.json(
+    {
+      data: {
+        _id: media.id,
+        ref: media.ref,
+        channel_id: media.channelId,
+        name: media.name,
+        description: media.description,
+        source_url: media.sourceUrl,
+        media_type: media.mediaType,
+        thumbnail_url: media.thumbnailUrl,
+        position: media.position,
+        comments_count: media.commentsCount,
+        views_count: media.viewsCount,
+        flags_count: media.flagsCount,
+        likes_count: media.likesCount,
+        shares_count: media.sharesCount,
+        created_at: media.createdAt,
+        updated_at: media.updatedAt,
+      },
+    },
+    { status: 201 }
+  );
 }

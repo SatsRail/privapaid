@@ -15,6 +15,7 @@ export async function GET() {
         select: {
           id: true,
           name: true,
+          deletedAt: true,
           channel: { select: { id: true, name: true, slug: true } },
         },
       },
@@ -26,14 +27,15 @@ export async function GET() {
     body: c.body,
     nickname: c.nickname,
     created_at: c.createdAt,
-    media: c.media
-      ? {
-          _id: c.media.id,
-          name: c.media.name,
-          channel_slug: c.media.channel?.slug ?? null,
-          channel_name: c.media.channel?.name ?? null,
-        }
-      : null,
+    media:
+      c.media && !c.media.deletedAt
+        ? {
+            _id: c.media.id,
+            name: c.media.name,
+            channel_slug: c.media.channel?.slug ?? null,
+            channel_name: c.media.channel?.name ?? null,
+          }
+        : null,
   }));
 
   return NextResponse.json({ data });

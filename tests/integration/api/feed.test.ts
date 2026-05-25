@@ -33,7 +33,7 @@ function feedRequest(slug: string): [Request, { params: Promise<{ slug: string }
 // Helper to set createdAt on a media row (Prisma blocks setting @default(now())
 // fields directly via the regular API).
 async function setMediaCreatedAt(id: string, when: Date) {
-  await prisma.$executeRaw`UPDATE "Media" SET "createdAt" = ${when} WHERE id = ${id}`;
+  await prisma.$executeRaw`UPDATE "Media" SET "createdAt" = ${when.toISOString()}::timestamp WHERE id = ${id}`;
 }
 
 describe("GET /c/[slug]/feed.xml", () => {

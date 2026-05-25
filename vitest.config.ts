@@ -42,5 +42,14 @@ export default defineConfig({
       },
     },
     testTimeout: 30000,
+    // Integration tests share a single Postgres test DB. Multiple vitest
+    // forks each running TRUNCATE in parallel deadlock on cross-table
+    // AccessExclusiveLocks. Single-fork serializes the writes; per-test
+    // truncate stays cheap. (Vitest 4 moved pool config to top-level.)
+    pool: "forks",
+    forks: { singleFork: true },
+    // Also disable test-file parallelism within the single fork so
+    // beforeAll/afterAll setup don't trample each other.
+    fileParallelism: false,
   },
 });

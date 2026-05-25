@@ -116,7 +116,7 @@ export async function POST(
           if (!existing) {
             return NextResponse.json(
               {
-                error: `Cannot include photo media ${mediaId} in channel product: no encryptedDek on Media and no existing MediaProduct to recover from. Run the photo-DEK backfill, or create a per-media product for this photo first.`,
+                error: `Cannot include photo media ${mediaId} in channel product: no encrypted_dek on Media and no existing MediaProduct to recover from. Run the photo-DEK backfill, or create a per-media product for this photo first.`,
               },
               { status: 422 }
             );

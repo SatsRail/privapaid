@@ -60,11 +60,14 @@ export async function POST(req: Request) {
         { status: 201 }
       );
     } catch (createErr: unknown) {
-      // Handle race condition: unique constraint violation (P2002)
-      if (
-        createErr instanceof Prisma.PrismaClientKnownRequestError &&
-        createErr.code === "P2002"
-      ) {
+      // Handle race condition: unique constraint violation (P2002). Match
+      // either Prisma's typed error or a plain Error with a `code` shim
+      // (test mocks use the latter).
+      const code =
+        createErr instanceof Prisma.PrismaClientKnownRequestError
+          ? createErr.code
+          : (createErr as { code?: string } | null)?.code;
+      if (code === "P2002") {
         return NextResponse.json(
           { error: "Nickname already taken" },
           { status: 409 }
