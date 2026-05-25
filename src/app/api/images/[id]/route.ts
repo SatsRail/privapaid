@@ -4,17 +4,15 @@ import { prisma } from "@/lib/prisma";
 /**
  * GET /api/images/[id]
  *
- * Legacy image-serving endpoint. The id is an opaque blob id returned by
- * POST /api/images. Two stores back this:
- *
- *   1. PreviewImage rows (the natural standalone image table).
- *   2. EncryptedPhotoBlob rows used by the POST shim as a generic blob
- *      store. (See comment on POST.)
+ * Generic image-serving endpoint. The id is an opaque blob id returned by
+ * POST /api/images; bytes live in the `EncryptedPhotoBlob` table (used as
+ * the generic blob store for thumbnails / preview gallery uploads — see
+ * comment on POST). Photo content uploaded through /api/admin/photos goes
+ * through this same table but is encrypted and should be served via
+ * /api/photos/[id]; this route serves raw bytes so the caller picks.
  *
  * Owner-specific images (channel avatar, media thumbnail, logo) have
- * dedicated routes that read directly from the row's Bytes column —
- * e.g. /api/images/channel/<id>, /api/images/media-thumbnail/<id>,
- * /api/images/logo. This route only resolves standalone blob ids.
+ * dedicated routes that read directly from the row's Bytes column.
  */
 export async function GET(
   _req: NextRequest,
@@ -27,28 +25,6 @@ export async function GET(
   }
 
   try {
-    // 1. PreviewImage — preview gallery uploads.
-    const preview = await prisma.previewImage.findUnique({
-      where: { id },
-      select: { bytes: true, mimeType: true },
-    });
-    if (preview) {
-      return new Response(preview.bytes, {
-        headers: {
-          "Content-Type": preview.mimeType,
-          "Content-Length": preview.bytes.length.toString(),
-          "Cache-Control": "public, max-age=31536000, immutable",
-          ETag: `"${id}"`,
-        },
-      });
-    }
-
-    // 2. EncryptedPhotoBlob — generic blob store used by the POST shim.
-    //    Bytes here are NOT encrypted when written via this endpoint, but
-    //    photos uploaded through /api/admin/photos ARE encrypted (and
-    //    should be served via /api/photos/[id] which knows that). We
-    //    serve raw bytes either way; the caller is responsible for
-    //    choosing the right endpoint.
     const blob = await prisma.encryptedPhotoBlob.findUnique({
       where: { id },
       select: { bytes: true, mimeType: true },

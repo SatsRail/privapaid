@@ -104,88 +104,53 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
-  // We fetch sourceUrl (no exclusion) because for photo media it holds the
-  // EncryptedPhotoBlob.id the client needs to download encrypted bytes. The
-  // pointer is safe to expose (bytes are useless without the DEK). For
-  // non-photo media sourceUrl is the plaintext content URL — we keep it
-  // server-side by only surfacing it via `photo_gridfs_id` below when
-  // mediaType === "photo".
+  // We fetch the full Media row (including `blob`) because for photos we
+  // need blob.blobId to surface as `photo_gridfs_id` on the client (it points
+  // to EncryptedPhotoBlob and is safe to expose — bytes are useless without
+  // the DEK). For non-photo media `blob` holds the plaintext URL/markdown
+  // body, which we DO NOT surface to the client; we filter the page payload
+  // explicitly below.
   const media = await prisma.media.findFirst({
     where: { id: mediaId, channelId: channel.id },
   });
   if (!media) notFound();
 
-  // Get the (optional) MediaProduct row — INCLUDING archived. Archived
-  // products must still be verifiable for users who already paid (archiving
-  // means "stop selling new", not "revoke existing access"). We filter
-  // archived OUT later, but only from the purchase-UI list, not the
-  // verification list.
-  const mediaProductRow = await prisma.mediaProduct.findUnique({
+  // Every product (active + archived) that covers this media — channel-scoped
+  // and media-scoped collapse into the same shape via MediaEncryptedBlob.
+  // Archived products must still be verifiable for users who already paid
+  // (archiving means "stop selling new", not "revoke existing access"). We
+  // filter archived OUT below, only for the purchase UI.
+  const productBlobs = await prisma.mediaEncryptedBlob.findMany({
     where: { mediaId: media.id },
     select: {
-      satsrailProductId: true,
       encryptedSourceUrl: true,
       keyFingerprint: true,
-      productName: true,
-      productPriceCents: true,
-      productCurrency: true,
-      productAccessDurationSeconds: true,
-      productStatus: true,
-    },
-  });
-  const mediaProducts = mediaProductRow ? [mediaProductRow] : [];
-
-  // Get channel-level products that cover this media — same archive policy.
-  const channelProductsRaw = await prisma.channelProduct.findMany({
-    where: {
-      channelId: channel.id,
-      encryptedMedia: { some: { mediaId: media.id } },
-    },
-    select: {
-      satsrailProductId: true,
-      keyFingerprint: true,
-      productName: true,
-      productPriceCents: true,
-      productCurrency: true,
-      productAccessDurationSeconds: true,
-      productStatus: true,
-      encryptedMedia: {
-        where: { mediaId: media.id },
-        select: { mediaId: true, encryptedSourceUrl: true },
+      product: {
+        select: {
+          satsrailProductId: true,
+          keyFingerprint: true,
+          productName: true,
+          productPriceCents: true,
+          productCurrency: true,
+          productAccessDurationSeconds: true,
+          productStatus: true,
+        },
       },
     },
   });
 
-  // Serialize for client — merge media-level and channel-level products.
-  // The full list (including archived) feeds the macaroon-cookie intersection
-  // below so the useMediaAccess hook doesn't short-circuit when the only
-  // matching product happens to be archived.
-  const allProducts = [
-    ...mediaProducts.map((mp) => ({
-      productId: mp.satsrailProductId,
-      encryptedBlob: mp.encryptedSourceUrl,
-      keyFingerprint: mp.keyFingerprint,
-      name: mp.productName,
-      priceCents: mp.productPriceCents,
-      currency: mp.productCurrency,
-      accessDurationSeconds: mp.productAccessDurationSeconds,
-      status: mp.productStatus,
-    })),
-    ...channelProductsRaw.flatMap((cp) => {
-      const entry = cp.encryptedMedia.find((em) => em.mediaId === media.id);
-      if (!entry) return [];
-      return [{
-        productId: cp.satsrailProductId,
-        encryptedBlob: entry.encryptedSourceUrl,
-        keyFingerprint: cp.keyFingerprint,
-        name: cp.productName,
-        priceCents: cp.productPriceCents,
-        currency: cp.productCurrency,
-        accessDurationSeconds: cp.productAccessDurationSeconds,
-        status: cp.productStatus,
-      }];
-    }),
-  ].filter((p) => p.encryptedBlob);
+  const allProducts = productBlobs
+    .filter((b) => b.encryptedSourceUrl)
+    .map((b) => ({
+      productId: b.product.satsrailProductId,
+      encryptedBlob: b.encryptedSourceUrl,
+      keyFingerprint: b.keyFingerprint ?? b.product.keyFingerprint,
+      name: b.product.productName,
+      priceCents: b.product.productPriceCents,
+      currency: b.product.productCurrency,
+      accessDurationSeconds: b.product.productAccessDurationSeconds,
+      status: b.product.productStatus,
+    }));
 
   // Purchase-UI list — what PaymentWall renders as buy buttons. Archived
   // products are hidden here so the merchant's "stop selling" decision is
@@ -203,33 +168,34 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     allProducts.map((p) => p.productId)
   );
 
-  // Admin preview: validate session server-side
+  // Admin preview: validate session server-side. We re-derive the source from
+  // Media.blob (URL or markdown body) so a logged-in admin can preview the
+  // unencrypted content without going through the paywall.
   let adminPreviewSourceUrl: string | null = null;
   if (preview === "admin") {
     try {
       const session = await auth();
       if (session?.user?.type === "admin") {
-        const fullMedia = await prisma.media.findUnique({
-          where: { id: mediaId },
-          select: { sourceUrl: true },
-        });
-        adminPreviewSourceUrl = fullMedia?.sourceUrl ?? null;
+        const { parseMediaBlob } = await import("@/lib/schemas/media-blob");
+        try {
+          const parsed = parseMediaBlob(media.blob);
+          if (parsed.kind === "url") adminPreviewSourceUrl = parsed.url;
+          else if (parsed.kind === "markdown") adminPreviewSourceUrl = parsed.body;
+          // For photos, admin preview goes through the photo route; we don't
+          // expose the EncryptedPhotoBlob.id here.
+        } catch {
+          adminPreviewSourceUrl = null;
+        }
       }
     } catch {
       // Not authenticated — ignore preview param
     }
   }
 
-  // Resolve preview images: stored bytea rows + direct URLs.
-  const previewImageRows = await prisma.previewImage.findMany({
-    where: { mediaId: media.id },
-    select: { id: true },
-    orderBy: { position: "asc" },
-  });
-  const previewImages = [
-    ...previewImageRows.map((p) => `/api/images/preview/${p.id}`),
-    ...(media.previewImageUrls || []),
-  ].slice(0, 6);
+  // Preview images: direct URLs stored on Media.previewImageUrls. Uploaded
+  // images live as bytes in EncryptedPhotoBlob and are referenced here via
+  // `/api/images/<id>` URLs. Cap-of-6 enforced on read.
+  const previewImages = (media.previewImageUrls || []).slice(0, 6);
 
   const thumbSrc = resolveMediaThumb(media);
 
@@ -306,8 +272,19 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       likes_count: media.likesCount ?? 0,
       shares_count: media.sharesCount ?? 0,
       // For photo media, surface the EncryptedPhotoBlob id to the client so
-      // it can fetch the encrypted bytes after unwrapping the DEK.
-      photo_gridfs_id: media.mediaType === "photo" ? media.sourceUrl : undefined,
+      // it can fetch the encrypted bytes after unwrapping the DEK. The id
+      // lives in Media.blob.blobId for photo-typed rows.
+      photo_gridfs_id:
+        media.mediaType === "photo"
+          ? (() => {
+              try {
+                const parsed = (media.blob as { kind?: string; blobId?: string });
+                return parsed.kind === "photo" ? parsed.blobId : undefined;
+              } catch {
+                return undefined;
+              }
+            })()
+          : undefined,
     },
     channel: {
       name: channel.name,

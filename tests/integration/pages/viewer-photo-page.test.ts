@@ -3,11 +3,9 @@ import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/pos
 import { prisma } from "@/lib/prisma";
 
 /**
- * Regression test for the "Payment received, couldn't unlock" bug.
- *
- * The viewer page surfaces `media.sourceUrl` to the client as `photo_gridfs_id`
- * ONLY for photo media. If the underlying query drops `sourceUrl` the client
- * receives `photoGridFsId={undefined}` and PaymentWall throws after payment.
+ * The viewer media page surfaces `Media.blob.blobId` to the client only when
+ * `mediaType === "photo"` — for other types the blob (URL / markdown) is the
+ * plaintext and must stay server-side. These tests assert that conditional.
  */
 describe("Viewer page query for photo media", () => {
   beforeAll(async () => {
@@ -22,11 +20,11 @@ describe("Viewer page query for photo media", () => {
     await clearCollections();
   });
 
-  it("returns sourceUrl (blob pointer) for photo media", async () => {
+  it("photo media exposes the blobId via Media.blob.blobId", async () => {
     const channel = await prisma.channel.create({
       data: {
         ref: 1,
-        slug: "showcase",
+        slug: "showcase-1",
         name: "Platform Showcase",
         active: true,
       },
@@ -39,7 +37,12 @@ describe("Viewer page query for photo media", () => {
         channelId: channel.id,
         name: "Lightning in a bottle",
         mediaType: "photo",
-        sourceUrl: blobId,
+        blob: {
+          kind: "photo",
+          blobId,
+          encryptedDek: "test_dek",
+          mimeType: "image/jpeg",
+        },
       },
     });
 
@@ -49,14 +52,18 @@ describe("Viewer page query for photo media", () => {
 
     expect(fetched).not.toBeNull();
     expect(fetched!.mediaType).toBe("photo");
-    expect(fetched!.sourceUrl).toBe(blobId);
+    const blob = fetched!.blob as { kind: string; blobId: string };
+    expect(blob.kind).toBe("photo");
+    expect(blob.blobId).toBe(blobId);
 
+    // Mirrors the page-level conditional that surfaces photo_gridfs_id only
+    // when the media is a photo.
     const photoGridFsId =
-      fetched!.mediaType === "photo" ? fetched!.sourceUrl : undefined;
+      fetched!.mediaType === "photo" ? blob.blobId : undefined;
     expect(photoGridFsId).toBe(blobId);
   });
 
-  it("non-photo media's sourceUrl stays server-side via the conditional", async () => {
+  it("non-photo media's blob plaintext stays server-side via the conditional", async () => {
     const channel = await prisma.channel.create({
       data: {
         ref: 2,
@@ -73,7 +80,7 @@ describe("Viewer page query for photo media", () => {
         channelId: channel.id,
         name: "Some video",
         mediaType: "video",
-        sourceUrl: secretUrl,
+        blob: { kind: "url", url: secretUrl },
       },
     });
 
@@ -81,15 +88,19 @@ describe("Viewer page query for photo media", () => {
       where: { id: media.id, channelId: channel.id },
     });
 
+    // For non-photo media the conditional yields undefined.
     const photoGridFsId =
-      fetched!.mediaType === "photo" ? fetched!.sourceUrl : undefined;
+      fetched!.mediaType === "photo"
+        ? (fetched!.blob as { blobId?: string }).blobId
+        : undefined;
     expect(photoGridFsId).toBeUndefined();
-    expect(fetched!.sourceUrl).toBe(secretUrl);
+    const blob = fetched!.blob as { kind: string; url?: string };
+    expect(blob.url).toBe(secretUrl);
   });
 
   const NON_PHOTO_TYPES = ["video", "audio", "article", "podcast"] as const;
   for (const mediaType of NON_PHOTO_TYPES) {
-    it(`does not surface sourceUrl to the client for mediaType=${mediaType}`, async () => {
+    it(`does not surface blob plaintext to the client for mediaType=${mediaType}`, async () => {
       const channel = await prisma.channel.create({
         data: {
           ref: 100 + NON_PHOTO_TYPES.indexOf(mediaType),
@@ -98,13 +109,17 @@ describe("Viewer page query for photo media", () => {
           active: true,
         },
       });
+      const blob =
+        mediaType === "article"
+          ? { kind: "markdown", body: `internal ${mediaType} body` }
+          : { kind: "url", url: `https://internal.example.com/${mediaType}.bin` };
       const media = await prisma.media.create({
         data: {
           ref: 200 + NON_PHOTO_TYPES.indexOf(mediaType),
           channelId: channel.id,
           name: `Test ${mediaType}`,
           mediaType,
-          sourceUrl: `https://internal.example.com/${mediaType}.bin`,
+          blob,
         },
       });
 
@@ -113,7 +128,9 @@ describe("Viewer page query for photo media", () => {
       });
 
       const photoGridFsId =
-        fetched!.mediaType === "photo" ? fetched!.sourceUrl : undefined;
+        fetched!.mediaType === "photo"
+          ? (fetched!.blob as { blobId?: string }).blobId
+          : undefined;
       expect(photoGridFsId).toBeUndefined();
     });
   }

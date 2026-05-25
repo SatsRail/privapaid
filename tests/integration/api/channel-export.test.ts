@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct } from "../../helpers/factories";
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
@@ -105,13 +106,13 @@ describe("GET /api/admin/channels/[id]/export", () => {
     await createMedia(channel.id, {
       name: "Episode 1",
       description: "First episode",
-      sourceUrl: "https://example.com/ep1.mp4",
+      blob: { kind: "url", url: "https://example.com/ep1.mp4" },
       mediaType: "video",
       position: 1,
     });
     await createMedia(channel.id, {
       name: "Episode 2",
-      sourceUrl: "https://example.com/ep2.mp3",
+      blob: { kind: "url", url: "https://example.com/ep2.mp3" },
       mediaType: "audio",
       position: 2,
     });
@@ -145,11 +146,10 @@ describe("GET /api/admin/channels/[id]/export", () => {
     const channel = await createChannel({ name: "Paid Channel", slug: "paid-ch" });
     const media = await createMedia(channel.id, {
       name: "Premium Video",
-      sourceUrl: "https://example.com/premium.mp4",
+      blob: { kind: "url", url: "https://example.com/premium.mp4" },
     });
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_123",
         encryptedSourceUrl: "encrypted-blob",
@@ -158,8 +158,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
         productPriceCents: 500,
         productCurrency: "USD",
         productAccessDurationSeconds: 86400,
-      },
-    });
+      });
 
     const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
@@ -181,7 +180,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
     const channel = await createChannel({ name: "Free Channel", slug: "free-ch" });
     await createMedia(channel.id, {
       name: "Free Video",
-      sourceUrl: "https://example.com/free.mp4",
+      blob: { kind: "url", url: "https://example.com/free.mp4" },
     });
 
     const [req, ctx] = exportRequest(channel.id);

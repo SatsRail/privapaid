@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
 import { createCategory, createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
@@ -99,7 +100,7 @@ describe("GET /api/admin/export", () => {
     });
     await createMedia(channel.id, {
       name: "Episode 1",
-      sourceUrl: "https://example.com/ep1.mp4",
+      blob: { kind: "url", url: "https://example.com/ep1.mp4" },
       mediaType: "video",
       position: 1,
     });
@@ -131,11 +132,10 @@ describe("GET /api/admin/export", () => {
     const channel = await createChannel({ name: "Test", slug: "test-ch" });
     const media = await createMedia(channel.id, {
       name: "Paid Video",
-      sourceUrl: "https://example.com/paid.mp4",
+      blob: { kind: "url", url: "https://example.com/paid.mp4" },
     });
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_123",
         encryptedSourceUrl: "encrypted-blob",
@@ -145,8 +145,7 @@ describe("GET /api/admin/export", () => {
         productCurrency: "USD",
         productAccessDurationSeconds: 86400,
         productExternalRef: "md_custom_99",
-      },
-    });
+      });
 
     const res = await GET();
     const body = JSON.parse(await res.text());
@@ -168,11 +167,10 @@ describe("GET /api/admin/export", () => {
     const channel = await createChannel({ name: "Legacy", slug: "legacy-ch" });
     const media = await createMedia(channel.id, {
       name: "Legacy Video",
-      sourceUrl: "https://example.com/legacy.mp4",
+      blob: { kind: "url", url: "https://example.com/legacy.mp4" },
     });
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_legacy",
         encryptedSourceUrl: "encrypted-blob",
@@ -181,8 +179,7 @@ describe("GET /api/admin/export", () => {
         productPriceCents: 100,
         productCurrency: "USD",
         // Note: no productExternalRef — simulating legacy data
-      },
-    });
+      });
 
     const res = await GET();
     const body = JSON.parse(await res.text());
@@ -197,16 +194,14 @@ describe("GET /api/admin/export", () => {
 
     const channel = await createChannel({ name: "Bundle", slug: "bundle-ch" });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_bundle",
         keyFingerprint: "fp_bundle",
         productName: "Bundle Access",
         productPriceCents: 1000,
         productCurrency: "USD",
-      },
-    });
+      });
 
     const res = await GET();
     const body = JSON.parse(await res.text());
@@ -240,14 +235,12 @@ describe("GET /api/admin/export", () => {
     });
     const channel = await createChannel({ name: "Defaults", slug: "defaults-ch" });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_def",
         keyFingerprint: "fp_def",
         productName: "With Defaults",
-      },
-    });
+      });
 
     const res = await GET();
     const body = JSON.parse(await res.text());
@@ -260,13 +253,11 @@ describe("GET /api/admin/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Nameless", slug: "nameless-ch" });
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_nameless",
         keyFingerprint: "fp_nameless",
-      },
-    });
+      });
 
     const res = await GET();
     const body = JSON.parse(await res.text());
@@ -280,16 +271,14 @@ describe("GET /api/admin/export", () => {
     const channel = await createChannel({ name: "NoNameMp", slug: "no-name-mp" });
     const media = await createMedia(channel.id, {
       name: "Plain",
-      sourceUrl: "https://example.com/plain.mp4",
+      blob: { kind: "url", url: "https://example.com/plain.mp4" },
     });
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_blank",
         encryptedSourceUrl: "blob",
         keyFingerprint: "fp",
-      },
-    });
+      });
     const res = await GET();
     const body = JSON.parse(await res.text());
     expect(body.channels[0].media[0].product).toBeUndefined();

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct } from "../../helpers/factories";
 
 const { mockGetMerchantKey, mockSatsrailClient } = vi.hoisted(() => ({
   mockGetMerchantKey: vi.fn().mockResolvedValue("sk_test_key"),
@@ -196,7 +197,7 @@ describe("Admin Channel Create Product", () => {
       });
       await createMedia(channel.id, {
         mediaType: "photo",
-        sourceUrl: "gridfs:photo-orphan",
+        blob: { kind: "url", url: "gridfs:photo-orphan" },
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -220,7 +221,7 @@ describe("Admin Channel Create Product", () => {
       const body = await res.json();
 
       expect(res.status).toBe(422);
-      expect(body.error).toContain("no encrypted_dek on Media and no existing MediaProduct");
+      expect(body.error).toContain("no encryptedDek on Media.blob");
       // No decrypt or rewrap should have been attempted
       expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
       expect(mockUnwrapDekToBase64url).not.toHaveBeenCalled();
@@ -236,20 +237,19 @@ describe("Admin Channel Create Product", () => {
       // a stale MediaProduct exists, the route must NOT fall back to it.
       const photoMedia = await createMedia(channel.id, {
         mediaType: "photo",
-        sourceUrl: "gridfs:photo-with-kek",
+        blob: {
+          kind: "photo",
+          blobId: "gridfs:photo-with-kek",
+          encryptedDek: "kek-wrapped-blob",
+          mimeType: "image/jpeg",
+        },
       });
-      await prisma.media.update({
-        where: { id: photoMedia.id },
-        data: { encryptedDek: "kek-wrapped-blob" },
-      });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: photoMedia.id,
           satsrailProductId: "prod_stale",
           encryptedSourceUrl: "stale-blob",
           keyFingerprint: "fp_stale",
-        },
-      });
+        });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_new_kek_channel",
@@ -293,20 +293,19 @@ describe("Admin Channel Create Product", () => {
       });
       const photoMedia = await createMedia(channel.id, {
         mediaType: "photo",
-        sourceUrl: "gridfs:photo-broken-kek",
+        blob: {
+          kind: "photo",
+          blobId: "gridfs:photo-broken-kek",
+          encryptedDek: "corrupted-blob",
+          mimeType: "image/jpeg",
+        },
       });
-      await prisma.media.update({
-        where: { id: photoMedia.id },
-        data: { encryptedDek: "corrupted-blob" },
-      });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: photoMedia.id,
           satsrailProductId: "prod_backup",
           encryptedSourceUrl: "encrypted-dek-blob",
           keyFingerprint: "fp_backup",
-        },
-      });
+        });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_new_fallback",
@@ -355,18 +354,16 @@ describe("Admin Channel Create Product", () => {
       });
       const photoMedia = await createMedia(channel.id, {
         mediaType: "photo",
-        sourceUrl: "gridfs:photo-bytes-id",
+        blob: { kind: "url", url: "gridfs:photo-bytes-id" },
       });
 
       // Seed an existing MediaProduct so the server has a DEK envelope to unwrap.
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: photoMedia.id,
           satsrailProductId: "prod_existing",
           encryptedSourceUrl: "encrypted-dek-for-prod_existing",
           keyFingerprint: "fp_existing",
-        },
-      });
+        });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_new_channel",
@@ -415,20 +412,18 @@ describe("Admin Channel Create Product", () => {
       });
       const videoMedia = await createMedia(channel.id, {
         mediaType: "video",
-        sourceUrl: "https://example.com/v.mp4",
+        blob: { kind: "url", url: "https://example.com/v.mp4" },
       });
       const photoMedia = await createMedia(channel.id, {
         mediaType: "photo",
-        sourceUrl: "gridfs:photo-id",
+        blob: { kind: "url", url: "gridfs:photo-id" },
       });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: photoMedia.id,
           satsrailProductId: "prod_existing_mixed",
           encryptedSourceUrl: "existing-dek-blob",
           keyFingerprint: "fp_e",
-        },
-      });
+        });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_mixed_channel",
@@ -454,7 +449,8 @@ describe("Admin Channel Create Product", () => {
       // the same channel key + product ID.
       const calls = mockEncryptSourceUrl.mock.calls;
       const plaintexts = calls.map((c) => c[0]);
-      expect(plaintexts).toContain(videoMedia.sourceUrl); // URL
+      const videoBlob = videoMedia.blob as { url: string };
+      expect(plaintexts).toContain(videoBlob.url); // URL
       expect(plaintexts).toContain("recovered-dek"); // DEK
       // All encrypt calls share the channel key + new product id
       for (const [, key, productId] of calls) {

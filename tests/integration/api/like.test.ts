@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct } from "../../helpers/factories";
 
 // Mocks — MUST be before route imports
 const { mockRateLimit, mockAuth, mockVerifyMacaroon } = vi.hoisted(() => ({
@@ -73,19 +74,17 @@ describe("Like API — POST /api/media/[id]/like", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Likable Video",
-        sourceUrl: "https://example.com/like.mp4",
+        blob: { kind: "url", url: "https://example.com/like.mp4" },
         mediaType: "video",
         position: 1,
         ...overrides,
       },
     });
     // Attach a product so getProductsForMedia returns something.
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod_like",
-        encryptedSourceUrl: "encrypted_blob",
-      },
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod_like",
+      encryptedSourceUrl: "encrypted_blob",
     });
     return { mediaId: media.id };
   }

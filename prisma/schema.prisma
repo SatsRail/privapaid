@@ -63,15 +63,15 @@ model Admin {
 
 /// Category — content taxonomy.
 model Category {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
-  slug      String    @unique @db.Citext
-  position  Int       @default(0)
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  slug      String   @unique @db.Citext
+  position  Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  channels  Channel[]
+  channels Channel[]
 
   @@index([position])
   @@index([active])
@@ -79,33 +79,33 @@ model Category {
 
 /// Channel — content source, has many Media.
 model Channel {
-  id                    String   @id @default(cuid())
-  ref                   Int      @unique // from Counter; emitted as `ch_<ref>` to portal
-  slug                  String   @unique @db.Citext
+  id                    String    @id @default(cuid())
+  ref                   Int       @unique // from Counter; emitted as `ch_<ref>` to portal
+  slug                  String    @unique @db.Citext
   satsrailProductTypeId String?
   name                  String
-  bio                   String   @default("")
+  bio                   String    @default("")
   categoryId            String?
-  nsfw                  Boolean  @default(false)
+  nsfw                  Boolean   @default(false)
   // Flat object: { youtube, twitter, discord, instagram, tiktok, website }.
   // Never sub-queried — keep as JSON.
-  socialLinks           Json     @default("{}")
-  profileImageUrl       String   @default("")
-  profileImageBytes     Bytes?   // replaces GridFS pointer
+  socialLinks           Json      @default("{}")
+  profileImageUrl       String    @default("")
+  profileImageBytes     Bytes? // replaces GridFS pointer
   profileImageMimeType  String?
-  isLive                Boolean  @default(false)
-  streamUrl             String   @default("")
-  active                Boolean  @default(true)
+  isLive                Boolean   @default(false)
+  streamUrl             String    @default("")
+  active                Boolean   @default(true)
   /// Denormalized count of associated Media. Updated via { increment: 1 }
   /// in the same transaction as Media create/delete.
-  mediaCount            Int      @default(0)
+  mediaCount            Int       @default(0)
   deletedAt             DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  category           Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  media              Media[]
-  products           Product[]
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  media    Media[]
+  products Product[]
 
   @@index([categoryId])
   @@index([active])
@@ -114,12 +114,12 @@ model Channel {
 
 /// Media — one of video/audio/article/photo/podcast.
 model Media {
-  id            String    @id @default(cuid())
-  ref           Int       @unique // from Counter; emitted as `md_<ref>` to portal
-  channelId     String
-  name          String
-  description   String    @default("")
-  mediaType     MediaType @default(video)
+  id                String    @id @default(cuid())
+  ref               Int       @unique // from Counter; emitted as `md_<ref>` to portal
+  channelId         String
+  name              String
+  description       String    @default("")
+  mediaType         MediaType @default(video)
   /// Plaintext recovery store + type-discriminated payload. Admin-only —
   /// public routes MUST omit this field. The re-encryption flow reads it
   /// directly, so rotation doesn't depend on SatsRail's old_key.
@@ -130,51 +130,35 @@ model Media {
   ///   photo:               { kind: "photo",    blobId: EncryptedPhotoBlob.id,
   ///                          encryptedDek: <DEK wrapped under PHOTO_KEK>,
   ///                          mimeType: string }
-  blob          Json
-  thumbnailUrl  String    @default("")
-  thumbnailBytes     Bytes?   // replaces GridFS thumbnail
-  thumbnailMimeType  String?
+  blob              Json
+  thumbnailUrl      String    @default("")
+  thumbnailBytes    Bytes? // replaces GridFS thumbnail
+  thumbnailMimeType String?
   /// Direct URLs (from import). Cap-of-6 enforced in application code.
-  previewImageUrls   String[]  @default([])
-  position           Int       @default(0)
-  viewsCount         Int       @default(0)
-  likesCount         Int       @default(0)
-  sharesCount        Int       @default(0)
-  commentsCount      Int       @default(0)
-  deletedAt          DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  previewImageUrls  String[]  @default([])
+  position          Int       @default(0)
+  viewsCount        Int       @default(0)
+  likesCount        Int       @default(0)
+  sharesCount       Int       @default(0)
+  commentsCount     Int       @default(0)
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  channel             Channel               @relation(fields: [channelId], references: [id], onDelete: Restrict)
-  directSaleProduct   Product?              @relation("MediaDirectSaleProduct")
-  encryptedBlobs      MediaEncryptedBlob[]
-  previewImages       PreviewImage[]
-  comments            Comment[]
+  channel           Channel              @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  directSaleProduct Product?             @relation("MediaDirectSaleProduct")
+  encryptedBlobs    MediaEncryptedBlob[]
+  comments          Comment[]
 
   @@index([channelId, position])
   @@index([channelId, viewsCount(sort: Desc)])
   @@index([createdAt(sort: Desc)])
 }
 
-/// PreviewImage — admin-uploaded preview images for a Media item.
-/// Replaces Mongo's preview_image_ids[] array of GridFS pointers.
-/// Cap-of-6 per media enforced in application code (was a Mongoose validator).
-model PreviewImage {
-  id        String   @id @default(cuid())
-  mediaId   String
-  position  Int      @default(0)
-  bytes     Bytes
-  mimeType  String
-  createdAt DateTime @default(now())
-
-  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-
-  @@index([mediaId, position])
-}
-
 /// EncryptedPhotoBlob — encrypted photo bytes (AES-256-GCM at rest).
-/// Replaces the `encrypted_photos` GridFS bucket. `Media.sourceUrl` for photos
-/// stores this row's id (preserves the GridFS-pointer indirection).
+/// Replaces the `encrypted_photos` GridFS bucket. For photos, `Media.blob`
+/// stores this row's id at `blob.blobId` (preserves the indirection that
+/// the GridFS pointer used to provide).
 model EncryptedPhotoBlob {
   id        String   @id @default(cuid())
   bytes     Bytes
@@ -194,14 +178,14 @@ model EncryptedPhotoBlob {
 ///   channel-scoped Product → N MediaEncryptedBlob rows (one per media in the bundle)
 ///   media-scoped   Product → 1 MediaEncryptedBlob row  (the direct sale)
 model Product {
-  id                String   @id @default(cuid())
+  id                String  @id @default(cuid())
   /// UUID from SatsRail. Canonical product identifier across the rail.
-  satsrailProductId String   @unique
+  satsrailProductId String  @unique
   /// SHA-256 hex of the encryption key, for client-side verification only.
   keyFingerprint    String?
 
   channelId String?
-  mediaId   String?  @unique  // a media has at most one direct-sale product
+  mediaId   String? @unique // a media has at most one direct-sale product
 
   // Cached portal Product fields (denormalized; queried in hot paths)
   productName                  String?
@@ -210,13 +194,13 @@ model Product {
   productAccessDurationSeconds Int?
   productStatus                String?   @default("active")
   productSlug                  String?
-  productExternalRef           String?   // "ch_N" or "md_N"
+  productExternalRef           String? // "ch_N" or "md_N"
   syncedAt                     DateTime?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 
-  channel             Channel?              @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  media               Media?                @relation("MediaDirectSaleProduct", fields: [mediaId], references: [id], onDelete: Cascade)
+  channel             Channel?             @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  media               Media?               @relation("MediaDirectSaleProduct", fields: [mediaId], references: [id], onDelete: Cascade)
   mediaEncryptedBlobs MediaEncryptedBlob[]
 
   @@index([channelId, productStatus])
@@ -234,9 +218,9 @@ model Product {
 /// here: each row carries its own ciphertext bound to its own product's
 /// AES key via AAD = Product.satsrailProductId.
 model MediaEncryptedBlob {
-  id                 String   @id @default(cuid())
-  productId          String
-  mediaId            String
+  id        String @id @default(cuid())
+  productId String
+  mediaId   String
 
   /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
   /// AAD = Product.satsrailProductId (UUID string).
@@ -288,7 +272,7 @@ model Settings {
   themeBorder             String    @default("#27272a")
   themeFont               String    @default("Geist")
   logoUrl                 String    @default("")
-  logoBytes               Bytes?    // replaces logo_image_id GridFS pointer
+  logoBytes               Bytes? // replaces logo_image_id GridFS pointer
   logoMimeType            String?
   aboutText               String    @default("")
   satsrailApiUrl          String    @default("https://satsrail.com/api/v1")

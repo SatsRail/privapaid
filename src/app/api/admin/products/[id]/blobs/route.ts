@@ -11,43 +11,31 @@ export async function GET(
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
 
-  const { id: productId } = await params;
+  const { id: satsrailProductId } = await params;
 
-  const mediaProducts = await prisma.mediaProduct.findMany({
-    where: { satsrailProductId: productId },
+  // Find the local Product mirror and load every MediaEncryptedBlob row
+  // attached to it. Works for both channel-scoped and media-scoped products
+  // since the shape is uniform now.
+  const product = await prisma.product.findUnique({
+    where: { satsrailProductId },
+    select: {
+      keyFingerprint: true,
+      mediaEncryptedBlobs: {
+        select: {
+          mediaId: true,
+          encryptedSourceUrl: true,
+          keyFingerprint: true,
+          createdAt: true,
+        },
+      },
+    },
   });
 
-  // A product may be a ChannelProduct (one row with many encrypted media
-  // entries) — surface those blobs too. The admin UI doesn't care which
-  // shape the product takes; it just wants every blob covered by `productId`.
-  const channelProducts = await prisma.channelProduct.findMany({
-    where: { satsrailProductId: productId },
-    include: { encryptedMedia: true },
-  });
+  if (!product) {
+    return NextResponse.json({ data: [] });
+  }
 
-  type BlobRow = {
-    mediaId: string;
-    encryptedSourceUrl: string;
-    keyFingerprint: string | null;
-    createdAt: Date;
-  };
-  const rows: BlobRow[] = [
-    ...mediaProducts.map((mp) => ({
-      mediaId: mp.mediaId,
-      encryptedSourceUrl: mp.encryptedSourceUrl,
-      keyFingerprint: mp.keyFingerprint ?? null,
-      createdAt: mp.createdAt,
-    })),
-    ...channelProducts.flatMap((cp) =>
-      cp.encryptedMedia.map((cpm) => ({
-        mediaId: cpm.mediaId,
-        encryptedSourceUrl: cpm.encryptedSourceUrl,
-        keyFingerprint: cpm.keyFingerprint ?? cp.keyFingerprint ?? null,
-        createdAt: cpm.createdAt,
-      }))
-    ),
-  ];
-
+  const rows = product.mediaEncryptedBlobs;
   const mediaIds = [...new Set(rows.map((r) => r.mediaId))];
   const mediaItems = mediaIds.length > 0
     ? await prisma.media.findMany({
@@ -69,7 +57,7 @@ export async function GET(
         ? `${row.encryptedSourceUrl.slice(0, 24)}...${row.encryptedSourceUrl.slice(-8)}`
         : null,
       blob_length: row.encryptedSourceUrl?.length ?? 0,
-      key_fingerprint: row.keyFingerprint || null,
+      key_fingerprint: row.keyFingerprint ?? product.keyFingerprint ?? null,
       created_at: row.createdAt.toISOString(),
     };
   });

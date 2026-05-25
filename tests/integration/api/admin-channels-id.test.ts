@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct, countMediaProducts, countChannelProducts } from "../../helpers/factories";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -168,40 +169,32 @@ describe("Admin Channels [id] routes", () => {
 
       const m1 = await createMedia(channelId, {
         name: "Video 1",
-        sourceUrl: "https://example.com/1.mp4",
+        blob: { kind: "url", url: "https://example.com/1.mp4" },
       });
       const m2 = await createMedia(channelId, {
         name: "Video 2",
-        sourceUrl: "https://example.com/2.mp4",
+        blob: { kind: "url", url: "https://example.com/2.mp4" },
       });
 
       // Two media-level products + one channel-level product = 3 SatsRail archives
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: m1.id,
           satsrailProductId: "prod_media_1",
           encryptedSourceUrl: "blob1",
-        },
-      });
-      await prisma.mediaProduct.create({
-        data: {
+        });
+      await createMediaProduct({
           mediaId: m2.id,
           satsrailProductId: "prod_media_2",
           encryptedSourceUrl: "blob2",
-        },
-      });
-      await prisma.channelProduct.create({
-        data: {
+        });
+      await createChannelProduct({
           channelId: channel.id,
           satsrailProductId: "prod_channel_1",
-          encryptedMedia: {
-            create: [
+          encryptedMedia: [
               { mediaId: m1.id, encryptedSourceUrl: "blob1" },
               { mediaId: m2.id, encryptedSourceUrl: "blob2" },
             ],
-          },
-        },
-      });
+        });
 
       const [req, ctx] = buildRequest("DELETE", channelId);
       const res = await DELETE(req, ctx);
@@ -221,8 +214,8 @@ describe("Admin Channels [id] routes", () => {
       // Local rows are gone
       expect(await prisma.channel.findUnique({ where: { id: channel.id } })).toBeNull();
       expect(await prisma.media.count({ where: { channelId } })).toBe(0);
-      expect(await prisma.mediaProduct.count()).toBe(0);
-      expect(await prisma.channelProduct.count()).toBe(0);
+      expect(await countMediaProducts()).toBe(0);
+      expect(await countChannelProducts()).toBe(0);
 
       // Audit fires with the archived ids
       expect(mockAudit).toHaveBeenCalledWith(
@@ -247,20 +240,16 @@ describe("Admin Channels [id] routes", () => {
       const channelId = channel.id;
       const m1 = await createMedia(channelId, { name: "V1", sourceUrl: "https://x.com/1" });
       const m2 = await createMedia(channelId, { name: "V2", sourceUrl: "https://x.com/2" });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: m1.id,
           satsrailProductId: "prod_ok",
           encryptedSourceUrl: "blob",
-        },
-      });
-      await prisma.mediaProduct.create({
-        data: {
+        });
+      await createMediaProduct({
           mediaId: m2.id,
           satsrailProductId: "prod_broken",
           encryptedSourceUrl: "blob2",
-        },
-      });
+        });
 
       mockDeleteProduct.mockImplementation(async (_sk: string, productId: string) => {
         if (productId === "prod_broken") {
@@ -281,7 +270,7 @@ describe("Admin Channels [id] routes", () => {
 
       // DB cleanup ran regardless of partial failure
       expect(await prisma.channel.findUnique({ where: { id: channel.id } })).toBeNull();
-      expect(await prisma.mediaProduct.count()).toBe(0);
+      expect(await countMediaProducts()).toBe(0);
     });
 
     it("returns 404 for missing channel", async () => {
@@ -295,13 +284,11 @@ describe("Admin Channels [id] routes", () => {
     it("skips SatsRail archive when merchant key is unavailable but still hard-deletes", async () => {
       const channel = await createChannel({ name: "No Key", slug: "no-key-ch" });
       const media = await createMedia(channel.id, { name: "V" });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: "prod_skip",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       const merchantKey = await import("@/lib/merchant-key");
       vi.mocked(merchantKey.getMerchantKey).mockResolvedValueOnce(null);
@@ -316,19 +303,17 @@ describe("Admin Channels [id] routes", () => {
 
       // Local rows still removed
       expect(await prisma.channel.findUnique({ where: { id: channel.id } })).toBeNull();
-      expect(await prisma.mediaProduct.count()).toBe(0);
+      expect(await countMediaProducts()).toBe(0);
     });
 
     it("handles a non-Error throw from SatsRail.deleteProduct (falls back to 'Unknown error')", async () => {
       const channel = await createChannel({ name: "Weird Err", slug: "weird-err-ch" });
       const media = await createMedia(channel.id, { name: "V" });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: "prod_string_err",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       // Throw a non-Error so we hit the "Unknown error" fallback branch
       mockDeleteProduct.mockImplementationOnce(async () => {

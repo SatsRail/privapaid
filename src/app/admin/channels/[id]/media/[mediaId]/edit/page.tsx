@@ -5,6 +5,7 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import MediaForm from "../../MediaForm";
 import DeleteMediaButton from "./DeleteMediaButton";
+import { parseMediaBlob } from "@/lib/schemas/media-blob";
 
 export const dynamic = "force-dynamic";
 
@@ -33,44 +34,22 @@ function blobPreview(blob: string | undefined | null): string | null {
   return blob ? `${blob.slice(0, 24)}...${blob.slice(-8)}` : null;
 }
 
-interface MediaProductRow {
-  satsrailProductId: string;
-  encryptedSourceUrl: string | null;
+interface BlobWithProduct {
+  encryptedSourceUrl: string;
   keyFingerprint: string | null;
   createdAt: Date;
-}
-
-interface ChannelProductRow {
-  satsrailProductId: string;
-  keyFingerprint: string | null;
-  createdAt: Date;
-  encryptedMedia: { mediaId: string; encryptedSourceUrl: string | null }[];
-}
-
-function buildBlobIdsWithEncryption(
-  mediaProducts: MediaProductRow[],
-  channelProductDocs: ChannelProductRow[],
-  mediaId: string
-): { mediaProductIds: Set<string>; channelProductIds: Set<string> } {
-  const mediaProductIds = new Set(
-    mediaProducts.filter((p) => !!p.encryptedSourceUrl).map((p) => p.satsrailProductId)
-  );
-  const channelProductIds = new Set(
-    channelProductDocs
-      .filter((cp) =>
-        cp.encryptedMedia.some(
-          (em) => em.mediaId === mediaId && !!em.encryptedSourceUrl
-        )
-      )
-      .map((cp) => cp.satsrailProductId)
-  );
-  return { mediaProductIds, channelProductIds };
+  product: {
+    satsrailProductId: string;
+    keyFingerprint: string | null;
+    channelId: string | null;
+    mediaId: string | null;
+  };
 }
 
 async function fetchProductDetails(
   sk: string,
   allProductIds: string[],
-  blobIds: { mediaProductIds: Set<string>; channelProductIds: Set<string> },
+  productIdsWithBlob: Set<string>,
   mediaRef: number | null | undefined
 ): Promise<ProductDetail[]> {
   const res = await satsrail.listProducts(sk);
@@ -87,46 +66,41 @@ async function fetchProductDetails(
 
     seen.add(p.id);
     details.push({
-      id: p.id, slug: p.slug, name: p.name,
-      price_cents: p.price_cents, currency: p.currency, status: p.status,
-      external_ref: p.external_ref, access_duration_seconds: p.access_duration_seconds,
-      has_blob: blobIds.mediaProductIds.has(p.id) || blobIds.channelProductIds.has(p.id),
+      id: p.id,
+      slug: p.slug,
+      name: p.name,
+      price_cents: p.price_cents,
+      currency: p.currency,
+      status: p.status,
+      external_ref: p.external_ref,
+      access_duration_seconds: p.access_duration_seconds,
+      has_blob: productIdsWithBlob.has(p.id),
     });
   }
   return details;
 }
 
-function buildEncryptedBlobs(
-  mediaProducts: MediaProductRow[],
-  channelProductDocs: ChannelProductRow[],
-  mediaId: string
-): EncryptedBlobInfo[] {
-  const blobs: EncryptedBlobInfo[] = [];
+function buildEncryptedBlobs(blobs: BlobWithProduct[]): EncryptedBlobInfo[] {
+  return blobs.map((b) => ({
+    product_id: b.product.satsrailProductId,
+    scope: b.product.mediaId ? ("media" as const) : ("channel" as const),
+    blob_preview: blobPreview(b.encryptedSourceUrl),
+    blob_length: b.encryptedSourceUrl?.length ?? 0,
+    key_fingerprint: b.keyFingerprint ?? b.product.keyFingerprint ?? null,
+    created_at: b.createdAt ? b.createdAt.toISOString() : null,
+  }));
+}
 
-  for (const p of mediaProducts) {
-    blobs.push({
-      product_id: p.satsrailProductId,
-      scope: "media",
-      blob_preview: blobPreview(p.encryptedSourceUrl),
-      blob_length: p.encryptedSourceUrl?.length ?? 0,
-      key_fingerprint: p.keyFingerprint || null,
-      created_at: p.createdAt ? p.createdAt.toISOString() : null,
-    });
+/** Recover the on-the-wire `source_url` value for the form from Media.blob. */
+function sourceUrlForForm(blob: unknown): string {
+  try {
+    const parsed = parseMediaBlob(blob);
+    if (parsed.kind === "url") return parsed.url;
+    if (parsed.kind === "markdown") return parsed.body;
+    return parsed.blobId; // photo
+  } catch {
+    return "";
   }
-
-  for (const cp of channelProductDocs) {
-    const entry = cp.encryptedMedia.find((em) => em.mediaId === mediaId);
-    blobs.push({
-      product_id: cp.satsrailProductId,
-      scope: "channel",
-      blob_preview: blobPreview(entry?.encryptedSourceUrl),
-      blob_length: entry?.encryptedSourceUrl?.length ?? 0,
-      key_fingerprint: cp.keyFingerprint || null,
-      created_at: cp.createdAt ? cp.createdAt.toISOString() : null,
-    });
-  }
-
-  return blobs;
 }
 
 export default async function EditMediaPage({
@@ -145,59 +119,51 @@ export default async function EditMediaPage({
 
   const currency = instanceConfig.currency;
 
-  // MediaProduct is 1:1 with media — use findUnique to fetch, then normalize as array.
-  const mediaProductRow = await prisma.mediaProduct.findUnique({
+  // All blobs covering this media (direct-sale + channel-scoped), via the
+  // unified MediaEncryptedBlob table.
+  const blobs = await prisma.mediaEncryptedBlob.findMany({
     where: { mediaId },
     select: {
-      satsrailProductId: true,
       encryptedSourceUrl: true,
       keyFingerprint: true,
       createdAt: true,
-    },
-  });
-  const mediaProducts: MediaProductRow[] = mediaProductRow ? [mediaProductRow] : [];
-
-  // Channel products that have an encrypted entry for this media.
-  const channelProductDocs = await prisma.channelProduct.findMany({
-    where: {
-      channelId,
-      encryptedMedia: { some: { mediaId } },
-    },
-    select: {
-      satsrailProductId: true,
-      keyFingerprint: true,
-      createdAt: true,
-      encryptedMedia: {
-        where: { mediaId },
-        select: { mediaId: true, encryptedSourceUrl: true },
+      product: {
+        select: {
+          satsrailProductId: true,
+          keyFingerprint: true,
+          channelId: true,
+          mediaId: true,
+        },
       },
     },
   });
 
-  const allProductIds = [
-    ...mediaProducts.map((p) => p.satsrailProductId),
-    ...channelProductDocs.map((p) => p.satsrailProductId),
-  ];
-
-  const blobIds = buildBlobIdsWithEncryption(mediaProducts, channelProductDocs, media.id);
+  const allProductIds = Array.from(
+    new Set(blobs.map((b) => b.product.satsrailProductId))
+  );
+  const productIdsWithBlob = new Set(
+    blobs.filter((b) => !!b.encryptedSourceUrl).map((b) => b.product.satsrailProductId)
+  );
 
   let productDetails: ProductDetail[] = [];
   const sk = await getMerchantKey();
   if (sk) {
     try {
-      productDetails = await fetchProductDetails(sk, allProductIds, blobIds, media.ref);
+      productDetails = await fetchProductDetails(sk, allProductIds, productIdsWithBlob, media.ref);
     } catch {
       // SatsRail unreachable — show without product details
     }
   }
 
-  // Preview images: serve via the new bytea-backed route by PreviewImage.id.
-  const previewImages = await prisma.previewImage.findMany({
-    where: { mediaId: media.id },
-    select: { id: true },
-    orderBy: { position: "asc" },
-  });
-  const previewImageIds = previewImages.map((p) => p.id);
+  // Extract blob ids from Media.previewImageUrls (shaped like `/api/images/<id>`).
+  // External URLs (non-/api/images/) pass through unchanged in display but
+  // don't surface as removable "ids" in the admin slot UI.
+  const previewImageIds = (media.previewImageUrls ?? [])
+    .map((u) => {
+      const m = /^\/api\/images\/([^/?#]+)$/.exec(u);
+      return m ? m[1] : null;
+    })
+    .filter((id): id is string => id !== null);
 
   const thumbnailId = media.thumbnailBytes ? media.id : "";
 
@@ -205,7 +171,7 @@ export default async function EditMediaPage({
     _id: media.id,
     name: media.name,
     description: media.description || "",
-    source_url: media.sourceUrl,
+    source_url: sourceUrlForForm(media.blob),
     media_type: media.mediaType,
     thumbnail_url: media.thumbnailUrl || "",
     thumbnail_id: thumbnailId,
@@ -213,28 +179,16 @@ export default async function EditMediaPage({
     product_ids: [...new Set([...allProductIds, ...productDetails.map((p) => p.id)])],
   };
 
-  const encryptedBlobs = buildEncryptedBlobs(mediaProducts, channelProductDocs, media.id);
+  const encryptedBlobs = buildEncryptedBlobs(blobs);
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-2">
-        <h1 className="text-2xl font-bold">Edit Media</h1>
-        {media.ref != null && (
-          <span className="rounded bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] px-2 py-0.5 font-mono text-xs text-[var(--theme-text-secondary)]">
-            md_{media.ref}
-          </span>
-        )}
-        <DeleteMediaButton
-          mediaId={media.id}
-          channelId={channelId}
-          name={media.name}
-        />
-      </div>
+      <DeleteMediaButton mediaId={mediaId} name={media.name} channelId={channelId} />
       <MediaForm
         channelId={channelId}
         channelSlug={channel?.slug}
-        initialData={serialized}
         currency={currency}
+        initialData={serialized}
         products={productDetails}
         encryptedBlobs={encryptedBlobs}
       />

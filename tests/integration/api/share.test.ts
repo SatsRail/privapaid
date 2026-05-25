@@ -51,7 +51,7 @@ describe("Share API — POST /api/media/[id]/share", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Shareable Video",
-        sourceUrl: "https://example.com/share.mp4",
+        blob: { kind: "url", url: "https://example.com/share.mp4" },
         mediaType: "video",
         position: 1,
         ...overrides,

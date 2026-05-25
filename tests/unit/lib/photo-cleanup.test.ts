@@ -30,7 +30,12 @@ async function createPhotoMedia(channelId: string, blobId: string, refOverride?:
       channelId,
       name: `Photo ${blobId.slice(-6)}`,
       description: "",
-      sourceUrl: blobId,
+      blob: {
+        kind: "photo",
+        blobId,
+        encryptedDek: "test_dek",
+        mimeType: "image/jpeg",
+      },
       mediaType: "photo",
       position: 1,
     },
@@ -138,18 +143,19 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
 
-  it("only matches Media rows where mediaType is 'photo' (a non-photo row with the same sourceUrl does NOT protect a blob)", async () => {
+  it("only matches Media rows where mediaType is 'photo' (a non-photo row with the same blobId does NOT protect a blob)", async () => {
     const channel = await createChannel();
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const blob = await createPhotoBlob({ createdAt: old });
-    // Create a NON-photo media that coincidentally has the blob id as sourceUrl.
+    // Create a NON-photo media that coincidentally references the blob.id.
+    // The cleanup filter `mediaType: "photo"` should exclude it.
     await prisma.media.create({
       data: {
         ref: 42,
         channelId: channel.id,
         name: "Video with confusing URL",
         description: "",
-        sourceUrl: blob.id,
+        blob: { kind: "url", url: blob.id },
         mediaType: "video",
         position: 1,
       },

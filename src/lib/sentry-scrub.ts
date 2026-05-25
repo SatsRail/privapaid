@@ -25,12 +25,19 @@ const SENSITIVE_KEYS = new Set(
     "set-cookie",
     "dek",
     "encrypted_dek",
+    "encrypteddek",
     "master_key",
     "encryption_key",
     "sk_encryption_key",
     "admin_source_url_plaintext",
     "admin_source_plaintext",
     "admin_photo_bytes",
+    // Media.blob (JSONB) carries the type-discriminated plaintext payload
+    // (URL for video/audio/podcast, markdown body for article, wrapped DEK
+    // for photo). Treat the whole field as sensitive at the top level —
+    // scrubInPlace stops recursing into a key once it matches, so the
+    // entire JSON payload is replaced with the scrub marker.
+    "blob",
   ].map((k) => k.toLowerCase())
 );
 

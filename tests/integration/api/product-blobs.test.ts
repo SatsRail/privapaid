@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createChannel, createMedia } from "../../helpers/factories";
-import { prisma } from "@/lib/prisma";
+import { createChannel, createMedia, createMediaProduct, createChannelProduct } from "../../helpers/factories";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -66,13 +65,11 @@ describe("GET /api/admin/products/[id]/blobs", () => {
       ref: 9999,
     });
 
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod-456",
-        encryptedSourceUrl: "aes256gcm:abcdefghijklmnopqrstuvwxyz1234567890abcdef",
-        keyFingerprint: "sha256:abc123",
-      },
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod-456",
+      encryptedSourceUrl: "aes256gcm:abcdefghijklmnopqrstuvwxyz1234567890abcdef",
+      keyFingerprint: "sha256:abc123",
     });
 
     const [req, ctx] = buildRequest("prod-456");
@@ -98,35 +95,26 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     const media1 = await createMedia(channel.id, { name: "Video 1" });
     const media2 = await createMedia(channel.id, { name: "Video 2" });
 
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media1.id,
-        satsrailProductId: "prod-multi-A",
-        encryptedSourceUrl: "blob1-encrypted-content-here",
-      },
+    await createMediaProduct({
+      mediaId: media1.id,
+      satsrailProductId: "prod-multi-A",
+      encryptedSourceUrl: "blob1-encrypted-content-here",
     });
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media2.id,
-        satsrailProductId: "prod-multi-B",
-        encryptedSourceUrl: "blob2-encrypted-content-here",
-      },
+    await createMediaProduct({
+      mediaId: media2.id,
+      satsrailProductId: "prod-multi-B",
+      encryptedSourceUrl: "blob2-encrypted-content-here",
     });
-    // Need two different product IDs because mediaId/satsrailProductId pair
-    // creates a UNIQUE index in Postgres (mediaId is unique on MediaProduct).
-    // To preserve test intent (multiple blobs for same product), use channel
-    // products instead.
-    const cp = await prisma.channelProduct.create({
-      data: {
-        channelId: channel.id,
-        satsrailProductId: "prod-multi",
-        encryptedMedia: {
-          create: [
-            { mediaId: media1.id, encryptedSourceUrl: "blob1-encrypted-content-here" },
-            { mediaId: media2.id, encryptedSourceUrl: "blob2-encrypted-content-here" },
-          ],
-        },
-      },
+    // Need a product with two blob rows to exercise the "multiple blobs per
+    // product" path. A media-scoped Product is 1:1 with Media; channel-scoped
+    // is N:M, so we create a channel product with two MediaEncryptedBlob entries.
+    const cp = await createChannelProduct({
+      channelId: channel.id,
+      satsrailProductId: "prod-multi",
+      encryptedMedia: [
+        { mediaId: media1.id, encryptedSourceUrl: "blob1-encrypted-content-here" },
+        { mediaId: media2.id, encryptedSourceUrl: "blob2-encrypted-content-here" },
+      ],
     });
 
     const [req, ctx] = buildRequest("prod-multi");
@@ -153,12 +141,10 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     const media = await createMedia(channel.id);
     const longBlob = "A".repeat(100);
 
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod-preview",
-        encryptedSourceUrl: longBlob,
-      },
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod-preview",
+      encryptedSourceUrl: longBlob,
     });
 
     const [req, ctx] = buildRequest("prod-preview");

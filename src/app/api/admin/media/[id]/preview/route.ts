@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
+import { parseMediaBlob } from "@/lib/schemas/media-blob";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function GET(
 
   const media = await prisma.media.findUnique({
     where: { id },
-    select: { sourceUrl: true, mediaType: true, name: true },
+    select: { blob: true, mediaType: true, name: true },
   });
 
   if (!media) {
@@ -33,8 +34,21 @@ export async function GET(
     details: { name: media.name },
   });
 
+  // Recover the on-the-wire `source_url` value from Media.blob.
+  // Photo blobs surface the EncryptedPhotoBlob.id pointer (same as the
+  // legacy shape — bytes themselves stay behind /api/photos/[id]).
+  let sourceUrl = "";
+  try {
+    const parsed = parseMediaBlob(media.blob);
+    if (parsed.kind === "url") sourceUrl = parsed.url;
+    else if (parsed.kind === "markdown") sourceUrl = parsed.body;
+    else sourceUrl = parsed.blobId;
+  } catch {
+    /* leave empty */
+  }
+
   return NextResponse.json({
-    source_url: media.sourceUrl,
+    source_url: sourceUrl,
     media_type: media.mediaType,
   });
 }

@@ -224,6 +224,11 @@ DROP TABLE IF EXISTS "ChannelProductMedia";
 DROP TABLE IF EXISTS "ChannelProduct";
 DROP TABLE IF EXISTS "MediaProduct";
 
+-- PreviewImage was effectively unused (the upload shim writes to
+-- EncryptedPhotoBlob; the lookup at GET /api/images/[id] kept a fallback that
+-- never resolved any rows). Drop it as part of the same simplification.
+DROP TABLE IF EXISTS "PreviewImage";
+
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "sourceUrl";
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "encryptedDek";
 

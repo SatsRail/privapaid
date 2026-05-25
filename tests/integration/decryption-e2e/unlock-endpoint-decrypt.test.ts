@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { randomBytes } from "crypto";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct } from "../../helpers/factories";
 import { encryptSourceUrl, encryptBytes } from "@/lib/content-encryption";
 import {
   base64urlToBytes,
@@ -91,23 +92,32 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
         active: true,
       },
     });
+    const blob =
+      opts.mediaType === "article"
+        ? { kind: "markdown", body: opts.sourceUrl }
+        : opts.mediaType === "photo"
+          ? {
+              kind: "photo",
+              blobId: opts.sourceUrl,
+              encryptedDek: "test_dek",
+              mimeType: "image/jpeg",
+            }
+          : { kind: "url", url: opts.sourceUrl };
     const media = await prisma.media.create({
       data: {
         ref: nextRef(),
         channelId: channel.id,
         name: "Test media",
-        sourceUrl: opts.sourceUrl,
+        blob,
         mediaType: opts.mediaType,
       },
     });
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: opts.productId,
         encryptedSourceUrl: opts.encryptedSourceUrl,
         keyFingerprint: opts.keyFingerprintHex,
-      },
-    });
+      });
     return { mediaId: media.id, channelId: channel.id };
   }
 
@@ -179,7 +189,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
 
     const { mediaId } = await seedMediaProduct({
       mediaType: "photo",
-      sourceUrl: "blob-id-placeholder",
+      blob: { kind: "url", url: "blob-id-placeholder" },
       encryptedSourceUrl: wrappedDek,
       keyFingerprintHex: fingerprintHex,
       productId,

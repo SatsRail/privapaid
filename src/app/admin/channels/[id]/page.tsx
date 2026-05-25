@@ -34,27 +34,28 @@ export default async function ChannelDetailPage({
 
   const cat = channel.category;
 
-  // Fetch media-level product associations
+  // Media-scoped (direct-sale) products for these media.
   const mediaIds = media.map((m) => m.id);
-  const mediaProducts = await prisma.mediaProduct.findMany({
+  const directProducts = await prisma.product.findMany({
     where: { mediaId: { in: mediaIds } },
     select: { mediaId: true },
   });
-  const mediaWithProduct = new Set(mediaProducts.map((mp) => mp.mediaId));
+  const mediaWithProduct = new Set(
+    directProducts.map((p) => p.mediaId).filter((id): id is string => id !== null)
+  );
 
-  // Fetch channel-level products and their encrypted media join rows.
-  const channelProductDocs = await prisma.channelProduct.findMany({
+  // Channel-scoped products and their per-media blob coverage.
+  const channelProductDocs = await prisma.product.findMany({
     where: { channelId: id },
     select: {
       satsrailProductId: true,
-      encryptedMedia: { select: { mediaId: true } },
+      mediaEncryptedBlobs: { select: { mediaId: true } },
     },
   });
 
-  // Build a set of media IDs covered by channel products
   const mediaCoveredByChannel = new Set<string>();
   for (const cp of channelProductDocs) {
-    for (const em of cp.encryptedMedia) {
+    for (const em of cp.mediaEncryptedBlobs) {
       mediaCoveredByChannel.add(em.mediaId);
     }
   }
@@ -91,7 +92,7 @@ export default async function ChannelDetailPage({
               price_cents: sp.price_cents,
               currency: sp.currency,
               status: sp.status,
-              encrypted_media_count: doc.encryptedMedia.length,
+              encrypted_media_count: doc.mediaEncryptedBlobs.length,
             };
           })
           .filter((p): p is ChannelProductData => p !== null);

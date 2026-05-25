@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct, findMediaProducts, findFirstMediaProduct } from "../../helpers/factories";
 import { mockSatsrailClient } from "../../helpers/mocks/satsrail";
 
 // Mocks — MUST be before route imports
@@ -76,7 +77,7 @@ describe("Admin Media API", () => {
         ref: nextRef(),
         channelId: chId,
         name: "Test Video",
-        sourceUrl: "https://example.com/video.mp4",
+        blob: { kind: "url", url: "https://example.com/video.mp4" },
         mediaType: "video",
         position: 1,
         ...overrides,
@@ -112,13 +113,11 @@ describe("Admin Media API", () => {
     it("attaches product_ids when media has linked MediaProducts", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_for_list",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media?channel_id=${chId}`, "GET");
       const res = await listMedia(req);
@@ -199,12 +198,14 @@ describe("Admin Media API", () => {
       expect(res.status).toBe(201);
       expect(mockWrapDekFromBase64url).toHaveBeenCalledWith("raw-dek-base64url");
 
-      // The persisted doc should carry the wrapped DEK exactly as wrapDek returned.
+      // The persisted doc should carry the wrapped DEK in Media.blob.
       const persisted = await prisma.media.findUnique({ where: { id: body.data.id ?? body.data._id } });
-      expect(persisted?.encryptedDek).toBe("kek-wrapped-dek-blob");
+      const blob = persisted?.blob as { kind: string; encryptedDek?: string };
+      expect(blob.kind).toBe("photo");
+      expect(blob.encryptedDek).toBe("kek-wrapped-dek-blob");
     });
 
-    it("photo creation succeeds even when KEK wrapping throws (non-fatal)", async () => {
+    it("photo creation rejects with 422 when KEK wrapping throws (DEK is required)", async () => {
       const chId = await seedChannel();
       mockWrapDekFromBase64url.mockImplementationOnce(() => {
         throw new Error("PHOTO_KEK is not set");
@@ -212,7 +213,7 @@ describe("Admin Media API", () => {
 
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: chId,
-        name: "Resilient Photo",
+        name: "Failing Photo",
         source_url: "gridfs:photo-id",
         media_type: "photo",
         dek: "raw-dek-base64url",
@@ -220,9 +221,10 @@ describe("Admin Media API", () => {
       const res = await createMediaRoute(req);
       const body = await res.json();
 
-      expect(res.status).toBe(201);
-      const persisted = await prisma.media.findUnique({ where: { id: body.data.id ?? body.data._id } });
-      expect(persisted?.encryptedDek).toBeFalsy();
+      // The new media route refuses to persist a photo without a usable DEK
+      // (the blob's `encryptedDek` is a required field in the JSONB shape).
+      expect(res.status).toBe(422);
+      expect(body.error).toContain("Failed to KEK-wrap photo DEK");
     });
 
     it("does not call the DEK wrapper for non-photo media", async () => {
@@ -240,12 +242,10 @@ describe("Admin Media API", () => {
 
     it("returns 422 when photo media is added to channel with existing products but no DEK", async () => {
       const chId = await seedChannel();
-      await prisma.channelProduct.create({
-        data: {
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_existing",
-        },
-      });
+        });
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: chId,
         name: "Photo No DEK",
@@ -260,20 +260,16 @@ describe("Admin Media API", () => {
 
     it("encrypts source_url for each existing ChannelProduct on the channel", async () => {
       const chId = await seedChannel();
-      await prisma.channelProduct.create({
-        data: {
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_cp_A",
           keyFingerprint: "fpA",
-        },
-      });
-      await prisma.channelProduct.create({
-        data: {
+        });
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_cp_B",
           keyFingerprint: "fpB",
-        },
-      });
+        });
       mockSatsrailClient.getProductKey.mockResolvedValue({ key: "0".repeat(64) });
 
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
@@ -285,29 +281,23 @@ describe("Admin Media API", () => {
       const res = await createMediaRoute(req);
       expect(res.status).toBe(201);
 
-      // Two channelProductMedia rows should be created
-      const entries = await prisma.channelProductMedia.findMany({
-        where: { channelProductId: { in: ["prod_cp_A", "prod_cp_B"].length > 0 ? undefined : "" } },
-      });
-      // Just check that both ChannelProducts get a media entry
-      const cps = await prisma.channelProduct.findMany({
+      // Both channel-scoped Products should get a MediaEncryptedBlob entry for
+      // the new media.
+      const cps = await prisma.product.findMany({
         where: { channelId: chId },
-        include: { encryptedMedia: true },
+        include: { mediaEncryptedBlobs: true },
       });
-      const allEncrypted = cps.flatMap((cp) => cp.encryptedMedia);
+      const allEncrypted = cps.flatMap((cp) => cp.mediaEncryptedBlobs);
       expect(allEncrypted).toHaveLength(2);
-      expect(entries.length).toBeGreaterThanOrEqual(0);
     });
 
     it("encrypts photo DEK (rather than source_url) for existing ChannelProducts", async () => {
       const chId = await seedChannel();
-      await prisma.channelProduct.create({
-        data: {
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_cp_photo",
           keyFingerprint: "fp_photo",
-        },
-      });
+        });
       mockSatsrailClient.getProductKey.mockResolvedValue({ key: "0".repeat(64) });
       const { encryptSourceUrl } = await import("@/lib/content-encryption");
 
@@ -330,13 +320,11 @@ describe("Admin Media API", () => {
 
     it("swallows channel-product encryption errors so media creation still succeeds", async () => {
       const chId = await seedChannel();
-      await prisma.channelProduct.create({
-        data: {
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_failing",
           keyFingerprint: "fp_fail",
-        },
-      });
+        });
       mockSatsrailClient.getProductKey.mockRejectedValue(new Error("portal blew up"));
 
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
@@ -354,13 +342,11 @@ describe("Admin Media API", () => {
 
     it("skips channel product encryption when getMerchantKey returns null", async () => {
       const chId = await seedChannel();
-      await prisma.channelProduct.create({
-        data: {
+      await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_no_key_cp",
           keyFingerprint: "fp",
-        },
-      });
+        });
       vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
 
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
@@ -445,29 +431,24 @@ describe("Admin Media API", () => {
       expect(m!.mediaType).toBe("audio");
       expect(m!.thumbnailUrl).toBe("https://example.com/thumb.jpg");
       expect(m!.position).toBe(42);
-      expect(m!.sourceUrl).toBe("https://example.com/different.mp4");
+      const updatedBlob = m!.blob as { kind: string; url?: string };
+      expect(updatedBlob.url).toBe("https://example.com/different.mp4");
     });
 
     it("re-encrypts MediaProduct + ChannelProduct blobs when sourceUrl changes", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_reenc_m",
           encryptedSourceUrl: "old_blob",
-        },
-      });
-      const cp = await prisma.channelProduct.create({
-        data: {
+        });
+      const cp = await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_reenc_ch",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "old_ch_blob" }],
-          },
-        },
-      });
+          encryptedMedia: [{ mediaId, encryptedSourceUrl: "old_ch_blob" }],
+        });
 
       mockSatsrailClient.getProductKey.mockResolvedValue({ key: "0".repeat(64) });
 
@@ -478,9 +459,9 @@ describe("Admin Media API", () => {
       expect(res.status).toBe(200);
 
       // Both blobs should be re-encrypted with the mocked encryptSourceUrl
-      const updatedMp = await prisma.mediaProduct.findFirst({ where: { mediaId } });
+      const updatedMp = await findFirstMediaProduct({ mediaId });
       expect(updatedMp!.encryptedSourceUrl).toBe("encrypted_blob_base64");
-      const updatedCp = await prisma.channelProductMedia.findFirst({ where: { channelProductId: cp.id, mediaId } });
+      const updatedCp = await prisma.mediaEncryptedBlob.findFirst({ where: { productId: cp.id, mediaId } });
       expect(updatedCp!.encryptedSourceUrl).toBe("encrypted_blob_base64");
     });
 
@@ -488,13 +469,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_same_url",
           encryptedSourceUrl: "unchanged_blob",
-        },
-      });
+        });
 
       // PATCH with source_url same as existing should NOT re-encrypt
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
@@ -506,7 +485,7 @@ describe("Admin Media API", () => {
       // getProductKey should not have been called
       expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
 
-      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId } });
+      const mp = await findFirstMediaProduct({ mediaId });
       expect(mp!.encryptedSourceUrl).toBe("unchanged_blob");
     });
 
@@ -514,13 +493,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_no_key_reenc",
           encryptedSourceUrl: "old_blob",
-        },
-      });
+        });
 
       vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
 
@@ -534,7 +511,7 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
 
       // MediaProduct blob unchanged
-      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId } });
+      const mp = await findFirstMediaProduct({ mediaId });
       expect(mp!.encryptedSourceUrl).toBe("old_blob");
     });
 
@@ -542,13 +519,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_reenc_err",
           encryptedSourceUrl: "old_blob",
-        },
-      });
+        });
 
       mockSatsrailClient.getProductKey.mockRejectedValue(new Error("SatsRail timeout"));
 
@@ -610,13 +585,11 @@ describe("Admin Media API", () => {
       // Channel count was already decremented when this was soft-deleted previously
       await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 5 } });
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_leftover",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
 
@@ -634,7 +607,7 @@ describe("Admin Media API", () => {
       // SatsRail archive ran for the leftover product
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_leftover");
 
-      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
+      const remaining = await findMediaProducts({ mediaId });
       expect(remaining).toHaveLength(0);
 
       // Channel count NOT decremented again (was already decremented at soft-delete time)
@@ -646,15 +619,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      const cp = await prisma.channelProduct.create({
-        data: {
+      const cp = await createChannelProduct({
           channelId: chId,
           satsrailProductId: "prod_abc",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "blob" }],
-          },
-        },
-      });
+          encryptedMedia: [{ mediaId, encryptedSourceUrl: "blob" }],
+        });
 
       await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 1 } });
 
@@ -662,24 +631,22 @@ describe("Admin Media API", () => {
       const res = await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
       expect(res.status).toBe(200);
 
-      const updated = await prisma.channelProduct.findUnique({
+      const updated = await prisma.product.findUnique({
         where: { id: cp.id },
-        include: { encryptedMedia: true },
+        include: { mediaEncryptedBlobs: true },
       });
-      expect(updated!.encryptedMedia).toHaveLength(0);
+      expect(updated!.mediaEncryptedBlobs).toHaveLength(0);
     });
 
     it("archives associated MediaProduct on SatsRail and removes the local record", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_individual_1",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
 
@@ -690,7 +657,7 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledTimes(1);
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_individual_1");
 
-      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
+      const remaining = await findMediaProducts({ mediaId });
       expect(remaining).toHaveLength(0);
     });
 
@@ -699,20 +666,16 @@ describe("Admin Media API", () => {
       const mediaIdA = await seedMedia(chId);
       const mediaIdB = await seedMedia(chId, { position: 2 });
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: mediaIdA,
           satsrailProductId: "prod_A",
           encryptedSourceUrl: "blobA",
-        },
-      });
-      await prisma.mediaProduct.create({
-        data: {
+        });
+      await createMediaProduct({
           mediaId: mediaIdB,
           satsrailProductId: "prod_B",
           encryptedSourceUrl: "blobB",
-        },
-      });
+        });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
 
@@ -725,7 +688,7 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_A");
 
       // prod_B should still exist
-      const remaining = await prisma.mediaProduct.findFirst({ where: { satsrailProductId: "prod_B" } });
+      const remaining = await findFirstMediaProduct({ satsrailProductId: "prod_B" });
       expect(remaining).not.toBeNull();
     });
 
@@ -733,13 +696,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_failing",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 1 } });
 
@@ -753,7 +714,7 @@ describe("Admin Media API", () => {
       const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
-      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
+      const remaining = await findMediaProducts({ mediaId });
       expect(remaining).toHaveLength(0);
 
       const channel = await prisma.channel.findUnique({ where: { id: chId } });
@@ -764,13 +725,11 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId,
           satsrailProductId: "prod_no_key",
           encryptedSourceUrl: "blob",
-        },
-      });
+        });
 
       vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
 
@@ -783,7 +742,7 @@ describe("Admin Media API", () => {
       const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
-      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
+      const remaining = await findMediaProducts({ mediaId });
       expect(remaining).toHaveLength(0);
     });
 
@@ -809,7 +768,12 @@ describe("Admin Media API", () => {
           channelId: chId,
           name: "Photo",
           description: "",
-          sourceUrl: blob.id,
+          blob: {
+            kind: "photo",
+            blobId: blob.id,
+            encryptedDek: "test_dek",
+            mimeType: "image/jpeg",
+          },
           mediaType: "photo",
           position: 1,
         },
@@ -852,7 +816,7 @@ describe("Admin Media API", () => {
           channelId: chId,
           name: "PhotoBroken",
           description: "",
-          sourceUrl: "missing-blob-id",
+          blob: { kind: "url", url: "missing-blob-id" },
           mediaType: "photo",
           position: 1,
         },
@@ -879,7 +843,7 @@ describe("Admin Media API", () => {
           channelId: chId,
           name: "PhotoLegacy",
           description: "",
-          sourceUrl: "legacy-non-blob-id-string",
+          blob: { kind: "url", url: "legacy-non-blob-id-string" },
           mediaType: "photo",
           position: 1,
         },

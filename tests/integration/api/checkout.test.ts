@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockGetMerchantKey, mockSatsrail, mockRateLimit } = vi.hoisted(() => ({
@@ -92,17 +93,15 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Paid Media",
-        sourceUrl: "https://example.com/paid.mp4",
+        blob: { kind: "url", url: "https://example.com/paid.mp4" },
         mediaType: "video",
       },
     });
 
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod_1",
-        encryptedSourceUrl: "enc_blob",
-      },
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod_1",
+      encryptedSourceUrl: "enc_blob",
     });
 
     return { channelId: channel.id, mediaId: media.id };
@@ -123,19 +122,15 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Channel Paid Media",
-        sourceUrl: "https://example.com/chpaid.mp4",
+        blob: { kind: "url", url: "https://example.com/chpaid.mp4" },
         mediaType: "video",
       },
     });
 
-    await prisma.channelProduct.create({
-      data: {
-        channelId: channel.id,
-        satsrailProductId: "prod_ch",
-        encryptedMedia: {
-          create: [{ mediaId: media.id, encryptedSourceUrl: "ch_enc_blob" }],
-        },
-      },
+    await createChannelProduct({
+      channelId: channel.id,
+      satsrailProductId: "prod_ch",
+      encryptedMedia: [{ mediaId: media.id, encryptedSourceUrl: "ch_enc_blob" }],
     });
 
     return { channelId: channel.id, mediaId: media.id };
@@ -187,7 +182,7 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Inactive Channel Media",
-        sourceUrl: "https://example.com/inactive.mp4",
+        blob: { kind: "url", url: "https://example.com/inactive.mp4" },
         mediaType: "video",
       },
     });

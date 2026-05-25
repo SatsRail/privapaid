@@ -117,9 +117,11 @@ export default async function ChannelPage({ params, searchParams }: Props) {
     take: PAGE_SIZE,
   });
 
-  // Fetch cached product prices for all media in this channel
+  // Fetch cached product prices for all media in this channel. Direct-sale
+  // (media-scoped) products only — the channel bundle's price is rendered
+  // separately by the channel header.
   const mediaIds = media.map((m) => m.id);
-  const mediaProducts = await prisma.mediaProduct.findMany({
+  const mediaProducts = await prisma.product.findMany({
     where: {
       mediaId: { in: mediaIds },
       productStatus: "active",
@@ -133,6 +135,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
 
   const priceMap = new Map<string, { cents: number; currency: string }>();
   for (const mp of mediaProducts) {
+    if (!mp.mediaId) continue;
     if (!priceMap.has(mp.mediaId) && mp.productPriceCents != null) {
       priceMap.set(mp.mediaId, {
         cents: mp.productPriceCents,

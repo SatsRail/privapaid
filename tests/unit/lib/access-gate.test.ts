@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createChannel, createMedia } from "../../helpers/factories";
+import { createChannel, createMedia, createMediaProduct, createChannelProduct } from "../../helpers/factories";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockCookieStore, mockFetch } = vi.hoisted(() => {
@@ -83,14 +83,12 @@ describe("access-gate", () => {
     it("returns media product when active", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_media",
-          encryptedSourceUrl: "enc_blob_media",
-          keyFingerprint: "fp_media",
-          productStatus: "active",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_media",
+        encryptedSourceUrl: "enc_blob_media",
+        keyFingerprint: "fp_media",
+        productStatus: "active",
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -104,16 +102,12 @@ describe("access-gate", () => {
     it("returns channel product", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_channel",
-          keyFingerprint: "fp_channel",
-          productStatus: "active",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "enc_blob_channel" }],
-          },
-        },
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_channel",
+        keyFingerprint: "fp_channel",
+        productStatus: "active",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_blob_channel" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -126,25 +120,19 @@ describe("access-gate", () => {
     it("returns both media and channel products", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_m",
-          encryptedSourceUrl: "enc_m",
-          productStatus: "active",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_m",
+        encryptedSourceUrl: "enc_m",
+        productStatus: "active",
       });
 
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_c",
-          keyFingerprint: "fp_c",
-          productStatus: "active",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "enc_c" }],
-          },
-        },
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_c",
+        keyFingerprint: "fp_c",
+        productStatus: "active",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_c" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -158,13 +146,11 @@ describe("access-gate", () => {
     it("excludes archived media products", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_archived",
-          encryptedSourceUrl: "enc_archived",
-          productStatus: "archived",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_archived",
+        encryptedSourceUrl: "enc_archived",
+        productStatus: "archived",
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -174,16 +160,12 @@ describe("access-gate", () => {
     it("excludes archived channel products", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_ch_archived",
-          keyFingerprint: "fp",
-          productStatus: "archived",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "enc" }],
-          },
-        },
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_ch_archived",
+        keyFingerprint: "fp",
+        productStatus: "archived",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -200,28 +182,20 @@ describe("access-gate", () => {
     it("returns multiple channel products covering same media", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_weekly",
-          keyFingerprint: "fp_w",
-          productStatus: "active",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "enc_weekly" }],
-          },
-        },
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_weekly",
+        keyFingerprint: "fp_w",
+        productStatus: "active",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_weekly" }],
       });
 
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_monthly",
-          keyFingerprint: "fp_m",
-          productStatus: "active",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "enc_monthly" }],
-          },
-        },
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_monthly",
+        keyFingerprint: "fp_m",
+        productStatus: "active",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_monthly" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -235,13 +209,11 @@ describe("access-gate", () => {
     it("includes archived products when includeArchived is true (verification path)", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_retired",
-          encryptedSourceUrl: "enc_retired",
-          productStatus: "archived",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_retired",
+        encryptedSourceUrl: "enc_retired",
+        productStatus: "archived",
       });
 
       const purchaseList = await getProductsForMedia(mediaId, channelId);
@@ -258,13 +230,11 @@ describe("access-gate", () => {
     it("surfaces product_status on every returned product", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_active",
-          encryptedSourceUrl: "enc_active",
-          productStatus: "active",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_active",
+        encryptedSourceUrl: "enc_active",
+        productStatus: "active",
       });
 
       const [product] = await getProductsForMedia(mediaId, channelId);
@@ -273,15 +243,12 @@ describe("access-gate", () => {
 
     it("skips media products without an encryptedSourceUrl", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
-      // Pure SQL insert so we can leave encryptedSourceUrl empty/null —
-      // Prisma's create wouldn't let us pass a null for this field.
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_empty",
-          encryptedSourceUrl: "",
-          productStatus: "active",
-        },
+      // Empty encryptedSourceUrl is filtered out at the read layer.
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_empty",
+        encryptedSourceUrl: "",
+        productStatus: "active",
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -291,13 +258,11 @@ describe("access-gate", () => {
     it("returns undefined keyFingerprint when null in DB (?? fallback)", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
       // No keyFingerprint set → null in DB
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_no_fp",
-          encryptedSourceUrl: "enc_blob",
-          productStatus: "active",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_no_fp",
+        encryptedSourceUrl: "enc_blob",
+        productStatus: "active",
       });
       const products = await getProductsForMedia(mediaId, channelId);
       expect(products[0].keyFingerprint).toBeUndefined();
@@ -306,30 +271,24 @@ describe("access-gate", () => {
     it("returns undefined productStatus when null in DB (?? fallback)", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
       // Default in schema is "active"; force null with a raw update
-      await prisma.mediaProduct.create({
-        data: {
-          mediaId,
-          satsrailProductId: "prod_no_status",
-          encryptedSourceUrl: "enc",
-        },
+      await createMediaProduct({
+        mediaId,
+        satsrailProductId: "prod_no_status",
+        encryptedSourceUrl: "enc",
       });
-      await prisma.$executeRaw`UPDATE "MediaProduct" SET "productStatus" = NULL WHERE "satsrailProductId" = 'prod_no_status'`;
+      await prisma.$executeRaw`UPDATE "Product" SET "productStatus" = NULL WHERE "satsrailProductId" = 'prod_no_status'`;
       const products = await getProductsForMedia(mediaId, channelId, { includeArchived: true });
       expect(products[0].status).toBeUndefined();
     });
 
     it("channel product without encrypted entry is skipped", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
-      // Channel product with encryptedMedia entry that has empty url
-      await prisma.channelProduct.create({
-        data: {
-          channelId,
-          satsrailProductId: "prod_cp_empty",
-          productStatus: "active",
-          encryptedMedia: {
-            create: [{ mediaId, encryptedSourceUrl: "" }],
-          },
-        },
+      // Channel product with one MediaEncryptedBlob entry that has empty url
+      await createChannelProduct({
+        channelId,
+        satsrailProductId: "prod_cp_empty",
+        productStatus: "active",
+        encryptedMedia: [{ mediaId, encryptedSourceUrl: "" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);

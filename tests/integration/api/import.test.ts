@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import { randomBytes } from "crypto";
 import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { findMediaProducts } from "../../helpers/factories";
 import { createCategory, createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
@@ -305,7 +306,7 @@ describe("POST /api/admin/import", () => {
     expect(mediaR.created).toBe(1);
     expect(mediaR.errors).toHaveLength(0);
 
-    const mediaProducts = await prisma.mediaProduct.findMany();
+    const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
     expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
     expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
@@ -357,7 +358,7 @@ describe("POST /api/admin/import", () => {
     await createMedia(channel.id, {
       name: "Old Name",
       ref: 42,
-      sourceUrl: "https://example.com/old.mp4",
+      blob: { kind: "url", url: "https://example.com/old.mp4" },
     });
 
     const res = await POST(
@@ -386,7 +387,8 @@ describe("POST /api/admin/import", () => {
 
     const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    expect(media!.sourceUrl).toBe("https://example.com/new.mp4");
+    const blob = media!.blob as { kind: string; url: string };
+    expect(blob.url).toBe("https://example.com/new.mp4");
   });
 
   it("matches existing media by name when ref is not provided", async () => {
@@ -397,7 +399,7 @@ describe("POST /api/admin/import", () => {
     const channel = await createChannel({ slug: "name-match-ch", name: "Name Match" });
     await createMedia(channel.id, {
       name: "My Video",
-      sourceUrl: "https://example.com/old.mp4",
+      blob: { kind: "url", url: "https://example.com/old.mp4" },
       description: "old description",
     });
 
@@ -565,7 +567,7 @@ describe("POST /api/admin/import", () => {
       "sk_live_test_key",
       expect.objectContaining({ external_ref: "md_custom_77" })
     );
-    const mediaProducts = await prisma.mediaProduct.findMany();
+    const mediaProducts = await findMediaProducts();
     expect(mediaProducts[0].productExternalRef).toBe("md_custom_77");
   });
 
@@ -613,7 +615,7 @@ describe("POST /api/admin/import", () => {
     expect(mockCreateProduct).not.toHaveBeenCalled();
     expect(mockUpdateProduct).toHaveBeenCalled();
 
-    const mediaProducts = await prisma.mediaProduct.findMany();
+    const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
     expect(mediaProducts[0].satsrailProductId).toBe("prod_existing");
     expect(mediaProducts[0].productExternalRef).toBe("md_existing_5");
@@ -887,7 +889,7 @@ describe("POST /api/admin/import", () => {
     expect(ch!.satsrailProductTypeId).toBe("pt_new");
 
     expect(mockCreateProduct).toHaveBeenCalledOnce();
-    const mediaProducts = await prisma.mediaProduct.findMany();
+    const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
   });
 

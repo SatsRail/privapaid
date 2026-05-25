@@ -76,14 +76,13 @@ export async function PATCH(
  * Hard-delete a channel and cascade through all nested resources.
  *
  * Cascade order (mirrors single-media DELETE at /api/admin/media/[id]):
- *   1. Look up every MediaProduct + ChannelProduct under this channel
+ *   1. Look up every Product (media-scoped + channel-scoped) under this channel
  *   2. Archive each linked SatsRail product (deleteProduct), tolerating per-product
  *      failures so a stuck product can't block the rest of the cleanup
- *   3. Delete MediaProduct rows
- *   4. Delete ChannelProduct rows
- *   5. Delete all Media rows
- *   6. Delete the Channel row
- *   7. Audit-log with the full list of archived/failed product ids
+ *   3. Delete Product rows (cascades to MediaEncryptedBlob)
+ *   4. Delete all Media rows
+ *   5. Delete the Channel row
+ *   6. Audit-log with the full list of archived/failed product ids
  *
  * If the merchant key is missing we still complete the local cleanup but
  * leave the SatsRail products intact (logged + reported in the audit entry).
@@ -108,57 +107,53 @@ export async function DELETE(
   });
   const mediaIds = mediaDocs.map((m) => m.id);
 
-  const mediaProducts = mediaIds.length > 0
-    ? await prisma.mediaProduct.findMany({
-        where: { mediaId: { in: mediaIds } },
-        select: { satsrailProductId: true },
-      })
-    : [];
-
-  const channelProducts = await prisma.channelProduct.findMany({
-    where: { channelId: id },
-    select: { satsrailProductId: true },
+  // Every Product covering this channel: direct-sale (mediaId in mediaIds)
+  // OR channel-scoped (channelId == id).
+  const productsToArchive = await prisma.product.findMany({
+    where: {
+      OR: [
+        { channelId: id },
+        ...(mediaIds.length > 0 ? [{ mediaId: { in: mediaIds } }] : []),
+      ],
+    },
+    select: { id: true, satsrailProductId: true, channelId: true, mediaId: true },
   });
-
-  const productIdsToArchive: string[] = [
-    ...mediaProducts.map((mp) => mp.satsrailProductId),
-    ...channelProducts.map((cp) => cp.satsrailProductId),
-  ];
 
   const archivedProductIds: string[] = [];
   const archiveErrors: { productId: string; error: string }[] = [];
+  let channelProductCount = 0;
 
-  if (productIdsToArchive.length > 0) {
+  if (productsToArchive.length > 0) {
+    channelProductCount = productsToArchive.filter((p) => p.channelId === id).length;
     const sk = await getMerchantKey();
     if (!sk) {
       console.warn(
         "channel.delete: no merchant key — skipping SatsRail archive for products:",
-        productIdsToArchive
+        productsToArchive.map((p) => p.satsrailProductId)
       );
     } else {
-      for (const productId of productIdsToArchive) {
+      for (const p of productsToArchive) {
         try {
-          await satsrail.deleteProduct(sk, productId);
-          archivedProductIds.push(productId);
+          await satsrail.deleteProduct(sk, p.satsrailProductId);
+          archivedProductIds.push(p.satsrailProductId);
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown error";
           console.error(
-            `channel.delete: failed to archive SatsRail product ${productId}:`,
+            `channel.delete: failed to archive SatsRail product ${p.satsrailProductId}:`,
             message
           );
-          archiveErrors.push({ productId, error: message });
+          archiveErrors.push({ productId: p.satsrailProductId, error: message });
         }
       }
     }
   }
 
   // Local cleanup — runs regardless of SatsRail success so we never end up
-  // with dangling rows. ChannelProductMedia is cascade-deleted via the
-  // ChannelProduct → ChannelProductMedia relation.
-  if (mediaIds.length > 0) {
-    await prisma.mediaProduct.deleteMany({ where: { mediaId: { in: mediaIds } } });
-  }
-  await prisma.channelProduct.deleteMany({ where: { channelId: id } });
+  // with dangling rows. MediaEncryptedBlob rows are cascade-deleted via the
+  // Product → MediaEncryptedBlob relation.
+  await prisma.product.deleteMany({
+    where: { id: { in: productsToArchive.map((p) => p.id) } },
+  });
   await prisma.media.deleteMany({ where: { channelId: id } });
   await prisma.channel.delete({ where: { id } });
 
@@ -174,7 +169,7 @@ export async function DELETE(
       slug: channel.slug,
       ref: channel.ref,
       media_count: mediaDocs.length,
-      channel_product_count: channelProducts.length,
+      channel_product_count: channelProductCount,
       archived_product_ids: archivedProductIds,
       archive_errors: archiveErrors.length > 0 ? archiveErrors : undefined,
     },

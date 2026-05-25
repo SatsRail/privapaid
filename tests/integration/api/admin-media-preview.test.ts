@@ -68,7 +68,7 @@ describe("GET /api/admin/media/[id]/preview", () => {
         ref: 7777,
         channelId: channel.id,
         name: "Preview Me",
-        sourceUrl: "https://example.com/sample.mp4",
+        blob: { kind: "url", url: "https://example.com/sample.mp4" },
         mediaType: "video",
         position: 1,
       },

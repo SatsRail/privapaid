@@ -4,16 +4,21 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl, decryptSourceUrl } from "@/lib/content-encryption";
 import { unwrapDekToBase64url } from "@/lib/photo-dek";
 import { satsrail } from "@/lib/satsrail";
+import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
 
 /**
- * Create a SatsRail product for a channel and encrypt all media source URLs.
+ * Create a SatsRail product for a channel and encrypt every media in the
+ * channel under that product's key.
  *
  * Flow:
- * 1. Fetch channel and all its media, get global merchant key
- * 2. Create product on SatsRail with external_ref: ch_{channel.ref}, using channel's product type
- * 3. Fetch the product key from SatsRail
- * 4. Encrypt each media's source URL with the product key
- * 5. Store the ChannelProduct with one ChannelProductMedia per included media
+ * 1. Fetch channel + all its media + merchant key.
+ * 2. Create the product on SatsRail with external_ref: ch_{channel.ref},
+ *    using the channel's product type.
+ * 3. Fetch the product key.
+ * 4. For each media: derive the plaintext (URL / markdown body / wrapped DEK)
+ *    and encrypt under the new product key with AAD = SatsRail product UUID.
+ * 5. Write a channel-scoped Product + one MediaEncryptedBlob row per media,
+ *    all in one transaction.
  */
 export async function POST(
   req: NextRequest,
@@ -79,56 +84,61 @@ export async function POST(
       product.id
     );
 
-    // 3. Encrypt the per-media payload under the new channel product key.
-    //    - Non-photo media: encrypt the plaintext sourceUrl.
+    // 3. Encrypt every media's plaintext under this product's key.
+    //    - Non-photo media: read URL / markdown body straight from Media.blob.
     //    - Photo media: recover the per-photo DEK and re-wrap it under THIS
-    //      product's key. Preferred path is Media.encryptedDek (KEK-wrapped,
-    //      no network call). Legacy fallback recovers the DEK by decrypting
-    //      an existing MediaProduct.encryptedSourceUrl — kept so photos that
-    //      pre-date the encryptedDek field still work until the backfill runs.
-    //      Photo bytes never need to be touched either way.
+    //      product's key. Preferred path is Media.blob.encryptedDek (PHOTO_KEK
+    //      wrap, no network call). Legacy fallback decrypts an existing
+    //      MediaEncryptedBlob for the same media — kept so photos that
+    //      pre-date the encryptedDek field still work.
     const mediaItems = await prisma.media.findMany({
       where: { channelId },
-      select: { id: true, sourceUrl: true, mediaType: true, encryptedDek: true },
+      select: { id: true, blob: true, mediaType: true },
     });
 
     const encryptedMedia: Array<{ mediaId: string; encryptedSourceUrl: string }> = [];
     for (const m of mediaItems) {
       const mediaId = m.id;
+      const blob = parseMediaBlob(m.blob);
+
       if (m.mediaType === "photo") {
         let dekBase64url: string | null = null;
 
-        // Preferred: unwrap the KEK-protected DEK stored on Media.
-        if (m.encryptedDek) {
+        // Preferred: unwrap the KEK-protected DEK on Media.blob.encryptedDek.
+        if (blob.kind === "photo") {
           try {
-            dekBase64url = unwrapDekToBase64url(m.encryptedDek);
+            dekBase64url = unwrapDekToBase64url(blob.encryptedDek);
           } catch (err) {
             console.error(
-              `Failed to unwrap encryptedDek for photo ${mediaId}, falling back to MediaProduct recovery:`,
+              `Failed to unwrap encryptedDek for photo ${mediaId}, falling back to MediaEncryptedBlob recovery:`,
               err
             );
           }
         }
 
-        // Legacy fallback: recover the DEK from an existing MediaProduct.
+        // Legacy fallback: recover the DEK from an existing MediaEncryptedBlob.
         if (!dekBase64url) {
-          const existing = await prisma.mediaProduct.findUnique({ where: { mediaId } });
-          if (!existing) {
+          const existingProduct = await prisma.product.findFirst({
+            where: { mediaId },
+            include: { mediaEncryptedBlobs: { where: { mediaId }, take: 1 } },
+          });
+          const existingBlob = existingProduct?.mediaEncryptedBlobs[0];
+          if (!existingProduct || !existingBlob) {
             return NextResponse.json(
               {
-                error: `Cannot include photo media ${mediaId} in channel product: no encrypted_dek on Media and no existing MediaProduct to recover from. Run the photo-DEK backfill, or create a per-media product for this photo first.`,
+                error: `Cannot include photo media ${mediaId} in channel product: no encryptedDek on Media.blob and no existing product to recover from. Run the photo-DEK backfill, or create a per-media product for this photo first.`,
               },
               { status: 422 }
             );
           }
           const { key: otherKey } = await satsrail.getProductKey(
             skLive,
-            existing.satsrailProductId
+            existingProduct.satsrailProductId
           );
           dekBase64url = decryptSourceUrl(
-            existing.encryptedSourceUrl,
+            existingBlob.encryptedSourceUrl,
             otherKey,
-            existing.satsrailProductId
+            existingProduct.satsrailProductId
           );
         }
 
@@ -138,14 +148,15 @@ export async function POST(
         });
         continue;
       }
+
       encryptedMedia.push({
         mediaId,
-        encryptedSourceUrl: encryptSourceUrl(m.sourceUrl, key, product.id),
+        encryptedSourceUrl: encryptSourceUrl(plaintextForEncryption(blob), key, product.id),
       });
     }
 
-    // 4. Store the ChannelProduct with cached metadata
-    const channelProduct = await prisma.channelProduct.create({
+    // 4. Write Product (channel-scoped) + N MediaEncryptedBlob rows atomically.
+    const channelProduct = await prisma.product.create({
       data: {
         channelId,
         satsrailProductId: product.id,
@@ -158,7 +169,7 @@ export async function POST(
         productSlug: product.slug,
         productExternalRef: product.external_ref ?? `ch_${channel.ref}`,
         syncedAt: new Date(),
-        encryptedMedia: {
+        mediaEncryptedBlobs: {
           create: encryptedMedia.map((em) => ({
             mediaId: em.mediaId,
             encryptedSourceUrl: em.encryptedSourceUrl,

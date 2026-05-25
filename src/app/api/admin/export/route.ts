@@ -2,6 +2,25 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
+import { parseMediaBlob } from "@/lib/schemas/media-blob";
+
+/**
+ * Recover the on-the-wire `source_url` field from Media.blob for export.
+ * For photos this is the EncryptedPhotoBlob.id pointer (matching the legacy
+ * shape — admins can re-link by uploading bytes through /api/admin/photos
+ * and matching ids in a re-import). For everything else it's the URL or
+ * markdown body.
+ */
+function sourceUrlForExport(blob: unknown): string {
+  try {
+    const parsed = parseMediaBlob(blob);
+    if (parsed.kind === "url") return parsed.url;
+    if (parsed.kind === "markdown") return parsed.body;
+    return parsed.blobId; // photo
+  } catch {
+    return "";
+  }
+}
 
 export async function GET() {
   const auth = await requireAdminApi();
@@ -25,27 +44,27 @@ export async function GET() {
       })
     : [];
 
-  // Fetch all media products (using cached data — no SatsRail API dependency)
+  // Fetch all media-scoped (direct-sale) products from cached data
   const mediaIds = allMedia.map((m) => m.id);
   const mediaProducts = mediaIds.length > 0
-    ? await prisma.mediaProduct.findMany({ where: { mediaId: { in: mediaIds } } })
+    ? await prisma.product.findMany({ where: { mediaId: { in: mediaIds } } })
     : [];
 
   const mediaProductMap = new Map<string, (typeof mediaProducts)[0]>();
   for (const mp of mediaProducts) {
-    mediaProductMap.set(mp.mediaId, mp);
+    if (mp.mediaId) mediaProductMap.set(mp.mediaId, mp);
   }
 
-  // Fetch all channel products
+  // Fetch all channel-scoped products
   const channelProducts = channelIds.length > 0
-    ? await prisma.channelProduct.findMany({
+    ? await prisma.product.findMany({
         where: { channelId: { in: channelIds } },
       })
     : [];
 
   const channelProductMap = new Map<string, (typeof channelProducts)[0]>();
   for (const cp of channelProducts) {
-    channelProductMap.set(cp.channelId, cp);
+    if (cp.channelId) channelProductMap.set(cp.channelId, cp);
   }
 
   // Group media by channel
@@ -100,7 +119,7 @@ export async function GET() {
             ref: m.ref,
             name: m.name,
             description: m.description || "",
-            source_url: m.sourceUrl,
+            source_url: sourceUrlForExport(m.blob),
             media_type: m.mediaType,
             thumbnail_url: m.thumbnailUrl || "",
             preview_image_urls: m.previewImageUrls || [],

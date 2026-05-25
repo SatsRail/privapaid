@@ -44,7 +44,7 @@ vi.mock("next/cache", () => ({
 
 import { POST } from "@/app/api/admin/settings/sync/route";
 import { prisma } from "@/lib/prisma";
-import { createSettings, createChannel, createMedia } from "../../helpers/factories";
+import { createSettings, createChannel, createMedia, createMediaProduct, createChannelProduct } from "../../helpers/factories";
 
 describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   beforeAll(async () => {
@@ -120,19 +120,15 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     const channel = await createChannel();
     const media = await createMedia(channel.id);
 
-    const mp = await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod_1",
-        encryptedSourceUrl: "enc_url",
-      },
+    const mp = await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod_1",
+      encryptedSourceUrl: "enc_url",
     });
 
-    const cp = await prisma.channelProduct.create({
-      data: {
-        channelId: channel.id,
-        satsrailProductId: "prod_2",
-      },
+    const cp = await createChannelProduct({
+      channelId: channel.id,
+      satsrailProductId: "prod_2",
     });
 
     mockSatsrail.listProducts.mockResolvedValueOnce({
@@ -164,13 +160,13 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     expect(res.status).toBe(200);
     expect(body.products_synced).toBe(2);
 
-    // Verify MediaProduct was updated
-    const updatedMp = await prisma.mediaProduct.findUnique({ where: { id: mp.id } });
+    // Verify media-scoped Product was updated
+    const updatedMp = await prisma.product.findUnique({ where: { id: mp.id } });
     expect(updatedMp!.productName).toBe("Product One");
     expect(updatedMp!.productPriceCents).toBe(1000);
 
-    // Verify ChannelProduct was updated
-    const updatedCp = await prisma.channelProduct.findUnique({ where: { id: cp.id } });
+    // Verify channel-scoped Product was updated
+    const updatedCp = await prisma.product.findUnique({ where: { id: cp.id } });
     expect(updatedCp!.productName).toBe("Product Two");
     expect(updatedCp!.productCurrency).toBe("EUR");
   });
@@ -235,13 +231,11 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     const channel = await createChannel();
     const media = await createMedia(channel.id);
 
-    await prisma.mediaProduct.create({
-      data: {
-        mediaId: media.id,
-        satsrailProductId: "prod_orphan",
-        encryptedSourceUrl: "enc",
-        productName: "Old Name",
-      },
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: "prod_orphan",
+      encryptedSourceUrl: "enc",
+      productName: "Old Name",
     });
 
     mockSatsrail.listProducts.mockResolvedValueOnce({

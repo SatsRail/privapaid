@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
+import { parseMediaBlob } from "@/lib/schemas/media-blob";
+
+function sourceUrlForExport(blob: unknown): string {
+  try {
+    const parsed = parseMediaBlob(blob);
+    if (parsed.kind === "url") return parsed.url;
+    if (parsed.kind === "markdown") return parsed.body;
+    return parsed.blobId; // photo
+  } catch {
+    return "";
+  }
+}
 
 export async function GET(
   _req: Request,
@@ -25,9 +37,13 @@ export async function GET(
 
   const mediaIds = media.map((m) => m.id);
   const mediaProducts = mediaIds.length > 0
-    ? await prisma.mediaProduct.findMany({ where: { mediaId: { in: mediaIds } } })
+    ? await prisma.product.findMany({ where: { mediaId: { in: mediaIds } } })
     : [];
-  const productByMediaId = new Map(mediaProducts.map((mp) => [mp.mediaId, mp]));
+  const productByMediaId = new Map(
+    mediaProducts
+      .filter((mp): mp is typeof mp & { mediaId: string } => mp.mediaId !== null)
+      .map((mp) => [mp.mediaId, mp])
+  );
 
   const exportMedia = media.map((m) => {
     const mp = productByMediaId.get(m.id);
@@ -35,7 +51,7 @@ export async function GET(
       ref: m.ref,
       name: m.name,
       description: m.description || "",
-      source_url: m.sourceUrl,
+      source_url: sourceUrlForExport(m.blob),
       media_type: m.mediaType,
       thumbnail_url: m.thumbnailUrl || "",
       position: m.position,

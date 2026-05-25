@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import { randomBytes } from "crypto";
 import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, findMediaProducts, findFirstMediaProduct } from "../../helpers/factories";
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
@@ -189,7 +190,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     await createMedia(channel.id, {
       name: "Old Name",
       ref: 42,
-      sourceUrl: "https://example.com/old.mp4",
+      blob: { kind: "url", url: "https://example.com/old.mp4" },
     });
 
     const [req, ctx] = channelImportRequest(channel.id, {
@@ -212,7 +213,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
     const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    expect(media!.sourceUrl).toBe("https://example.com/new.mp4");
+    const blob = media!.blob as { kind: string; url: string };
+    expect(blob.url).toBe("https://example.com/new.mp4");
   });
 
   it("updates existing media by name when ref is not provided", async () => {
@@ -222,7 +224,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const channel = await createChannel({ slug: "name-ch", name: "Name Channel" });
     await createMedia(channel.id, {
       name: "My Video",
-      sourceUrl: "https://example.com/old.mp4",
+      blob: { kind: "url", url: "https://example.com/old.mp4" },
       description: "old description",
     });
 
@@ -282,7 +284,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(mediaR.created).toBe(1);
     expect(mediaR.errors).toHaveLength(0);
 
-    const mediaProducts = await prisma.mediaProduct.findMany();
+    const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
     expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
     expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
@@ -325,7 +327,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       "sk_live_test_key",
       expect.objectContaining({ external_ref: "md_special_42" })
     );
-    const mp = await prisma.mediaProduct.findFirst();
+    const mp = await findFirstMediaProduct();
     expect(mp!.productExternalRef).toBe("md_special_42");
   });
 
@@ -412,18 +414,16 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const media = await createMedia(channel.id, {
       name: "Video",
       ref: 99,
-      sourceUrl: "https://example.com/old.mp4",
+      blob: { kind: "url", url: "https://example.com/old.mp4" },
     });
 
     // Create existing MediaProduct
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_re",
         encryptedSourceUrl: "old_encrypted_blob",
         keyFingerprint: "old_fp",
-      },
-    });
+      });
 
     mockUpdateProduct.mockResolvedValue({});
     mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "new_fp" });
@@ -445,7 +445,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect((body.results.media as { updated: number }).updated).toBe(1);
 
     // MediaProduct should be updated with new encrypted URL
-    const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const mp = await findFirstMediaProduct({ mediaId: media.id });
     expect(mp!.encryptedSourceUrl).not.toBe("old_encrypted_blob");
     expect(mp!.keyFingerprint).toBe("new_fp");
   });
@@ -483,7 +483,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(media!.thumbnailUrl).toBe("https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg");
       expect(media!.position).toBe(1);
 
-      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media!.id } });
+      const mp = await findFirstMediaProduct({ mediaId: media!.id });
       expect(mp).toBeTruthy();
       expect(mp!.satsrailProductId).toBe("prod_v");
     });
@@ -623,7 +623,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       await createMedia(channel.id, {
         name: "Thumb Video",
         ref: 200,
-        sourceUrl: "https://example.com/video.mp4",
+        blob: { kind: "url", url: "https://example.com/video.mp4" },
       });
       await prisma.media.updateMany({
         where: { ref: 200 },
@@ -660,7 +660,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       await createMedia(channel.id, {
         name: "Original Name",
         ref: 201,
-        sourceUrl: "https://example.com/v.mp4",
+        blob: { kind: "url", url: "https://example.com/v.mp4" },
         mediaType: "video",
       });
 

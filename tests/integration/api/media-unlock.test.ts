@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockCookieStore, mockFetch } = vi.hoisted(() => {
@@ -86,19 +87,17 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Locked Video",
-        sourceUrl: "https://example.com/video.mp4",
+        blob: { kind: "url", url: "https://example.com/video.mp4" },
         mediaType: "video",
       },
     });
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_unlock",
         encryptedSourceUrl: "encrypted_blob_123",
         keyFingerprint: "fp_abc",
-      },
-    });
+      });
 
     return { channelId: channel.id, mediaId: media.id };
   }
@@ -118,21 +117,17 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Channel Locked Video",
-        sourceUrl: "https://example.com/video2.mp4",
+        blob: { kind: "url", url: "https://example.com/video2.mp4" },
         mediaType: "video",
       },
     });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_ch_unlock",
         keyFingerprint: "fp_ch",
-        encryptedMedia: {
-          create: [{ mediaId: media.id, encryptedSourceUrl: "ch_encrypted_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: media.id, encryptedSourceUrl: "ch_encrypted_blob" }],
+      });
 
     return { channelId: channel.id, mediaId: media.id };
   }
@@ -160,7 +155,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Inactive Ch Media",
-        sourceUrl: "https://example.com/inactive.mp4",
+        blob: { kind: "url", url: "https://example.com/inactive.mp4" },
         mediaType: "video",
       },
     });
@@ -187,7 +182,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "No Product Media",
-        sourceUrl: "https://example.com/noprod.mp4",
+        blob: { kind: "url", url: "https://example.com/noprod.mp4" },
         mediaType: "video",
       },
     });
@@ -214,21 +209,19 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media",
-        sourceUrl: "https://example.com/archived.mp4",
+        blob: { kind: "url", url: "https://example.com/archived.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived",
         encryptedSourceUrl: "enc_blob_archived",
         keyFingerprint: "fp_archived",
         productStatus: "archived",
-      },
-    });
+      });
 
     mockCookieStore._set(
       "satsrail_macaroons",
@@ -267,20 +260,18 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media No Mac",
-        sourceUrl: "https://example.com/archived.mp4",
+        blob: { kind: "url", url: "https://example.com/archived.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived_no_mac",
         encryptedSourceUrl: "enc_blob",
         productStatus: "archived",
-      },
-    });
+      });
 
     const res = await GET(makeRequest(mid), makeContext(mid));
     const body = await res.json();
@@ -416,23 +407,19 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived CP Media",
-        sourceUrl: "https://example.com/archivedcp.mp4",
+        blob: { kind: "url", url: "https://example.com/archivedcp.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_cp_archived",
         keyFingerprint: "fp_cp_arch",
         productStatus: "archived",
-        encryptedMedia: {
-          create: [{ mediaId: mid, encryptedSourceUrl: "cp_enc_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "cp_enc_blob" }],
+      });
 
     mockCookieStore._set(
       "satsrail_macaroons",
@@ -519,33 +506,27 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Dual Product Video",
-        sourceUrl: "https://example.com/dual.mp4",
+        blob: { kind: "url", url: "https://example.com/dual.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_media_individual",
         encryptedSourceUrl: "media_encrypted_blob",
         keyFingerprint: "fp_media",
         productStatus: "active",
-      },
-    });
+      });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_channel_bundle",
         keyFingerprint: "fp_channel",
         productStatus: "active",
-        encryptedMedia: {
-          create: [{ mediaId: mid, encryptedSourceUrl: "channel_encrypted_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "channel_encrypted_blob" }],
+      });
 
     return { channelId: channel.id, mediaId: mid };
   }
@@ -613,33 +594,27 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media Video",
-        sourceUrl: "https://example.com/arch.mp4",
+        blob: { kind: "url", url: "https://example.com/arch.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived_media",
         encryptedSourceUrl: "archived_blob",
         keyFingerprint: "fp_archived",
         productStatus: "archived",
-      },
-    });
+      });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_active_channel",
         keyFingerprint: "fp_active_ch",
         productStatus: "active",
-        encryptedMedia: {
-          create: [{ mediaId: mid, encryptedSourceUrl: "active_ch_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "active_ch_blob" }],
+      });
 
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_active_channel: "mac_active" }));
     mockFetch.mockResolvedValue({
@@ -687,35 +662,27 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Multi CP Video",
-        sourceUrl: "https://example.com/multi.mp4",
+        blob: { kind: "url", url: "https://example.com/multi.mp4" },
         mediaType: "video",
       },
     });
     const mid = media.id;
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_cp_weekly",
         keyFingerprint: "fp_weekly",
         productStatus: "active",
-        encryptedMedia: {
-          create: [{ mediaId: mid, encryptedSourceUrl: "weekly_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "weekly_blob" }],
+      });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: "prod_cp_monthly",
         keyFingerprint: "fp_monthly",
         productStatus: "active",
-        encryptedMedia: {
-          create: [{ mediaId: mid, encryptedSourceUrl: "monthly_blob" }],
-        },
-      },
-    });
+        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "monthly_blob" }],
+      });
 
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_cp_monthly: "mac_monthly" }));
     mockFetch.mockResolvedValue({

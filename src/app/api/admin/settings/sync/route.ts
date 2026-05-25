@@ -41,24 +41,13 @@ async function syncProductCaches(secretKey: string): Promise<number> {
       });
     }
 
-    const mediaProducts = await prisma.mediaProduct.findMany({
+    const localProducts = await prisma.product.findMany({
       select: { id: true, satsrailProductId: true },
     });
-    for (const mp of mediaProducts) {
-      const cached = productMap.get(mp.satsrailProductId);
+    for (const p of localProducts) {
+      const cached = productMap.get(p.satsrailProductId);
       if (cached) {
-        await prisma.mediaProduct.update({ where: { id: mp.id }, data: cached });
-        synced++;
-      }
-    }
-
-    const channelProducts = await prisma.channelProduct.findMany({
-      select: { id: true, satsrailProductId: true },
-    });
-    for (const cp of channelProducts) {
-      const cached = productMap.get(cp.satsrailProductId);
-      if (cached) {
-        await prisma.channelProduct.update({ where: { id: cp.id }, data: cached });
+        await prisma.product.update({ where: { id: p.id }, data: cached });
         synced++;
       }
     }

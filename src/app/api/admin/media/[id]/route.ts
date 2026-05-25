@@ -6,48 +6,62 @@ import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
+import {
+  parseMediaBlob,
+  plaintextForEncryption,
+  type MediaBlob,
+} from "@/lib/schemas/media-blob";
 import type { Prisma } from "@prisma/client";
+
+type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
+
+/**
+ * Build the updated blob payload when source_url changes. Photos don't go
+ * through this path (their `blob` is set at upload time and shouldn't be
+ * rewritten by a PATCH; the photo is identified by its EncryptedPhotoBlob id
+ * and cannot be re-aimed at a different blob by an admin edit).
+ */
+function buildBlobForUpdate(sourceUrl: string, mediaType: MediaType): MediaBlob | null {
+  if (mediaType === "photo") return null; // photos: blob is immutable on PATCH
+  if (mediaType === "article") return { kind: "markdown", body: sourceUrl };
+  return { kind: "url", url: sourceUrl };
+}
 
 async function reEncryptBlobs(
   mediaId: string,
-  channelId: string,
-  newSourceUrl: string
+  newPlaintext: string
 ): Promise<void> {
   try {
     const sk = await getMerchantKey();
     if (!sk) return;
 
-    const mediaProducts = await prisma.mediaProduct.findMany({
+    // All blob rows for this media, grouped by product (so we fetch each key once).
+    const blobs = await prisma.mediaEncryptedBlob.findMany({
       where: { mediaId },
+      include: { product: { select: { id: true, satsrailProductId: true } } },
     });
-    for (const mp of mediaProducts) {
-      const { key } = await satsrail.getProductKey(sk, mp.satsrailProductId);
-      const encrypted = encryptSourceUrl(newSourceUrl, key, mp.satsrailProductId);
-      await prisma.mediaProduct.update({
-        where: { id: mp.id },
+
+    // Fetch each unique key once.
+    const keyCache = new Map<string, string>();
+    for (const b of blobs) {
+      const pid = b.product.satsrailProductId;
+      if (!keyCache.has(pid)) {
+        const { key } = await satsrail.getProductKey(sk, pid);
+        keyCache.set(pid, key);
+      }
+    }
+
+    for (const b of blobs) {
+      const pid = b.product.satsrailProductId;
+      const key = keyCache.get(pid)!;
+      const encrypted = encryptSourceUrl(newPlaintext, key, pid);
+      await prisma.mediaEncryptedBlob.update({
+        where: { id: b.id },
         data: { encryptedSourceUrl: encrypted },
       });
     }
-
-    const channelProducts = await prisma.channelProduct.findMany({
-      where: {
-        channelId,
-        encryptedMedia: { some: { mediaId } },
-      },
-      include: { encryptedMedia: { where: { mediaId } } },
-    });
-    for (const cp of channelProducts) {
-      const { key } = await satsrail.getProductKey(sk, cp.satsrailProductId);
-      const encrypted = encryptSourceUrl(newSourceUrl, key, cp.satsrailProductId);
-      for (const entry of cp.encryptedMedia) {
-        await prisma.channelProductMedia.update({
-          where: { id: entry.id },
-          data: { encryptedSourceUrl: encrypted },
-        });
-      }
-    }
   } catch (err) {
-    console.error("Failed to re-encrypt after sourceUrl change:", err);
+    console.error("Failed to re-encrypt after source change:", err);
   }
 }
 
@@ -63,7 +77,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const products = await prisma.mediaProduct.findMany({
+  const products = await prisma.product.findMany({
     where: { mediaId: id },
     select: { satsrailProductId: true, createdAt: true },
   });
@@ -88,20 +102,42 @@ export async function PATCH(
 
   const { id } = await params;
 
+  // Load existing media so we can detect whether the plaintext actually
+  // changed (and so we have the current mediaType when source_url changes
+  // and we need to rebuild the blob payload).
+  const existing = await prisma.media.findUnique({
+    where: { id },
+    select: { mediaType: true, blob: true, channelId: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const newType: MediaType =
+    (validated.media_type as MediaType | undefined) ?? (existing.mediaType as MediaType);
+
   const updates: Prisma.MediaUpdateInput = {};
   if (validated.name !== undefined) updates.name = validated.name;
   if (validated.description !== undefined) updates.description = validated.description;
-  if (validated.source_url !== undefined) updates.sourceUrl = validated.source_url;
   if (validated.media_type !== undefined) updates.mediaType = validated.media_type;
   if (validated.thumbnail_url !== undefined) updates.thumbnailUrl = validated.thumbnail_url;
   if (validated.position !== undefined) updates.position = validated.position;
 
-  const oldMedia = validated.source_url !== undefined
-    ? await prisma.media.findUnique({
-        where: { id },
-        select: { sourceUrl: true },
-      })
-    : null;
+  let plaintextChanged = false;
+  if (validated.source_url !== undefined) {
+    const newBlob = buildBlobForUpdate(validated.source_url, newType);
+    if (newBlob !== null) {
+      updates.blob = newBlob;
+      const oldPlaintext = (() => {
+        try {
+          return plaintextForEncryption(parseMediaBlob(existing.blob));
+        } catch {
+          return null;
+        }
+      })();
+      plaintextChanged = oldPlaintext !== validated.source_url;
+    }
+  }
 
   let media;
   try {
@@ -110,9 +146,8 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Re-encrypt blobs if sourceUrl changed
-  if (oldMedia && validated.source_url && validated.source_url !== oldMedia.sourceUrl) {
-    await reEncryptBlobs(media.id, media.channelId, validated.source_url);
+  if (plaintextChanged && validated.source_url) {
+    await reEncryptBlobs(media.id, validated.source_url);
   }
 
   return NextResponse.json({ data: media });
@@ -132,48 +167,49 @@ export async function DELETE(
   }
   const wasAlreadySoftDeleted = media.deletedAt !== null;
 
-  // Archive corresponding SatsRail products for individual MediaProducts.
-  // ChannelProducts are NOT archived — they cover the whole channel; we only
-  // pull this media's entry from their encryptedMedia rows (below).
-  const mediaProducts = await prisma.mediaProduct.findMany({
+  // Archive corresponding SatsRail products for direct-sale (media-scoped)
+  // Product rows. Channel-scoped products are NOT archived — they cover the
+  // whole channel; we only delete this media's blob entries (below).
+  const directProducts = await prisma.product.findMany({
     where: { mediaId: media.id },
-    select: { satsrailProductId: true },
+    select: { id: true, satsrailProductId: true },
   });
   const archivedProductIds: string[] = [];
   const archiveErrors: { productId: string; error: string }[] = [];
 
-  if (mediaProducts.length > 0) {
+  if (directProducts.length > 0) {
     const sk = await getMerchantKey();
     if (!sk) {
       console.warn(
         "media.delete: no merchant key — skipping SatsRail archive for products:",
-        mediaProducts.map((mp) => mp.satsrailProductId)
+        directProducts.map((p) => p.satsrailProductId)
       );
     } else {
-      for (const mp of mediaProducts) {
+      for (const p of directProducts) {
         try {
-          await satsrail.deleteProduct(sk, mp.satsrailProductId);
-          archivedProductIds.push(mp.satsrailProductId);
+          await satsrail.deleteProduct(sk, p.satsrailProductId);
+          archivedProductIds.push(p.satsrailProductId);
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown error";
           console.error(
-            `media.delete: failed to archive SatsRail product ${mp.satsrailProductId}:`,
+            `media.delete: failed to archive SatsRail product ${p.satsrailProductId}:`,
             message
           );
-          archiveErrors.push({ productId: mp.satsrailProductId, error: message });
+          archiveErrors.push({ productId: p.satsrailProductId, error: message });
         }
       }
     }
 
-    await prisma.mediaProduct.deleteMany({ where: { mediaId: media.id } });
+    // Delete the local Product rows for direct-sale (cascades to blobs).
+    await prisma.product.deleteMany({ where: { mediaId: media.id } });
   }
 
-  // Remove this media from any ChannelProduct's encryptedMedia entries.
+  // Remove this media from any channel-scoped product's blob entries.
   try {
-    await prisma.channelProductMedia.deleteMany({
+    await prisma.mediaEncryptedBlob.deleteMany({
       where: {
         mediaId: media.id,
-        channelProduct: { channelId: media.channelId },
+        product: { channelId: media.channelId },
       },
     });
   } catch (err) {
@@ -191,13 +227,16 @@ export async function DELETE(
 
   // For photo media, clean up the EncryptedPhotoBlob so we don't leak storage.
   // The bytes are useless without a DEK envelope (which we just deleted along
-  // with MediaProduct), but they still occupy space.
-  if (media.mediaType === "photo" && media.sourceUrl) {
+  // with the Product rows), but they still occupy space.
+  if (media.mediaType === "photo") {
     try {
-      await prisma.encryptedPhotoBlob.delete({ where: { id: media.sourceUrl } });
+      const blob = parseMediaBlob(media.blob);
+      if (blob.kind === "photo") {
+        await prisma.encryptedPhotoBlob.delete({ where: { id: blob.blobId } });
+      }
     } catch (err) {
       console.error(
-        `media.delete: failed to remove encrypted photo blob ${media.sourceUrl}:`,
+        `media.delete: failed to remove encrypted photo blob for media ${media.id}:`,
         err
       );
       // Continue — orphaned bytes are a soft failure, not a blocking one

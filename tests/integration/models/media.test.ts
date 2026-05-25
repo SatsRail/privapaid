@@ -21,7 +21,7 @@ describe("Media model", () => {
     const media = await createMedia(channel.id);
     expect(media.name).toBe("Test Media");
     expect(media.channelId).toBe(channel.id);
-    expect(media.sourceUrl).toBe("https://example.com/video.mp4");
+    expect(media.blob).toEqual({ kind: "url", url: "https://example.com/video.mp4" });
     expect(media.mediaType).toBe("video");
   });
 

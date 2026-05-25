@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { randomBytes } from "crypto";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { findFirstMediaProduct } from "../../helpers/factories";
 import {
   base64urlToBytes,
   clientDecryptBlob,
@@ -154,7 +155,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 1,
         channelId: channel.id,
         name: "Article",
-        sourceUrl: articleBody,
+        blob: { kind: "markdown", body: articleBody },
         mediaType: "article",
       },
     });
@@ -166,7 +167,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const res = await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
     expect(res.status).toBe(201);
 
-    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const stored = await findFirstMediaProduct({ mediaId: media.id });
     expect(stored).not.toBeNull();
     expect(stored!.satsrailProductId).toBe(FAKE_PRODUCT_ID);
     expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
@@ -190,7 +191,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 2,
         channelId: channel.id,
         name: "Article 2",
-        sourceUrl: "Secret article body.",
+        blob: { kind: "url", url: "Secret article body." },
         mediaType: "article",
       },
     });
@@ -200,7 +201,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     );
     await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
 
-    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const stored = await findFirstMediaProduct({ mediaId: media.id });
     const wrongKey = genProductKey();
 
     await expect(
@@ -246,7 +247,12 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 3,
         channelId: channel.id,
         name: "Photo",
-        sourceUrl: blob!.id,
+        blob: {
+          kind: "photo",
+          blobId: blob!.id,
+          encryptedDek: "test_kek_wrapped_dek",
+          mimeType: "image/png",
+        },
         mediaType: "photo",
       },
     });
@@ -266,7 +272,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     });
     expect(cpRes.status).toBe(201);
 
-    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const stored = await findFirstMediaProduct({ mediaId: media.id });
     expect(stored).not.toBeNull();
     expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
 
@@ -317,7 +323,12 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 4,
         channelId: channel.id,
         name: "Photo Wrong Key",
-        sourceUrl: blob!.id,
+        blob: {
+          kind: "photo",
+          blobId: blob!.id,
+          encryptedDek: "test_kek_wrapped_dek",
+          mimeType: "image/png",
+        },
         mediaType: "photo",
       },
     });
@@ -334,7 +345,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       params: Promise.resolve({ id: media.id }),
     });
 
-    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const stored = await findFirstMediaProduct({ mediaId: media.id });
     const wrongKey = genProductKey();
 
     await expect(
@@ -371,7 +382,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 5,
         channelId: channel.id,
         name: "Fingerprint check",
-        sourceUrl: "irrelevant body",
+        blob: { kind: "url", url: "irrelevant body" },
         mediaType: "article",
       },
     });
@@ -381,7 +392,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     );
     await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
 
-    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    const stored = await findFirstMediaProduct({ mediaId: media.id });
     expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
     const clientComputed = await sha256HexOfString(FAKE_PORTAL_KEY);
     expect(stored!.keyFingerprint).toBe(clientComputed);

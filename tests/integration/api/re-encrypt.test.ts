@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createMediaProduct, createChannelProduct, findFirstMediaProduct } from "../../helpers/factories";
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 import { decryptSourceUrl } from "@/lib/content-encryption";
@@ -104,13 +105,11 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
         name: `Video ${i}`,
         sourceUrl: url,
       });
-      await prisma.mediaProduct.create({
-        data: {
+      await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: `${productId}_${i}`,
           encryptedSourceUrl: "stale-base64-from-pre-rotation",
-        },
-      });
+        });
       i++;
     }
     // The route iterates all products with the same satsrailProductId.
@@ -124,17 +123,13 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
       const m = await createMedia(ch2.id, { name: `V${j}`, sourceUrl: urls[j] });
       medias.push(m);
     }
-    await prisma.channelProduct.create({
-      data: {
-        channelId: ch2.id,
-        satsrailProductId: productId,
-        encryptedMedia: {
-          create: medias.map((m) => ({
-            mediaId: m.id,
-            encryptedSourceUrl: "stale-base64-from-pre-rotation",
-          })),
-        },
-      },
+    await createChannelProduct({
+      channelId: ch2.id,
+      satsrailProductId: productId,
+      encryptedMedia: medias.map((m) => ({
+        mediaId: m.id,
+        encryptedSourceUrl: "stale-base64-from-pre-rotation",
+      })),
     });
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "new_fp" });
@@ -148,11 +143,11 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
 
     expect(events.at(-1)).toMatchObject({ done: true });
 
-    const cp = await prisma.channelProduct.findFirst({
+    const cp = await prisma.product.findFirst({
       where: { satsrailProductId: productId },
-      include: { encryptedMedia: true },
+      include: { mediaEncryptedBlobs: true },
     });
-    for (const entry of cp!.encryptedMedia) {
+    for (const entry of cp!.mediaEncryptedBlobs) {
       const decrypted = decryptSourceUrl(entry.encryptedSourceUrl, newKey, productId);
       expect(urls).toContain(decrypted);
     }
@@ -169,18 +164,20 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
 
     const media = await createMedia(channel.id, {
       name: "Photo",
-      sourceUrl: "blob_pointer_id",
+      blob: {
+        kind: "photo",
+        blobId: "blob_pointer_id",
+        encryptedDek,
+        mimeType: "image/jpeg",
+      },
       mediaType: "photo",
     });
-    await prisma.media.update({ where: { id: media.id }, data: { encryptedDek } });
 
-    await prisma.mediaProduct.create({
-      data: {
+    await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: productId,
         encryptedSourceUrl: "stale",
-      },
-    });
+      });
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
     mockClearOldKey.mockResolvedValue({});
@@ -192,7 +189,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     const events = (await readStream(res)).map((l) => JSON.parse(l));
     expect(events.at(-1)).toMatchObject({ done: true });
 
-    const reloaded = await prisma.mediaProduct.findFirst({ where: { satsrailProductId: productId } });
+    const reloaded = await findFirstMediaProduct({ satsrailProductId: productId });
     const decrypted = decryptSourceUrl(reloaded!.encryptedSourceUrl, newKey, productId);
     expect(decrypted).toBe(dekBase64url);
   });
@@ -202,18 +199,14 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     const m1 = await createMedia(channel.id, { sourceUrl: "https://a.example/v.mp4" });
     const m2 = await createMedia(channel.id, { sourceUrl: "https://b.example/v.mp4" });
 
-    await prisma.channelProduct.create({
-      data: {
+    await createChannelProduct({
         channelId: channel.id,
         satsrailProductId: productId,
-        encryptedMedia: {
-          create: [
+        encryptedMedia: [
             { mediaId: m1.id, encryptedSourceUrl: "stale1" },
             { mediaId: m2.id, encryptedSourceUrl: "stale2" },
           ],
-        },
-      },
-    });
+      });
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
     mockClearOldKey.mockResolvedValue({});
@@ -225,12 +218,12 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     const events = (await readStream(res)).map((l) => JSON.parse(l));
     expect(events.at(-1)).toMatchObject({ done: true });
 
-    const cp = await prisma.channelProduct.findFirst({
+    const cp = await prisma.product.findFirst({
       where: { satsrailProductId: productId },
-      include: { encryptedMedia: true },
+      include: { mediaEncryptedBlobs: true },
     });
-    expect(cp!.encryptedMedia).toHaveLength(2);
-    const urls = cp!.encryptedMedia.map((e) =>
+    expect(cp!.mediaEncryptedBlobs).toHaveLength(2);
+    const urls = cp!.mediaEncryptedBlobs.map((e) =>
       decryptSourceUrl(e.encryptedSourceUrl, newKey, productId)
     );
     expect(urls).toEqual(

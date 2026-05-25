@@ -33,26 +33,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
 
-    // Verify the product belongs to this media (media-level or channel-level)
-    const mediaProduct = await prisma.mediaProduct.findFirst({
-      where: { mediaId: media.id, satsrailProductId: product_id },
+    // Verify the product covers this media — works for both media-scoped
+    // and channel-scoped products because every (product, media) pair has
+    // a MediaEncryptedBlob row in the unified shape.
+    const blob = await prisma.mediaEncryptedBlob.findFirst({
+      where: {
+        mediaId: media.id,
+        product: { satsrailProductId: product_id },
+      },
       select: { id: true },
     });
-    if (!mediaProduct) {
-      const channelProduct = await prisma.channelProduct.findFirst({
-        where: {
-          channelId: media.channelId,
-          satsrailProductId: product_id,
-          encryptedMedia: { some: { mediaId: media.id } },
-        },
-        select: { id: true },
-      });
-      if (!channelProduct) {
-        return NextResponse.json(
-          { error: "Product not linked to this media" },
-          { status: 400 }
-        );
-      }
+    if (!blob) {
+      return NextResponse.json(
+        { error: "Product not linked to this media" },
+        { status: 400 }
+      );
     }
 
     // Get global merchant key
