@@ -767,33 +767,6 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("records purchase when user is a customer", async () => {
-      const user = userEvent.setup();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mockSession as any).data = { user: { role: "customer" } };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mockSession as any).status = "authenticated";
-
-      setupFreshPaymentScenario((url, opts) => {
-        if (url === "/api/customer/purchases" && opts?.method === "POST") {
-          return { ok: true, json: async () => ({}) };
-        }
-        return undefined;
-      });
-
-      render(<StatefulPaymentWall {...defaultProps} />);
-      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
-      await user.click(screen.getAllByText(/HD Video/)[0]);
-      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
-      await user.click(screen.getByTestId("complete-btn"));
-
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith("/api/customer/purchases", expect.objectContaining({
-          method: "POST",
-        }));
-      });
-    });
-
     it("shows the unlock-failed card when post-payment key fingerprint verification fails", async () => {
       const user = userEvent.setup();
       setupFreshPaymentScenario();

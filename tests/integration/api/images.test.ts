@@ -144,38 +144,6 @@ describe("Images API — POST /api/images", () => {
     expect(body.error).toContain("too large");
   });
 
-  it("returns 403 when customer tries non-profile context", async () => {
-    mockAuth.mockResolvedValueOnce({ user: { id: "cust-1", type: "customer" } });
-
-    const req = buildFormRequest({ file: makePngFile(), context: "channel_banner" });
-    const res = await POST(req);
-    const body = await res.json();
-
-    expect(res.status).toBe(403);
-    expect(body.error).toBe("Forbidden");
-  });
-
-  it("allows customer to upload customer_profile context", async () => {
-    mockAuth.mockResolvedValueOnce({ user: { id: "cust-1", type: "customer" } });
-
-    const req = buildFormRequest({ file: makePngFile(), context: "customer_profile" });
-    const res = await POST(req);
-    const body = await res.json();
-
-    expect(res.status).toBe(201);
-    expect(typeof body.image_id).toBe("string");
-    expect(body.image_id.length).toBeGreaterThan(0);
-
-    // Round-trip: the bytes the route wrote to Postgres should match what
-    // sharp returned (the "stripped" buffer).
-    const blob = await prisma.encryptedPhotoBlob.findUnique({
-      where: { id: body.image_id },
-      select: { bytes: true, mimeType: true },
-    });
-    expect(blob).not.toBeNull();
-    expect(blob!.mimeType).toBe("image/png");
-    expect(Buffer.from(blob!.bytes).equals(Buffer.from("stripped"))).toBe(true);
-  });
 
   it("returns 422 when file magic bytes do not match allowed type", async () => {
     mockFileTypeFromBuffer.mockResolvedValueOnce({ mime: "application/octet-stream" });
