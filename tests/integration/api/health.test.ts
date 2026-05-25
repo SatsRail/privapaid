@@ -48,22 +48,25 @@ describe("GET /api/health", () => {
   });
 
   it("returns 503 with db:disconnected when prisma.$queryRaw rejects", async () => {
-    // Spy on $queryRaw and make it reject once. The real testcontainer Postgres
-    // stays up; we only simulate the failure mode at the call site.
-    const spy = vi.spyOn(prisma, "$queryRaw" as never);
-    (spy as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(
-      new Error("offline")
-    );
+    // Replace $queryRaw with a one-shot rejecter. The real testcontainer
+    // Postgres stays up; we only simulate the failure mode at the call site.
+    const original = prisma.$queryRaw;
+    (prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw =
+      () => Promise.reject(new Error("offline"));
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
     process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";
 
-    const { GET } = await import("@/app/api/health/route");
-    const res = await GET();
-    const body = await res.json();
+    try {
+      const { GET } = await import("@/app/api/health/route");
+      const res = await GET();
+      const body = await res.json();
 
-    expect(res.status).toBe(503);
-    expect(body.status).toBe("degraded");
-    expect(body.db).toBe("disconnected");
+      expect(res.status).toBe(503);
+      expect(body.status).toBe("degraded");
+      expect(body.db).toBe("disconnected");
+    } finally {
+      (prisma as unknown as { $queryRaw: typeof original }).$queryRaw = original;
+    }
   });
 
   it("reports http_<status> when satsrail returns non-ok", async () => {

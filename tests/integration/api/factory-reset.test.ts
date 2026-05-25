@@ -148,11 +148,13 @@ describe("POST /api/admin/settings/reset", () => {
   });
 
   it("returns 500 when the underlying truncate throws (outer catch)", async () => {
-    const queryRawSpy = vi
-      .spyOn(prisma, "$queryRaw" as never)
-      .mockImplementationOnce((() => {
-        throw new Error("queryRaw boom");
-      }) as never);
+    // Replace $transaction with a one-shot thrower so the reset route's
+    // outer catch fires. Testcontainers Postgres stays up.
+    const original = prisma.$transaction;
+    (prisma as unknown as { $transaction: () => Promise<unknown> }).$transaction =
+      () => {
+        throw new Error("transaction boom");
+      };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
@@ -162,7 +164,7 @@ describe("POST /api/admin/settings/reset", () => {
       expect(body.error).toBe("Failed to reset application");
       expect(errSpy).toHaveBeenCalled();
     } finally {
-      queryRawSpy.mockRestore();
+      (prisma as unknown as { $transaction: typeof original }).$transaction = original;
       errSpy.mockRestore();
     }
   });

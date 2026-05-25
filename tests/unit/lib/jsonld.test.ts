@@ -65,7 +65,7 @@ describe("buildChannelSchema", () => {
     name: "My Channel",
     slug: "my-channel",
     bio: "A great channel",
-    profile_image_url: "https://cdn.example.com/avatar.jpg",
+    profileImageUrl: "https://cdn.example.com/avatar.jpg",
   };
 
   it("builds a CollectionPage schema", () => {
@@ -76,13 +76,13 @@ describe("buildChannelSchema", () => {
     expect(result.description).toBe("A great channel");
   });
 
-  it("uses profile_image_id over profile_image_url", () => {
-    const chWithId = { ...channel, profile_image_id: "abc123" };
+  it("uses the bytea-backed URL when hasProfileImage is set", () => {
+    const chWithId = { ...channel, id: "abc123", hasProfileImage: true };
     const result = buildChannelSchema(chWithId, config);
-    expect(result.image).toBe("https://example.com/api/images/abc123");
+    expect(result.image).toBe("https://example.com/api/images/channel/abc123");
   });
 
-  it("falls back to profile_image_url", () => {
+  it("falls back to profileImageUrl", () => {
     const result = buildChannelSchema(channel, config);
     expect(result.image).toBe("https://cdn.example.com/avatar.jpg");
   });
@@ -106,13 +106,13 @@ describe("buildMediaSchema", () => {
   const channel = { name: "Creator", slug: "creator" };
 
   const baseMedia = {
-    _id: "media123",
+    id: "media123",
     name: "My Video",
     description: "A cool video",
-    media_type: "video" as const,
-    thumbnail_url: "https://cdn.example.com/thumb.jpg",
-    created_at: new Date("2025-01-15"),
-    updated_at: new Date("2025-01-16"),
+    mediaType: "video" as const,
+    thumbnailUrl: "https://cdn.example.com/thumb.jpg",
+    createdAt: new Date("2025-01-15"),
+    updatedAt: new Date("2025-01-16"),
   };
 
   it("builds VideoObject for video type", () => {
@@ -123,19 +123,19 @@ describe("buildMediaSchema", () => {
   });
 
   it("builds AudioObject for audio type", () => {
-    const media = { ...baseMedia, media_type: "audio" as const };
+    const media = { ...baseMedia, mediaType: "audio" as const };
     const result = buildMediaSchema(media, channel, config);
     expect(result["@type"]).toBe("AudioObject");
   });
 
   it("builds AudioObject for podcast type", () => {
-    const media = { ...baseMedia, media_type: "podcast" as const };
+    const media = { ...baseMedia, mediaType: "podcast" as const };
     const result = buildMediaSchema(media, channel, config);
     expect(result["@type"]).toBe("AudioObject");
   });
 
   it("builds Article for article type", () => {
-    const media = { ...baseMedia, media_type: "article" as const };
+    const media = { ...baseMedia, mediaType: "article" as const };
     const result = buildMediaSchema(media, channel, config);
     expect(result["@type"]).toBe("Article");
     expect(result.headline).toBe("My Video");
@@ -144,21 +144,21 @@ describe("buildMediaSchema", () => {
   });
 
   it("builds ImageObject for photo type", () => {
-    const media = { ...baseMedia, media_type: "photo" as const };
+    const media = { ...baseMedia, mediaType: "photo" as const };
     const result = buildMediaSchema(media, channel, config);
     expect(result["@type"]).toBe("ImageObject");
   });
 
   it("falls back to CreativeWork for unknown type", () => {
-    const media = { ...baseMedia, media_type: "other" as never };
+    const media = { ...baseMedia, mediaType: "other" as never };
     const result = buildMediaSchema(media, channel, config);
     expect(result["@type"]).toBe("CreativeWork");
   });
 
-  it("uses thumbnail_id over thumbnail_url", () => {
-    const media = { ...baseMedia, thumbnail_id: "thumb_abc" };
+  it("uses the bytea-backed URL when hasThumbnail is set", () => {
+    const media = { ...baseMedia, hasThumbnail: true };
     const result = buildMediaSchema(media, channel, config);
-    expect(result.thumbnailUrl).toBe("https://example.com/api/images/thumb_abc");
+    expect(result.thumbnailUrl).toBe("https://example.com/api/images/media-thumbnail/media123");
   });
 
   it("includes date fields", () => {
@@ -169,9 +169,9 @@ describe("buildMediaSchema", () => {
 
   it("omits optional fields when not present", () => {
     const minimal = {
-      _id: "m1",
+      id: "m1",
       name: "Bare",
-      media_type: "video" as const,
+      mediaType: "video" as const,
     };
     const result = buildMediaSchema(minimal, channel, config);
     expect(result.description).toBeUndefined();

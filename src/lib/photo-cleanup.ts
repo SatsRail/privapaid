@@ -60,12 +60,14 @@ export async function cleanupOrphanEncryptedPhotos(
   const PAGE = 500;
   let cursor: string | undefined = undefined;
   while (true) {
-    const batch = await prisma.encryptedPhotoBlob.findMany({
+    const args = {
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      orderBy: { id: "asc" },
+      orderBy: { id: "asc" as const },
       select: { id: true, createdAt: true },
-    });
+    };
+    const batch: Array<{ id: string; createdAt: Date }> =
+      await prisma.encryptedPhotoBlob.findMany(args);
     if (batch.length === 0) break;
     cursor = batch[batch.length - 1].id;
 

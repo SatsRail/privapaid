@@ -5,19 +5,46 @@ import { PrismaClient } from "@prisma/client";
 let container: StartedPostgreSqlContainer | undefined;
 let prismaInstance: PrismaClient | undefined;
 
+/**
+ * Boot a Postgres for the test suite.
+ *
+ * Resolution order:
+ *   1. `TEST_DATABASE_URL` env var — explicit override, fastest in CI/dev when
+ *      a Postgres is already running (docker compose, brew services, Postgres.app).
+ *   2. Docker via `@testcontainers/postgresql` — preferred default; fully isolated.
+ *
+ * If neither works, the suite fails fast with a clear remediation message.
+ */
 export async function setupTestDB(): Promise<void> {
-  if (container) return; // idempotent
-  container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("privapaid_test")
-    .withUsername("test")
-    .withPassword("test")
-    .start();
+  if (prismaInstance) return; // idempotent
 
-  const url = container.getConnectionUri();
+  const preset = process.env.TEST_DATABASE_URL;
+  let url: string;
+
+  if (preset) {
+    url = preset;
+  } else {
+    try {
+      container = await new PostgreSqlContainer("postgres:16-alpine")
+        .withDatabase("privapaid_test")
+        .withUsername("test")
+        .withPassword("test")
+        .start();
+      url = container.getConnectionUri();
+    } catch (err) {
+      const message =
+        "Could not start a Postgres testcontainer (Docker daemon not reachable). " +
+        "Either start Docker Desktop, or set TEST_DATABASE_URL to a running " +
+        "Postgres connection string before running tests. " +
+        "Example: TEST_DATABASE_URL=postgresql://privapaid:privapaid@localhost:5432/privapaid_test npm test";
+      throw new Error(`${message}\n\nUnderlying error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   process.env.DATABASE_URL = url;
 
-  // Apply Prisma schema to the container's DB. Uses `db push` for speed —
-  // tests don't need the migration history, just a schema-matching DB.
+  // Apply Prisma schema to the DB. Uses `db push` for speed — tests don't
+  // need the migration history, just a schema-matching DB.
   execSync("npx prisma db push --skip-generate --accept-data-loss", {
     env: { ...process.env, DATABASE_URL: url },
     stdio: "inherit",
@@ -33,6 +60,7 @@ export async function setupTestDB(): Promise<void> {
 export async function teardownTestDB(): Promise<void> {
   await prismaInstance?.$disconnect();
   prismaInstance = undefined;
+  // Only stop the container if we started it ourselves.
   await container?.stop();
   container = undefined;
 }

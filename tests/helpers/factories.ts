@@ -28,6 +28,11 @@ export async function createChannel(overrides: Partial<{
   ref: number;
   categoryId: string | null;
   satsrailProductTypeId: string | null;
+  nsfw: boolean;
+  profileImageUrl: string;
+  socialLinks: Record<string, string>;
+  mediaCount: number;
+  deletedAt: Date | null;
 }> = {}) {
   refCounter++;
   return prisma.channel.create({

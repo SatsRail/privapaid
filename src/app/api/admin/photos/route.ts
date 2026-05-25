@@ -89,10 +89,13 @@ export async function POST(req: NextRequest) {
     const dek = randomBytes(32);
     const ciphertext = encryptBytes(cleanBuffer, dek);
 
-    // Persist ciphertext as a row in the EncryptedPhotoBlob table.
+    // Persist ciphertext as a row in the EncryptedPhotoBlob table. Cast
+    // because Prisma's Bytes type wants Uint8Array<ArrayBuffer> while Node's
+    // Buffer is Uint8Array<ArrayBufferLike> — they're byte-compatible at runtime.
     const blob = await prisma.encryptedPhotoBlob.create({
       data: {
-        bytes: ciphertext,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        bytes: ciphertext as any,
         mimeType: detected.mime,
       },
       select: { id: true },

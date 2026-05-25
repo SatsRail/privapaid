@@ -91,9 +91,9 @@ async function importChannelsPhase(
   api: ApiThrottle,
   sendProgress: SendProgressFn,
   sendStatus: (item: string, detail: string) => Promise<void>
-): Promise<{ results: EntityResults; slugToDoc: Map<string, { _id: string; satsrail_product_type_id: string | null }> }> {
+): Promise<{ results: EntityResults; slugToDoc: Map<string, { id: string; satsrailProductTypeId: string | null }> }> {
   const results: EntityResults = { created: 0, updated: 0, errors: [] };
-  const slugToDoc = new Map<string, { _id: string; satsrail_product_type_id: string | null }>();
+  const slugToDoc = new Map<string, { id: string; satsrailProductTypeId: string | null }>();
 
   const existingChannels = await prisma.channel.findMany({
     where: { deletedAt: null },
@@ -115,7 +115,7 @@ async function importChannelsPhase(
 
         await onStatus("Updating channel record...");
         await prisma.channel.update({
-          where: { id: existing._id },
+          where: { id: existing.id },
           data: {
             name: chData.name,
             bio: chData.bio || "",

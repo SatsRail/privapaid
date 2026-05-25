@@ -125,7 +125,8 @@ export async function POST(req: NextRequest) {
     // that the legacy GET /api/images/[id] route resolves.
     const blob = await prisma.encryptedPhotoBlob.create({
       data: {
-        bytes: strippedBuffer,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        bytes: strippedBuffer as any,
         mimeType: detected.mime,
       },
       select: { id: true },
