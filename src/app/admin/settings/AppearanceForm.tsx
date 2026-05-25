@@ -379,7 +379,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
               <div>
                 <p className="text-sm font-medium text-[var(--theme-text)]">Factory Reset</p>
                 <p className="text-xs text-[var(--theme-text-secondary)]">
-                  Permanently delete all data including channels, media, products, customers, and settings.
+                  Permanently delete all data including channels, media, products, and settings.
                   This cannot be undone.
                 </p>
               </div>
@@ -412,7 +412,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
             <ul className="mt-2 space-y-1 text-xs text-red-400">
               <li>All channels and media files</li>
               <li>All products and encryption keys</li>
-              <li>All customers and comments</li>
+              <li>All comments</li>
               <li>All settings and configurations</li>
               <li>All uploaded images</li>
             </ul>

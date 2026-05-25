@@ -8,7 +8,7 @@ import type { ErrorEvent, EventHint, Breadcrumb } from "@sentry/nextjs";
  *
  * Why this exists: Sentry's default `request.data` capture serializes
  * request bodies. Admin media-create posts carry plaintext `source_url`,
- * setup posts carry a live `satsrail_api_key`, and customer signups
+ * setup posts carry a live `satsrail_api_key`, and admin login posts
  * carry a plaintext `password`. Without scrubbing these would land in
  * the Sentry UI in plaintext.
  */
