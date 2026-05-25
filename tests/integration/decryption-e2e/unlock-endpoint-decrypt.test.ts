@@ -189,7 +189,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
 
     const { mediaId } = await seedMediaProduct({
       mediaType: "photo",
-      blob: { kind: "url", url: "blob-id-placeholder" },
+      sourceUrl: "blob-id-placeholder",
       encryptedSourceUrl: wrappedDek,
       keyFingerprintHex: fingerprintHex,
       productId,
