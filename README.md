@@ -37,7 +37,7 @@ Encryption keys and auth secrets are generated automatically on first run.
 ### Railway
 
 1. **Create the project:** in [Railway](https://railway.com/), click **New Project** → **Deploy from GitHub repo** → pick your fork of `privapaid_app`. Railway will detect the `Dockerfile` and start a build.
-2. **Add MongoDB:** on the project canvas, click **+ Create** → **Database** → **Add MongoDB**.
+2. **Add Postgres:** on the project canvas, click **+ Create** → **Database** → **Add PostgreSQL**.
 3. **Generate secrets locally:**
    ```bash
    echo "NEXTAUTH_SECRET=$(openssl rand -base64 32)"
@@ -45,12 +45,12 @@ Encryption keys and auth secrets are generated automatically on first run.
    ```
 4. **Set variables** on the `privapaid_app` service → **Variables** tab:
    ```
-   MONGODB_URI=${{MongoDB.MONGO_URL}}
+   DATABASE_URL=${{Postgres.DATABASE_URL}}
    NEXTAUTH_SECRET=<paste from step 3>
    SK_ENCRYPTION_KEY=<paste from step 3>
    SATSRAIL_API_URL=https://satsrail.com
    ```
-   `${{MongoDB.MONGO_URL}}` is Railway's reference syntax — it auto-resolves to the connection string of the MongoDB service.
+   `${{Postgres.DATABASE_URL}}` is Railway's reference syntax — it auto-resolves to the connection string of the Postgres service. The Docker entrypoint runs `prisma migrate deploy` before starting the server.
 5. **Deploy:** Railway redeploys automatically when variables change. Once the healthcheck on `/api/health` passes, open the public URL and complete the setup wizard.
 
 > **Important:** always set `NEXTAUTH_SECRET` and `SK_ENCRYPTION_KEY` explicitly. Railway containers have ephemeral filesystems, so the entrypoint's auto-generated secrets would rotate on every restart — invalidating sessions and breaking decryption of existing content.
@@ -82,13 +82,13 @@ Every media item has a `media_type` that controls how content is stored, encrypt
 | `video` | Direct file URL (`.mp4`/`.webm`/HLS) or embed URL (YouTube, Vimeo, Twitch, Bunny Stream, Cloudflare Stream, Mux, Dailymotion) | `<video>` for direct files; `<iframe>` for known hosts | URL itself is encrypted; the host stores the bytes. |
 | `audio` | Direct audio file URL (`.mp3`/`.wav`/`.flac`/`.aac`) | `<audio>` player with optional artwork from the thumbnail | URL itself is encrypted. |
 | `article` | Markdown text *or* a URL | Markdown rendered inline (GFM, sanitized via DOMPurify in a closed shadow root); URLs render as an "Open article" external link card | Auto-detects URL vs markdown. Max 500KB. Links open in a new tab with `rel="noopener noreferrer"`. |
-| `photo` | GridFS pointer to the encrypted bytes | `<img>` after client-side decryption | **Encrypted at rest in our own GridFS.** Envelope encryption: a random per-photo DEK encrypts the bytes once; the DEK is encrypted under each product key. Upload through [`/api/admin/photos`](#) (multipart, 5MB cap, JPEG/PNG/WebP/GIF, EXIF stripped). Photos cannot be added via JSON import — bytes must be uploaded to encrypt. |
+| `photo` | `EncryptedPhotoBlob.id` pointer to the encrypted bytes | `<img>` after client-side decryption | **Encrypted at rest in the `EncryptedPhotoBlob` Postgres table (bytea column).** Envelope encryption: a random per-photo DEK encrypts the bytes once; the DEK is encrypted under each product key. Upload through [`/api/admin/photos`](#) (multipart, 5MB cap, JPEG/PNG/WebP/GIF, EXIF stripped). Photos cannot be added via JSON import — bytes must be uploaded to encrypt. |
 | `podcast` | Audio URL | Same as `audio` plus podcast-style metadata in JSON-LD | Treated like audio at render time. |
 
 ### How encryption maps to each type
 
 - For `video`, `audio`, `article`, `podcast` the *URL or text* is encrypted into `MediaProduct.encrypted_source_url` (or `ChannelProduct.encrypted_media[].encrypted_source_url`) under the SatsRail product key. The viewer decrypts client-side after payment.
-- For `photo`, the *bytes themselves* live encrypted in GridFS, and `MediaProduct.encrypted_source_url` holds the encrypted DEK (envelope). The viewer unwraps the DEK with the product key, fetches the ciphertext from `/api/photos/[id]`, and decrypts in the browser.
+- For `photo`, the *bytes themselves* live encrypted in the `EncryptedPhotoBlob` table (Postgres `bytea`), and `MediaProduct.encryptedSourceUrl` holds the encrypted DEK (envelope). The viewer unwraps the DEK with the product key, fetches the ciphertext from `/api/photos/[id]`, and decrypts in the browser.
 
 In every case the SatsRail Portal holds the encryption keys and never sees content; the Stream app holds the content (both an encrypted, buyer-facing copy and an admin-only plaintext copy for re-encryption — see Architecture below) and never persists product keys at rest.
 

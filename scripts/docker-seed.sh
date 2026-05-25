@@ -7,7 +7,7 @@
 # Usage:
 #   docker compose exec app sh scripts/docker-seed.sh
 #
-# Required env vars: MONGODB_URI, ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
+# Required env vars: DATABASE_URL, ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
 # =============================================================================
 
 set -e
@@ -16,7 +16,7 @@ echo "=== Media App — First-Run Seed ==="
 echo ""
 
 # Verify required env vars
-for var in MONGODB_URI ADMIN_EMAIL ADMIN_NAME ADMIN_PASSWORD; do
+for var in DATABASE_URL ADMIN_EMAIL ADMIN_NAME ADMIN_PASSWORD; do
   eval value=\$$var
   if [ -z "$value" ]; then
     echo "ERROR: $var is not set. Add it to your .env file."

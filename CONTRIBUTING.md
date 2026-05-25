@@ -20,8 +20,8 @@ cd privapaid_app
 # Install dependencies
 npm install
 
-# Start MongoDB
-docker compose up -d mongo
+# Start Postgres
+docker compose up -d postgres
 
 # Copy environment config
 cp .env.example .env
