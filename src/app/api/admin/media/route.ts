@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getNextRef } from "@/models/Counter";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -154,11 +153,8 @@ export async function POST(req: NextRequest) {
     select: { position: true },
   });
 
-  const ref = await getNextRef("media");
-
   const media = await prisma.media.create({
     data: {
-      ref,
       channelId: channel_id,
       name: name.trim(),
       description: result.description || "",

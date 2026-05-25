@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getNextRef } from "@/models/Counter";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -56,29 +55,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const ref = await getNextRef("channel");
-
-  // Create a product type on SatsRail for this channel
-  let satsrailProductTypeId: string | null = null;
-  const sk = await getMerchantKey();
-  if (sk) {
-    try {
-      const productType = await satsrail.createProductType(sk, {
-        name,
-        external_ref: `ch_${ref}`,
-      });
-      satsrailProductTypeId = productType.id;
-    } catch (err) {
-      console.error("Failed to create SatsRail product type:", err);
-    }
-  }
-
+  // Insert first so Postgres's autoincrement sequence assigns `ref`; then use
+  // that ref to register a matching SatsRail product type. If SatsRail fails,
+  // we still keep the channel and surface the missing `satsrailProductTypeId`
+  // to the admin UI (which can retry).
   const channel = await prisma.channel.create({
     data: {
-      ref,
       name,
       slug,
-      satsrailProductTypeId,
       bio: result.bio || "",
       categoryId: result.category_id || undefined,
       nsfw: result.nsfw || false,
@@ -88,6 +72,23 @@ export async function POST(req: NextRequest) {
       mediaCount: 0,
     },
   });
+
+  const sk = await getMerchantKey();
+  if (sk) {
+    try {
+      const productType = await satsrail.createProductType(sk, {
+        name,
+        external_ref: `ch_${channel.ref}`,
+      });
+      await prisma.channel.update({
+        where: { id: channel.id },
+        data: { satsrailProductTypeId: productType.id },
+      });
+      channel.satsrailProductTypeId = productType.id;
+    } catch (err) {
+      console.error("Failed to create SatsRail product type:", err);
+    }
+  }
 
   return NextResponse.json({ data: channel }, { status: 201 });
 }

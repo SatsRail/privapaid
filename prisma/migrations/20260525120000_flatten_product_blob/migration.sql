@@ -229,6 +229,18 @@ DROP TABLE IF EXISTS "MediaProduct";
 -- never resolved any rows). Drop it as part of the same simplification.
 DROP TABLE IF EXISTS "PreviewImage";
 
+-- Counter was an atomic sequence generator for human-readable refs
+-- (channel/media). Replaced by native Postgres sequences via Prisma's
+-- @default(autoincrement()) on Channel.ref / Media.ref.
+DROP TABLE IF EXISTS "Counter";
+
+CREATE SEQUENCE IF NOT EXISTS "Channel_ref_seq" START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS "Media_ref_seq"   START WITH 1;
+ALTER TABLE "Channel" ALTER COLUMN "ref" SET DEFAULT nextval('"Channel_ref_seq"');
+ALTER TABLE "Media"   ALTER COLUMN "ref" SET DEFAULT nextval('"Media_ref_seq"');
+ALTER SEQUENCE "Channel_ref_seq" OWNED BY "Channel"."ref";
+ALTER SEQUENCE "Media_ref_seq"   OWNED BY "Media"."ref";
+
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "sourceUrl";
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "encryptedDek";
 

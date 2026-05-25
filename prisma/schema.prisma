@@ -80,7 +80,7 @@ model Category {
 /// Channel — content source, has many Media.
 model Channel {
   id                    String    @id @default(cuid())
-  ref                   Int       @unique // from Counter; emitted as `ch_<ref>` to portal
+  ref                   Int       @unique @default(autoincrement()) // emitted as `ch_<ref>` to portal
   slug                  String    @unique @db.Citext
   satsrailProductTypeId String?
   name                  String
@@ -115,7 +115,7 @@ model Channel {
 /// Media — one of video/audio/article/photo/podcast.
 model Media {
   id                String    @id @default(cuid())
-  ref               Int       @unique // from Counter; emitted as `md_<ref>` to portal
+  ref               Int       @unique @default(autoincrement()) // emitted as `md_<ref>` to portal
   channelId         String
   name              String
   description       String    @default("")
@@ -320,11 +320,3 @@ model WebhookEvent {
   @@index([processedAt])
 }
 
-/// Counter — atomic sequence generator for human-readable refs (channel,
-/// media). `getNextRef(name)` does an upsert with { increment: 1 } in a
-/// single statement — atomic at READ COMMITTED. Matches Mongo semantics
-/// exactly so caller code is unchanged.
-model Counter {
-  id  String @id
-  seq Int    @default(0)
-}
