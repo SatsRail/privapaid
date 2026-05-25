@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getNextRef } from "@/models/Counter";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { schemas } from "@/lib/validate";
@@ -507,8 +506,6 @@ export async function createNewMedia(
     );
   }
 
-  const ref = await getNextRef("media");
-
   await onStatus?.("Saving media record...");
   const maxPos = await prisma.media.findFirst({
     where: { channelId: channelDoc.id },
@@ -516,9 +513,10 @@ export async function createNewMedia(
     select: { position: true },
   });
 
+  // Postgres assigns Media.ref via the sequence — we read it back for the
+  // SatsRail external_ref below.
   const media = await prisma.media.create({
     data: {
-      ref,
       channelId: channelDoc.id,
       name: mData.name,
       description: mData.description || "",
@@ -536,7 +534,7 @@ export async function createNewMedia(
         name: mData.product.name, price_cents: mData.product.price_cents,
         currency: mData.product.currency, access_duration_seconds: mData.product.access_duration_seconds,
         product_type_id: channelDoc.satsrailProductTypeId,
-        external_ref: mData.product.external_ref || `md_${ref}`,
+        external_ref: mData.product.external_ref || `md_${media.ref}`,
       }, media.id, mData.source_url, api, onStatus);
     } catch (err) {
       errors.push({ entity: "media_product", name: mData.name, error: `Product creation failed: ${errorMsg(err)}` });

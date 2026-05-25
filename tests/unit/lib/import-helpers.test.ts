@@ -35,10 +35,6 @@ vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
 }));
 
-vi.mock("@/models/Counter", () => ({
-  getNextRef: vi.fn().mockResolvedValue(500),
-}));
-
 const mockCreateProductType = vi.fn();
 const mockListProductTypes = vi.fn();
 const mockCreateProduct = vi.fn();

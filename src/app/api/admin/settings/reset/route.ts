@@ -62,9 +62,14 @@ export async function POST(request: Request) {
       await tx.category.deleteMany({}); truncated.push("Category");
       await tx.webhookEvent.deleteMany({}); truncated.push("WebhookEvent");
       await tx.auditLog.deleteMany({}); truncated.push("AuditLog");
-      await tx.counter.deleteMany({}); truncated.push("Counter");
       await tx.admin.deleteMany({}); truncated.push("Admin");
       await tx.settings.deleteMany({}); truncated.push("Settings");
+
+      // Reset the autoincrement sequences so a factory-reset instance starts
+      // from ch_1 / md_1 again. Without this, refs would keep climbing across
+      // a wipe.
+      await tx.$executeRawUnsafe(`ALTER SEQUENCE "Channel_ref_seq" RESTART WITH 1;`);
+      await tx.$executeRawUnsafe(`ALTER SEQUENCE "Media_ref_seq" RESTART WITH 1;`);
     });
 
     // Clear cached config so the app returns to setup mode

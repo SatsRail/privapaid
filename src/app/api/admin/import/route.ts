@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getNextRef } from "@/models/Counter";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -128,16 +127,13 @@ async function importChannelsPhase(
         });
         results.updated++;
       } else {
-        const ref = await getNextRef("channel");
         await onStatus("Creating channel record...");
-        const satsrailProductTypeId = sk ? await tryCreateProductType(sk, chData.name, `ch_${ref}`, results.errors, api, onStatus) : null;
-
+        // Insert first so the autoincrement assigns `ref`, then use that
+        // ref to register the SatsRail product type.
         const channel = await prisma.channel.create({
           data: {
-            ref,
             name: chData.name,
             slug: chSlug,
-            satsrailProductTypeId,
             bio: chData.bio || "",
             categoryId: categoryId || undefined,
             nsfw: chData.nsfw ?? false,
@@ -148,7 +144,17 @@ async function importChannelsPhase(
           },
         });
 
-        slugToDoc.set(chSlug, { id: channel.id, satsrailProductTypeId: satsrailProductTypeId });
+        const satsrailProductTypeId = sk
+          ? await tryCreateProductType(sk, chData.name, `ch_${channel.ref}`, results.errors, api, onStatus)
+          : null;
+        if (satsrailProductTypeId) {
+          await prisma.channel.update({
+            where: { id: channel.id },
+            data: { satsrailProductTypeId },
+          });
+        }
+
+        slugToDoc.set(chSlug, { id: channel.id, satsrailProductTypeId });
         results.created++;
       }
       await sendProgress("channels", chData.name, "done");

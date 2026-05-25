@@ -1,7 +1,5 @@
 import { prisma } from "@/lib/prisma";
 
-let refCounter = 1000;
-
 export async function createCategory(overrides: Partial<{
   name: string;
   slug: string;
@@ -33,10 +31,8 @@ export async function createChannel(overrides: Partial<{
   mediaCount: number;
   deletedAt: Date | null;
 }> = {}) {
-  refCounter++;
   return prisma.channel.create({
     data: {
-      ref: refCounter,
       name: "Test Channel",
       slug: `test-channel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       bio: "A test channel",
@@ -58,7 +54,6 @@ export async function createMedia(
     blob: unknown;
   }> = {}
 ) {
-  refCounter++;
   const { sourceUrl, blob, mediaType, ...rest } = overrides;
   const finalType = mediaType ?? "video";
   const finalBlob =
@@ -75,7 +70,6 @@ export async function createMedia(
         : { kind: "url", url: sourceUrl ?? "https://example.com/video.mp4" });
   return prisma.media.create({
     data: {
-      ref: refCounter,
       channelId,
       name: "Test Media",
       mediaType: finalType,
