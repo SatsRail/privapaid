@@ -47,9 +47,9 @@ docker compose up --build
 src/
   app/           # Next.js App Router pages & API routes
   components/    # Shared UI components
-  models/        # Mongoose models
   lib/           # Utilities (encryption, validation, rate limiting, etc.)
   i18n/          # Internationalization (en.json, es.json)
+prisma/          # Prisma schema and migrations (PostgreSQL)
 public/          # Static assets
 docker/          # Docker configuration files
 ```

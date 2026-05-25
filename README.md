@@ -296,7 +296,7 @@ The decryption test suite is documented in [`tests/integration/decryption-e2e/RE
 
 ### Orphan photo cleanup
 
-The photo upload flow writes an encrypted blob to GridFS *before* the admin commits to creating the Media row + first product. If the admin abandons the flow, the bytes sit forever — unrecoverable (DEK is gone) but consuming storage. Run the cleanup on a schedule to reclaim them.
+The photo upload flow writes an encrypted blob to the `EncryptedPhotoBlob` table *before* the admin commits to creating the Media row + first product. If the admin abandons the flow, the bytes sit forever — unrecoverable (DEK is gone) but consuming storage. Run the cleanup on a schedule to reclaim them.
 
 ```bash
 # Defaults: 1-hour grace period, real deletes

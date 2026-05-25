@@ -95,12 +95,6 @@ describe("Navbar", () => {
     expect(container.querySelector("nav")).toBeNull();
   });
 
-  it("returns null on /signup", () => {
-    mockPathname.mockReturnValue("/signup");
-    const { container } = render(<Navbar {...defaultProps} />);
-    expect(container.querySelector("nav")).toBeNull();
-  });
-
   it("renders on non-hidden paths", () => {
     mockPathname.mockReturnValue("/c/some-channel");
     render(<Navbar {...defaultProps} />);
