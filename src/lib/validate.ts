@@ -47,7 +47,7 @@ export function isValidationError(
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color (#RRGGBB)");
 
-const mongoId = z.string().min(1, "ID is required");
+const recordId = z.string().min(1, "ID is required");
 
 const slug = z
   .string()
@@ -79,7 +79,7 @@ export const schemas = {
     name: z.string().min(1, "Name is required").max(100).transform((s) => s.trim()),
     slug: slug.optional(),
     bio: z.string().max(2000).optional(),
-    category_id: mongoId.optional().nullable(),
+    category_id: recordId.optional().nullable(),
     nsfw: z.boolean().optional(),
     profile_image_url: z.string().url().or(z.literal("")).optional(),
     profile_image_id: z.string().optional(),
@@ -91,7 +91,7 @@ export const schemas = {
     name: z.string().min(1).max(100).transform((s) => s.trim()).optional(),
     slug: slug.optional(),
     bio: z.string().max(2000).optional(),
-    category_id: mongoId.optional().nullable(),
+    category_id: recordId.optional().nullable(),
     nsfw: z.boolean().optional(),
     profile_image_url: z.string().url().or(z.literal("")).optional(),
     profile_image_id: z.string().optional(),
@@ -103,7 +103,7 @@ export const schemas = {
 
   // Media create
   mediaCreate: z.object({
-    channel_id: mongoId,
+    channel_id: recordId,
     name: z.string().min(1, "Name is required").max(200).transform((s) => s.trim()),
     description: z.string().max(5000).optional(),
     source_url: z.string().min(1, "Source URL is required").max(500_000, "Content too long (500KB max)").transform((s) => s.trim()),
@@ -131,7 +131,7 @@ export const schemas = {
 
   // Checkout
   checkout: z.object({
-    media_id: mongoId,
+    media_id: recordId,
     product_id: z.string().min(1, "product_id is required"),
   }),
 
@@ -205,7 +205,7 @@ export const schemas = {
   reorder: z.object({
     items: z.array(
       z.object({
-        id: mongoId,
+        id: recordId,
         position: z.number().int().nonnegative(),
       })
     ).min(1, "Items array is required"),

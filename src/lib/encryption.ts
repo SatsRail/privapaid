@@ -20,7 +20,7 @@ function getEncryptionKey(): EncryptionKey {
 }
 
 /**
- * Encrypt a SatsRail sk_live_ key before storing in MongoDB.
+ * Encrypt a SatsRail sk_live_ key before storing in the database.
  * Uses AES-256-GCM with a random IV per encryption.
  * Returns a string: iv:authTag:ciphertext (all hex-encoded).
  */
@@ -37,7 +37,7 @@ export function encryptSecretKey(plaintext: string): EncryptedValue {
 }
 
 /**
- * Decrypt a SatsRail sk_live_ key from MongoDB.
+ * Decrypt a SatsRail sk_live_ key from the database.
  *
  * Validates the envelope shape (`iv:authTag:ciphertext`, all hex)
  * before passing anything to `createDecipheriv` so callers get a clear

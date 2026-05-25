@@ -4,7 +4,7 @@
  */
 
 const REQUIRED_VARS = [
-  "MONGODB_URI",
+  "DATABASE_URL",
   "SK_ENCRYPTION_KEY",
 ] as const;
 

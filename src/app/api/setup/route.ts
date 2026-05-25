@@ -50,8 +50,7 @@ export async function POST(request: Request) {
     };
 
     // Settings is a singleton (id = 1). `isSetupComplete` above already
-    // guarantees no row exists, so a straight create is safe — and matches
-    // the historical Mongoose contract that the spec mocks expect.
+    // guarantees no row exists, so a straight create is safe.
     await prisma.settings.create({ data: { id: 1, ...settingsData } });
 
     return NextResponse.json(

@@ -3,8 +3,7 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * Cron-triggered cleanup. Deletes audit logs older than 90 days and webhook
- * events older than 7 days. Replaces MongoDB TTL indexes that no longer exist
- * on the Postgres side.
+ * events older than 7 days.
  *
  * Auth: requires `Authorization: Bearer <CLEANUP_SECRET>` header. Set
  * CLEANUP_SECRET in env. The cron platform (Vercel, Railway, etc.) provides

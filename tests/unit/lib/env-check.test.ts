@@ -5,7 +5,7 @@ describe("validateEnv", () => {
 
   beforeEach(() => {
     // Set all required env vars
-    process.env.MONGODB_URI = "mongodb://localhost:27017/test";
+    process.env.DATABASE_URL = "postgresql://localhost:5432/test";
     process.env.SK_ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     process.env.AUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
     process.env.NEXTAUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
@@ -24,8 +24,8 @@ describe("validateEnv", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("exits when MONGODB_URI is missing", async () => {
-    delete process.env.MONGODB_URI;
+  it("exits when DATABASE_URL is missing", async () => {
+    delete process.env.DATABASE_URL;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { validateEnv } = await import("@/lib/env-check");

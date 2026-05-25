@@ -14,8 +14,8 @@ customer notices.
 | File | What it pins | When to extend |
 |---|---|---|
 | `server-client-contract.test.ts` | The crypto primitives (`encryptSourceUrl`, `encryptBytes`) round-trip with the browser-side Web Crypto mirror. Includes the photo envelope (DEK wrap), large bodies, AAD binding, and cross-product isolation. | When you change anything in `src/lib/content-encryption.ts` or `src/lib/client-crypto.ts`. |
-| `unlock-endpoint-decrypt.test.ts` | The full `/api/media/[id]/unlock` route — real Mongo, real `encryptSourceUrl`, real Web Crypto on the other side. Includes a key-rotation test. | When you change the unlock route, the access gate, the macaroon verify proxy, or the `MediaProduct` / `ChannelProduct` shape. |
-| `admin-upload-decrypt-flow.test.ts` | The admin upload pipeline — real `/api/admin/photos`, `/api/admin/media`, `/api/admin/media/[id]/create-product` — produces data that decrypts cleanly with the portal key that wrapped it. The "fake key" is the test's fixed SatsRail product key. | When you change any admin upload or create-product route, the photo GridFS bucket, the DEK envelope, or the fingerprint contract. |
+| `unlock-endpoint-decrypt.test.ts` | The full `/api/media/[id]/unlock` route — real Postgres, real `encryptSourceUrl`, real Web Crypto on the other side. Includes a key-rotation test. | When you change the unlock route, the access gate, the macaroon verify proxy, or the `MediaProduct` / `ChannelProduct` shape. |
+| `admin-upload-decrypt-flow.test.ts` | The admin upload pipeline — real `/api/admin/photos`, `/api/admin/media`, `/api/admin/media/[id]/create-product` — produces data that decrypts cleanly with the portal key that wrapped it. The "fake key" is the test's fixed SatsRail product key. | When you change any admin upload or create-product route, the EncryptedPhotoBlob table, the DEK envelope, or the fingerprint contract. |
 | `macaroon-storage-roundtrip.test.ts` | The macaroon cookie storage contract — POST stores, PUT retrieves, DELETE removes, additive across products. | When you change `/api/macaroons/route.ts`, `macaroon-cookie.ts`, or the cookie format. |
 | `sentry-init-contract.test.ts` | `sentry.client.config.ts` and `sentry.server.config.ts` correctly enable/disable based on env var presence. | When you change either config file. |
 
@@ -33,10 +33,10 @@ customer notices.
   `genProductKey`, `sha256HexOfString`, `base64urlToBytes`, `bytesToBase64url`.
   ALL test files in this directory use these. If the client crypto contract
   drifts, this file is the single point of update.
-- `tests/helpers/mongodb.ts` — `setupTestDB`, `teardownTestDB`,
-  `clearCollections`. Memory-only Mongo for hermetic runs.
+- `tests/helpers/postgres.ts` — `setupTestDB`, `teardownTestDB`,
+  `clearCollections`. Isolated Postgres for hermetic runs.
 - `tests/helpers/factories.ts` — `createChannel`, `createMedia`,
-  `createCustomer`. Minimal Mongoose document factories.
+  `createCustomer`. Minimal Prisma record factories.
 
 ## Pre-deploy verification
 
@@ -55,7 +55,7 @@ Beyond Vitest, two more checks belong in any production deploy pipeline:
 
 ## What this directory does NOT cover
 
-- The decryption-blob storage layer in Mongo (covered by `tests/integration/api/admin-*.test.ts`).
+- The decryption-blob storage layer in Postgres (covered by `tests/integration/api/admin-*.test.ts`).
 - The portal's Ruby side of the contract (covered in `portal/spec/`).
 - Browser-specific behavior of `crypto.subtle` (no spec can; covered by
   the manual live-payment step above).

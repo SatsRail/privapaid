@@ -231,15 +231,17 @@ DROP TABLE IF EXISTS "PreviewImage";
 
 -- Counter was an atomic sequence generator for human-readable refs
 -- (channel/media). Replaced by native Postgres sequences via Prisma's
--- @default(autoincrement()) on Channel.ref / Media.ref.
+-- @default(autoincrement()) on Channel.ref / Media.ref. Sequence names
+-- are lowercase to match `prisma db push` (Prisma emits `SERIAL` which
+-- Postgres auto-names without case-folding).
 DROP TABLE IF EXISTS "Counter";
 
-CREATE SEQUENCE IF NOT EXISTS "Channel_ref_seq" START WITH 1;
-CREATE SEQUENCE IF NOT EXISTS "Media_ref_seq"   START WITH 1;
-ALTER TABLE "Channel" ALTER COLUMN "ref" SET DEFAULT nextval('"Channel_ref_seq"');
-ALTER TABLE "Media"   ALTER COLUMN "ref" SET DEFAULT nextval('"Media_ref_seq"');
-ALTER SEQUENCE "Channel_ref_seq" OWNED BY "Channel"."ref";
-ALTER SEQUENCE "Media_ref_seq"   OWNED BY "Media"."ref";
+CREATE SEQUENCE IF NOT EXISTS channel_ref_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS media_ref_seq   START WITH 1;
+ALTER TABLE "Channel" ALTER COLUMN "ref" SET DEFAULT nextval('channel_ref_seq');
+ALTER TABLE "Media"   ALTER COLUMN "ref" SET DEFAULT nextval('media_ref_seq');
+ALTER SEQUENCE channel_ref_seq OWNED BY "Channel"."ref";
+ALTER SEQUENCE media_ref_seq   OWNED BY "Media"."ref";
 
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "sourceUrl";
 ALTER TABLE "Media" DROP COLUMN IF EXISTS "encryptedDek";

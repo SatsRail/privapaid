@@ -1,7 +1,7 @@
 /**
  * KEK-based wrapping for per-photo DEKs.
  *
- * Photos are stored ciphertext-at-rest in GridFS under a random 32-byte DEK
+ * Photos are stored ciphertext-at-rest in the EncryptedPhotoBlob table under a random 32-byte DEK
  * (data encryption key). The DEK is then wrapped — historically only under
  * each SatsRail product key (envelope encryption), which forced a SatsRail
  * round-trip every time we needed to create a new product covering a photo
@@ -65,7 +65,7 @@ export function _resetKekCache(): void {
 /**
  * Wrap a raw 32-byte DEK under the operator's KEK.
  *
- * Returns a Base64 string suitable for storage in MongoDB. The output format
+ * Returns a Base64 string suitable for storage in Postgres. The output format
  * is the same envelope layout as encryptBytes (`IV[12] || ct || tag[16]`),
  * just Base64-encoded for safe text storage.
  */

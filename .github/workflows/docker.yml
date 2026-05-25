@@ -55,11 +55,11 @@ jobs:
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}
           docker run --rm -d --name health-test \
-            -e MONGODB_URI=mongodb://localhost:27017/test \
+            -e DATABASE_URL=postgresql://localhost:5432/test \
             -e NEXTAUTH_SECRET=test-secret \
             -e NEXTAUTH_URL=http://localhost:3000 \
             -p 3000:3000 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}
           sleep 5
-          curl -sf http://localhost:3000/api/health || echo "Health check skipped (no MongoDB in CI)"
+          curl -sf http://localhost:3000/api/health || echo "Health check skipped (no Postgres in CI)"
           docker stop health-test

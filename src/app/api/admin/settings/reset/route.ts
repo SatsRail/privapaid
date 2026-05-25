@@ -67,9 +67,15 @@ export async function POST(request: Request) {
 
       // Reset the autoincrement sequences so a factory-reset instance starts
       // from ch_1 / md_1 again. Without this, refs would keep climbing across
-      // a wipe.
-      await tx.$executeRawUnsafe(`ALTER SEQUENCE "Channel_ref_seq" RESTART WITH 1;`);
-      await tx.$executeRawUnsafe(`ALTER SEQUENCE "Media_ref_seq" RESTART WITH 1;`);
+      // a wipe. We look up the sequence name via pg_get_serial_sequence so
+      // the code is agnostic to case-folding differences between manual
+      // CREATE SEQUENCE and Postgres's `SERIAL` auto-naming.
+      await tx.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('"Channel"', 'ref'), 1, false)`
+      );
+      await tx.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('"Media"', 'ref'), 1, false)`
+      );
     });
 
     // Clear cached config so the app returns to setup mode
