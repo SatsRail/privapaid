@@ -50,8 +50,9 @@ describe("GET /api/health", () => {
   it("returns 503 with db:disconnected when prisma.$queryRaw rejects", async () => {
     // Spy on $queryRaw and make it reject once. The real testcontainer Postgres
     // stays up; we only simulate the failure mode at the call site.
-    vi.spyOn(prisma, "$queryRaw" as never).mockRejectedValueOnce(
-      new Error("offline") as never
+    const spy = vi.spyOn(prisma, "$queryRaw" as never);
+    (spy as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(
+      new Error("offline")
     );
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
     process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";

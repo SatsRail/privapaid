@@ -44,9 +44,9 @@ export async function POST(
     return NextResponse.json({ error: "Channel not found" }, { status: 404 });
   }
 
-  const channelDoc: { _id: string; satsrail_product_type_id: string | null } = {
-    _id: channel.id,
-    satsrail_product_type_id: channel.satsrailProductTypeId,
+  const channelDoc: { id: string; satsrailProductTypeId: string | null } = {
+    id: channel.id,
+    satsrailProductTypeId: channel.satsrailProductTypeId,
   };
 
   const totalSteps = importMedia.length;
@@ -83,17 +83,17 @@ export async function POST(
 
         // Ensure channel has a product type if any media items have products
         const hasProducts = importMedia.some((m) => m.product);
-        if (hasProducts && !channelDoc.satsrail_product_type_id && sk) {
+        if (hasProducts && !channelDoc.satsrailProductTypeId && sk) {
           try {
             const productType = await createProductSafeType(
               sk,
               channel.name,
-              `ch_${channel.ref || channelDoc._id}`,
+              `ch_${channel.ref || channelDoc.id}`,
               api
             );
-            channelDoc.satsrail_product_type_id = productType.id;
+            channelDoc.satsrailProductTypeId = productType.id;
             await prisma.channel.update({
-              where: { id: channelDoc._id },
+              where: { id: channelDoc.id },
               data: { satsrailProductTypeId: productType.id },
             });
           } catch (err) {
@@ -111,7 +111,7 @@ export async function POST(
           await sendProgress("media", mData.name, "processing");
           const onStatus: StatusFn = (detail) => sendStatus(mData.name, detail);
           try {
-            const existingMedia = await findExistingMedia(mData, channelDoc._id);
+            const existingMedia = await findExistingMedia(mData, channelDoc.id);
 
             if (existingMedia) {
               await updateExistingMedia(sk, mData, existingMedia, channelDoc, results.errors, api, onStatus);
@@ -135,7 +135,7 @@ export async function POST(
           actorType: "admin",
           action: "channel_import.create",
           targetType: "channel",
-          targetId: channelDoc._id,
+          targetId: channelDoc.id,
           details: {
             media: {
               created: results.created,

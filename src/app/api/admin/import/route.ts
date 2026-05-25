@@ -99,7 +99,7 @@ async function importChannelsPhase(
     where: { deletedAt: null },
   });
   for (const ch of existingChannels) {
-    slugToDoc.set(ch.slug, { _id: ch.id, satsrail_product_type_id: ch.satsrailProductTypeId });
+    slugToDoc.set(ch.slug, { id: ch.id, satsrailProductTypeId: ch.satsrailProductTypeId });
   }
 
   for (const chData of importChannels) {
@@ -148,7 +148,7 @@ async function importChannelsPhase(
           },
         });
 
-        slugToDoc.set(chSlug, { _id: channel.id, satsrail_product_type_id: satsrailProductTypeId });
+        slugToDoc.set(chSlug, { id: channel.id, satsrailProductTypeId: satsrailProductTypeId });
         results.created++;
       }
       await sendProgress("channels", chData.name, "done");
@@ -164,7 +164,7 @@ async function importChannelsPhase(
 // --- Phase 3: Upsert media ---
 async function importMediaPhase(
   importChannels: ImportChannel[],
-  channelSlugToDoc: Map<string, { _id: string; satsrail_product_type_id: string | null }>,
+  channelSlugToDoc: Map<string, { id: string; satsrailProductTypeId: string | null }>,
   sk: string | null,
   api: ApiThrottle,
   sendProgress: SendProgressFn,
@@ -182,7 +182,7 @@ async function importMediaPhase(
       await sendProgress("media", mData.name, "processing");
       const onStatus: StatusFn = (detail) => sendStatus(mData.name, detail);
       try {
-        const existingMedia = await findExistingMedia(mData, channelDoc._id);
+        const existingMedia = await findExistingMedia(mData, channelDoc.id);
 
         if (existingMedia) {
           await updateExistingMedia(sk, mData, existingMedia, channelDoc, results.errors, api, onStatus);
@@ -205,7 +205,7 @@ async function importMediaPhase(
 // --- Phase 4: Create channel access products ---
 async function importChannelProductsPhase(
   importChannels: ImportChannel[],
-  channelSlugToDoc: Map<string, { _id: string; satsrail_product_type_id: string | null }>,
+  channelSlugToDoc: Map<string, { id: string; satsrailProductTypeId: string | null }>,
   sk: string,
   api: ApiThrottle,
   sendProgress: SendProgressFn,
@@ -218,13 +218,13 @@ async function importChannelProductsPhase(
 
     const chSlug = chData.slug || slugify(chData.name);
     const channelDoc = channelSlugToDoc.get(chSlug);
-    if (!channelDoc || !channelDoc.satsrail_product_type_id) continue;
+    if (!channelDoc || !channelDoc.satsrailProductTypeId) continue;
 
     await sendProgress("channel_products", chData.name, "processing");
     const onStatus: StatusFn = (detail) => sendStatus(chData.name, detail);
     try {
       const channel = await prisma.channel.findUnique({
-        where: { id: channelDoc._id },
+        where: { id: channelDoc.id },
         select: { ref: true },
       });
       if (!channel || channel.ref == null) {
@@ -240,10 +240,10 @@ async function importChannelProductsPhase(
           price_cents: chData.product.price_cents,
           currency: chData.product.currency,
           access_duration_seconds: chData.product.access_duration_seconds,
-          product_type_id: channelDoc.satsrail_product_type_id,
+          product_type_id: channelDoc.satsrailProductTypeId,
           external_ref: chData.product.external_ref || `ch_${channel.ref}`,
         },
-        channelDoc._id,
+        channelDoc.id,
         api,
         onStatus
       );
