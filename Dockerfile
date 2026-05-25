@@ -51,10 +51,11 @@ COPY --from=build --chown=nextjs:nodejs /app/public ./public
 # Ship the Prisma schema + migrations so `prisma migrate deploy` can run at
 # startup, plus the prisma CLI for the entrypoint to invoke.
 COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
-COPY --from=build --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=build --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
-RUN mkdir -p ./node_modules/.bin && ln -sf ../prisma/build/index.js ./node_modules/.bin/prisma && chown -h nextjs:nodejs ./node_modules/.bin/prisma
+# Standalone Next.js trace doesn't include the Prisma CLI's full transitive
+# closure (e.g. `effect`, `c12` via `@prisma/config`), so ship the build's
+# full node_modules. Larger image, but `prisma migrate deploy` in the
+# entrypoint needs it.
+COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 # Copy entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./

@@ -890,4 +890,141 @@ describe("POST /api/admin/import", () => {
     const mediaProducts = await prisma.mediaProduct.findMany();
     expect(mediaProducts).toHaveLength(1);
   });
+
+  it("category.update uses default active=true when not provided", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    await createCategory({ slug: "music", name: "Music", active: false, position: 5 });
+
+    // Update WITHOUT active or position to exercise default branches
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        categories: [{ slug: "music", name: "Music Renamed" }],
+      })
+    );
+    const body = await readSSEResult(res);
+    expect((body.results.categories as { updated: number }).updated).toBe(1);
+    const cat = await prisma.category.findFirst({ where: { slug: "music" } });
+    expect(cat!.active).toBe(true); // fallback
+    expect(cat!.position).toBe(5); // preserved (not in payload)
+  });
+
+  it("category.create uses default position when no max exists and position not provided", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        // Note: no position field
+        categories: [{ slug: "first-cat", name: "First", active: false }],
+      })
+    );
+    await readSSEResult(res);
+    const cat = await prisma.category.findFirst({ where: { slug: "first-cat" } });
+    expect(cat!.position).toBe(1); // (maxPos?.position ?? 0) + 1
+    expect(cat!.active).toBe(false);
+  });
+
+  it("skips channel product when channel has no satsrailProductTypeId", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    // No SK key returns null → no product type can be created
+    const merchantKey = await import("@/lib/merchant-key");
+    vi.mocked(merchantKey.getMerchantKey).mockResolvedValueOnce(null);
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "skip-cp-ch",
+            name: "Skip CP",
+            product: {
+              name: "X",
+              price_cents: 100,
+            },
+          },
+        ],
+      })
+    );
+    const body = await readSSEResult(res);
+    // Channel created, but Phase 4 (channel_products) entirely skipped (no sk)
+    expect((body.results.channels as { created: number }).created).toBe(1);
+  });
+
+  it("creates a channel using all defaults (bio=empty, nsfw=false, etc.)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    mockCreateProductType.mockResolvedValue({ id: "pt_defaults" });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        // Minimal payload — no bio, profile_image_url, etc.
+        channels: [{ slug: "minimal-ch", name: "Minimal" }],
+      })
+    );
+    const body = await readSSEResult(res);
+    expect((body.results.channels as { created: number }).created).toBe(1);
+
+    const ch = await prisma.channel.findFirst({ where: { slug: "minimal-ch" } });
+    expect(ch!.bio).toBe("");
+    expect(ch!.nsfw).toBe(false);
+    expect(ch!.profileImageUrl).toBe("");
+    expect(ch!.active).toBe(true);
+  });
+
+  it("uses default channel update path when sk is null (skips ensureChannelProductType)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+    await createChannel({ slug: "existing-no-sk", name: "Existing No SK" });
+    const merchantKey = await import("@/lib/merchant-key");
+    vi.mocked(merchantKey.getMerchantKey).mockResolvedValueOnce(null);
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "existing-no-sk",
+            name: "Existing No SK Updated",
+            media: [{ name: "V1", source_url: "https://example.com/v.mp4", product: { name: "P", price_cents: 100 } }],
+          },
+        ],
+      })
+    );
+    const body = await readSSEResult(res);
+    expect((body.results.channels as { updated: number }).updated).toBe(1);
+    // ensureChannelProductType not called → no createProductType
+    expect(mockCreateProductType).not.toHaveBeenCalled();
+  });
+
+  it("catches the outer try/catch and emits an 'error' SSE event", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    // Force getMerchantKey to throw so the outer try/catch handles it
+    const merchantKey = await import("@/lib/merchant-key");
+    vi.mocked(merchantKey.getMerchantKey).mockRejectedValueOnce(new Error("KMS down"));
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [{ slug: "err-ch", name: "Err Ch" }],
+      })
+    );
+    // The stream emits an "error" event — parse to confirm
+    const text = await res.text();
+    expect(text).toContain("event: error");
+    expect(text).toContain("KMS down");
+  });
 });
