@@ -16,20 +16,12 @@ interface ActionRowProps {
    * via `useMediaAccess` and passes it down.
    */
   hasAccess: boolean;
-  /**
-   * Channel slug — when provided, an RSS Subscribe link is rendered at
-   * the right edge of the action row, linking to /c/{slug}/feed.xml in
-   * a new tab. Omit to hide the Subscribe affordance (e.g. on contexts
-   * where the channel is implicit or the user is already on it).
-   */
-  channelSlug?: string;
 }
 
 /**
  * YouTube-style action row: a segmented Like/Dislike pill + Share pill,
  * sized to match YouTube exactly (~36px tall, 20px icons, tight
- * horizontal padding). When `channelSlug` is provided, an RSS Subscribe
- * pill is added at the right edge (pushed via `ml-auto`).
+ * horizontal padding).
  *
  * Like and Share counts persist server-side via POST /api/media/[id]/like
  * and /share. Per-user toggle state for Like/Dislike stays in
@@ -38,9 +30,17 @@ interface ActionRowProps {
  * the +1 / -1 delta. Dislike does not hit the server.
  *
  * Payment gating: Like and Dislike require active paid access (matches
- * the Comments pattern). Share and Subscribe are free. When `hasAccess`
- * is false the like/dislike buttons render with `disabled` + a "Pay to
- * react" title, and click handlers no-op without hitting the API.
+ * the Comments pattern). Share is free. When `hasAccess` is false the
+ * like/dislike buttons render with `disabled` + a "Pay to react" title,
+ * and click handlers no-op without hitting the API.
+ *
+ * Channel subscription: there's no visible "Subscribe" button here.
+ * Channels expose an RSS feed at /c/{slug}/feed.xml and the channel page
+ * carries a `<link rel="alternate" type="application/rss+xml">` tag in
+ * its `<head>`, so RSS reader browser extensions and standalone readers
+ * auto-discover the feed when the viewer visits the channel. We
+ * deliberately keep the visible UI free of an XML-opening button to
+ * avoid confusing casual viewers without an RSS reader.
  */
 export default function ActionRow({
   mediaId,
@@ -48,7 +48,6 @@ export default function ActionRow({
   initialLikesCount,
   initialSharesCount,
   hasAccess,
-  channelSlug,
 }: ActionRowProps) {
   const { t } = useLocale();
   const [liked, setLiked] = useState(false);
@@ -273,31 +272,6 @@ export default function ActionRow({
         >
           {actionToast}
         </span>
-      )}
-
-      {/* RSS Subscribe — pushed to the right edge of the action row via
-          ml-auto. Click opens /c/{slug}/feed.xml in a new tab so the
-          viewer's RSS reader (Feedly, NetNewsWire, Inoreader, etc.) can
-          subscribe. The channel page also exposes the feed via a
-          <link rel="alternate"> auto-discovery tag. */}
-      {channelSlug && (
-        <a
-          href={`/c/${channelSlug}/feed.xml`}
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid="subscribe-button"
-          title={t("viewer.channel.subscribe_hint")}
-          className={`${pillBase} ml-auto rounded-full hover:opacity-90`}
-          style={{
-            backgroundColor: "var(--theme-text)",
-            color: "var(--theme-bg)",
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M6.18 15.64a2.18 2.18 0 1 1 0 4.36 2.18 2.18 0 0 1 0-4.36zM4 4.44A15.56 15.56 0 0 1 19.56 20H16.5A12.5 12.5 0 0 0 4 7.5V4.44zm0 5.66A9.9 9.9 0 0 1 13.9 20H10.83A6.83 6.83 0 0 0 4 13.17V10.1z" />
-          </svg>
-          <span>{t("viewer.channel.subscribe")}</span>
-        </a>
       )}
     </div>
   );

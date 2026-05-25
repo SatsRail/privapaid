@@ -106,6 +106,49 @@ describe("Macaroons API — POST /api/macaroons", () => {
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
     expect(parsed.prod_1.m).toBe("mac_1");
   });
+
+  it("evicts the oldest entries when the new one would push past MAX_BYTES (Chrome-drop guard)", async () => {
+    // Regression for the founder's "paid in Chrome → lost access" bug:
+    // when the cookie grew past Chrome's 4096-byte hard cap, Set-Cookie
+    // was silently dropped and the just-paid-for macaroon never landed.
+    // The route must evict the OLDEST entries (lowest `t`) — never the
+    // just-added one — to stay under the budget.
+    //
+    // Build a cookie that's nearly at the MAX_BYTES cap with several
+    // existing entries; the POST should fit the new one in and evict
+    // at least one old entry.
+    const big = "x".repeat(300);
+    const seed: Record<string, { m: string; t: number }> = {};
+    for (let i = 0; i < 8; i++) {
+      seed[`prod_old_${i}`] = { m: big, t: i + 1 };
+    }
+    mockCookieStore._set("satsrail_macaroons", JSON.stringify(seed));
+
+    const req = jsonRequest("POST", {
+      product_id: "prod_just_paid",
+      macaroon: big,
+    });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.stored).toBe(true);
+    // The route returns the eviction count so the client can react if needed.
+    expect(body.evicted).toBeGreaterThan(0);
+
+    const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
+    // Invariant #1: the just-paid-for macaroon is present — never evicted.
+    expect(parsed.prod_just_paid).toBeDefined();
+    expect(parsed.prod_just_paid.m).toBe(big);
+    // Invariant #2: the resulting cookie value fits under MAX_BYTES.
+    expect(res.cookies.get("satsrail_macaroons")!.value.length).toBeLessThanOrEqual(
+      // Allow MAX_BYTES + minor JSON wrapping noise; the cookie helper
+      // guarantees <= MAX_BYTES so this is strict.
+      2500
+    );
+    // Invariant #3: the oldest entry (lowest t) is gone first.
+    expect(parsed.prod_old_0).toBeUndefined();
+  });
 });
 
 describe("Macaroons API — DELETE /api/macaroons", () => {

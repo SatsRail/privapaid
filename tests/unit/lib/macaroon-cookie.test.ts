@@ -105,6 +105,27 @@ describe("macaroon-cookie", () => {
     });
   });
 
+  describe("MAX_BYTES budget", () => {
+    it("stays well under Chrome's 4096-byte per-cookie hard limit (RFC 6265)", () => {
+      // Chrome silently drops Set-Cookie when the value exceeds ~4096
+      // bytes. Our cookie value is URL-encoded in the Set-Cookie header,
+      // which adds ~25% for `{`, `}`, `"`, `:`, `,`. So a 3000-byte raw
+      // JSON becomes ~3750 encoded — already perilously close to 4096.
+      // 2500 raw → ~3125 encoded, leaving ~970 bytes of cushion for
+      // attributes (Max-Age, Path, SameSite, HttpOnly, Secure) and any
+      // future per-macaroon size growth. This guard prevents anyone from
+      // bumping MAX_BYTES to a value that re-introduces the Chrome bug
+      // the founder hit (paid in Chrome → cookie dropped → next page load
+      // had no proof of payment).
+      const CHROME_COOKIE_HARD_LIMIT = 4096;
+      const URL_ENCODE_OVERHEAD = 1.30;
+      const COOKIE_ATTRIBUTES_OVERHEAD = 100;
+      const projectedTransmittedSize =
+        MAX_BYTES * URL_ENCODE_OVERHEAD + COOKIE_ATTRIBUTES_OVERHEAD;
+      expect(projectedTransmittedSize).toBeLessThan(CHROME_COOKIE_HARD_LIMIT);
+    });
+  });
+
   describe("insertWithCap", () => {
     it("inserts a new entry without eviction when under cap", () => {
       const { map, evicted } = insertWithCap({}, "p1", "mac", 100);

@@ -133,22 +133,24 @@ export default function MediaLayout({
               "info block" directly beneath the player. */}
           <MediaMeta viewsCount={media.views_count} locale={locale} />
 
-          {/* YouTube-style action row — Like / Dislike / Share on the
-              left, RSS Subscribe pushed to the right edge. ActionRow
-              owns the layout (single flex row); passing channelSlug
-              activates the Subscribe pill. */}
+          {/* YouTube-style action row — Like / Dislike / Share. No
+              Subscribe button: channels expose an RSS feed at
+              /c/{slug}/feed.xml and the channel page's <head> carries a
+              <link rel="alternate" type="application/rss+xml"> for
+              auto-discovery by RSS reader extensions and standalone
+              readers. We keep the visible UI free of a "Subscribe to
+              XML" button to avoid confusing casual viewers. */}
           <ActionRow
             mediaId={media._id}
             mediaName={media.name}
             initialLikesCount={media.likes_count}
             initialSharesCount={media.shares_count}
             hasAccess={hasActiveAccess}
-            channelSlug={channel.slug}
           />
 
-          {/* Channel attribution — avatar + name. Subscribe lives in the
-              action row above; this block is purely the YouTube-style
-              channel link beneath the engagement controls. */}
+          {/* Channel attribution — avatar + name link to the channel
+              page, which is also where viewers discover and re-engage
+              with the channel's content. */}
           <ChannelBlock
             name={channel.name}
             slug={channel.slug}

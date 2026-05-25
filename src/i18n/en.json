@@ -262,8 +262,6 @@
   "viewer.media.views_one": "1 view",
   "viewer.media.views_other": "{count} views",
   "viewer.sidebar.more_from_channel": "More from this channel",
-  "viewer.channel.subscribe": "Subscribe",
-  "viewer.channel.subscribe_hint": "Subscribe via RSS — opens in your reader",
   "viewer.actions.like": "Like",
   "viewer.actions.dislike": "Dislike",
   "viewer.actions.share": "Share",
