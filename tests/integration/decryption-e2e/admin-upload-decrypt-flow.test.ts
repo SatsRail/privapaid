@@ -1,33 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import mongoose from "mongoose";
 import { randomBytes } from "crypto";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import {
   base64urlToBytes,
-  bytesToBase64url,
   clientDecryptBlob,
   clientDecryptBytesWithKey,
   genProductKey,
   sha256HexOfString,
 } from "../../helpers/crypto";
-
-/**
- * Full admin upload → decrypt round-trip specs.
- *
- * These tests drive the REAL admin HTTP endpoints — `/api/admin/photos`,
- * `/api/admin/media`, `/api/admin/media/[id]/create-product` — using
- * the REAL `encryptSourceUrl` and `encryptBytes` primitives, then
- * decrypt whatever the endpoints persisted using the fake portal key
- * we handed them via the mocked SatsRail client.
- *
- * If the admin flow ever drifts (wrong key used at wrap time, missing
- * AAD, wrong base64url canonicalization, swapped IV/tag layout, etc.)
- * the round-trip below breaks loudly and prints the exact mismatch.
- *
- * The "fake key" is the SatsRail product key — it is fake in the sense
- * that the test controls it deterministically via the mock, not in the
- * sense that the encryption is fake. All AES-256-GCM operations are real.
- */
 
 // ── Hoisted mocks (must come before route imports) ────────────────────
 
@@ -41,21 +21,16 @@ const {
   mockSharpMeta,
   mockSharpRotate,
   mockSharpToBuffer,
-  mockBucketOpenUploadStream,
-  mockGridFsCapturedBytes,
   mockSatsrailClient,
   mockGetMerchantKey,
   mockRateLimit,
 } = vi.hoisted(() => {
-  const capturedBytes: { value: Buffer | null } = { value: null };
   return {
     mockRequireAdminApi: vi.fn(),
     mockFileTypeFromBuffer: vi.fn(),
     mockSharpMeta: vi.fn(),
     mockSharpRotate: vi.fn(),
     mockSharpToBuffer: vi.fn(),
-    mockBucketOpenUploadStream: vi.fn(),
-    mockGridFsCapturedBytes: capturedBytes,
     mockSatsrailClient: {
       createProduct: vi.fn(),
       getProductKey: vi.fn(),
@@ -79,18 +54,8 @@ vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: mockRequireAdminApi,
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
 vi.mock("@/lib/satsrail", () => ({ satsrail: mockSatsrailClient }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: mockGetMerchantKey }));
-vi.mock("@/lib/gridfs", () => ({
-  getEncryptedPhotosBucket: vi.fn().mockResolvedValue({
-    openUploadStream: mockBucketOpenUploadStream,
-  }),
-  ALLOWED_IMAGE_TYPES: ["image/jpeg", "image/png", "image/webp", "image/gif"],
-  MAX_IMAGE_SIZE: 5 * 1024 * 1024,
-}));
 vi.mock("file-type", () => ({ fileTypeFromBuffer: mockFileTypeFromBuffer }));
 vi.mock("sharp", () => ({
   default: vi.fn().mockImplementation(() => mockSharpInstance),
@@ -104,8 +69,7 @@ import { POST as adminPhotosPOST } from "@/app/api/admin/photos/route";
 import { POST as adminMediaPOST } from "@/app/api/admin/media/route";
 import { POST as createProductPOST } from "@/app/api/admin/media/[id]/create-product/route";
 import { createChannel } from "../../helpers/factories";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -143,26 +107,10 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       role: "owner",
     });
     mockRateLimit.mockResolvedValue(null);
-    // JPEG default; PNG override in the PNG-specific test
     mockFileTypeFromBuffer.mockResolvedValue({ mime: "image/jpeg", ext: "jpg" });
     mockSharpMeta.mockResolvedValue({ width: 800, height: 600 });
     mockSharpRotate.mockReturnValue(mockSharpInstance);
 
-    // GridFS upload mock: capture the bytes the route writes.
-    mockGridFsCapturedBytes.value = null;
-    const uploadStream = {
-      id: { toString: () => "gridfs_photo_id_e2e" },
-      on: vi.fn().mockImplementation((event: string, cb: () => void) => {
-        if (event === "finish") setTimeout(cb, 0);
-      }),
-      end: vi.fn().mockImplementation((bytes: Buffer) => {
-        mockGridFsCapturedBytes.value = bytes;
-      }),
-    };
-    mockBucketOpenUploadStream.mockReturnValue(uploadStream);
-
-    // Mocked SatsRail portal: createProduct returns a deterministic product,
-    // getProductKey returns the FAKE PORTAL KEY this test will decrypt with.
     mockSatsrailClient.createProduct.mockResolvedValue({
       id: FAKE_PRODUCT_ID,
       name: "Test Product",
@@ -187,10 +135,10 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
   // -------------------------------------------------------------------
   // ARTICLE
   // -------------------------------------------------------------------
-  it("article: create-product encrypts source_url with portal key; same key decrypts back to original markdown", async () => {
+  it("article: create-product encrypts sourceUrl with portal key; same key decrypts back to original markdown", async () => {
     const channel = await createChannel({
       slug: "showcase-article-e2e",
-      satsrail_product_type_id: "pt_article",
+      satsrailProductTypeId: "pt_article",
     });
     const articleBody = [
       "# Lightning in a bottle",
@@ -201,32 +149,31 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       "- [link](https://example.com)",
     ].join("\n");
 
-    const media = await Media.create({
-      ref: 1,
-      channel_id: channel._id,
-      name: "Article",
-      source_url: articleBody,
-      media_type: "article",
+    const media = await prisma.media.create({
+      data: {
+        ref: 1,
+        channelId: channel.id,
+        name: "Article",
+        sourceUrl: articleBody,
+        mediaType: "article",
+      },
     });
 
-    // Drive the real create-product route — wraps `source_url` under FAKE_PORTAL_KEY.
     const req = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media._id}/create-product`,
+      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       { name: "Article Product", price_cents: 1, access_duration_seconds: 86400 }
     );
-    const res = await createProductPOST(req, { params: Promise.resolve({ id: String(media._id) }) });
+    const res = await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
     expect(res.status).toBe(201);
 
-    const stored = await MediaProduct.findOne({ media_id: media._id }).lean();
+    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
     expect(stored).not.toBeNull();
-    expect(stored!.satsrail_product_id).toBe(FAKE_PRODUCT_ID);
-    expect(stored!.key_fingerprint).toBe(FAKE_KEY_FINGERPRINT);
-    expect(stored!.encrypted_source_url).toBeTruthy();
+    expect(stored!.satsrailProductId).toBe(FAKE_PRODUCT_ID);
+    expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
+    expect(stored!.encryptedSourceUrl).toBeTruthy();
 
-    // Decrypt with the fake portal key + productId AAD — same path the
-    // browser runs in PaymentWall.resolveContent for non-photo media.
     const recovered = await clientDecryptBlob(
-      stored!.encrypted_source_url,
+      stored!.encryptedSourceUrl,
       FAKE_PORTAL_KEY,
       FAKE_PRODUCT_ID
     );
@@ -236,31 +183,33 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
   it("article: a wrong (different) key cannot decrypt what create-product stored", async () => {
     const channel = await createChannel({
       slug: "showcase-article-wrongkey",
-      satsrail_product_type_id: "pt_article2",
+      satsrailProductTypeId: "pt_article2",
     });
-    const media = await Media.create({
-      ref: 2,
-      channel_id: channel._id,
-      name: "Article 2",
-      source_url: "Secret article body.",
-      media_type: "article",
+    const media = await prisma.media.create({
+      data: {
+        ref: 2,
+        channelId: channel.id,
+        name: "Article 2",
+        sourceUrl: "Secret article body.",
+        mediaType: "article",
+      },
     });
     const req = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media._id}/create-product`,
+      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       { name: "Article 2", price_cents: 1, access_duration_seconds: 86400 }
     );
-    await createProductPOST(req, { params: Promise.resolve({ id: String(media._id) }) });
+    await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
 
-    const stored = await MediaProduct.findOne({ media_id: media._id }).lean();
+    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
     const wrongKey = genProductKey();
 
     await expect(
-      clientDecryptBlob(stored!.encrypted_source_url, wrongKey, FAKE_PRODUCT_ID)
+      clientDecryptBlob(stored!.encryptedSourceUrl, wrongKey, FAKE_PRODUCT_ID)
     ).rejects.toBeTruthy();
   });
 
   // -------------------------------------------------------------------
-  // PHOTO — full envelope, including the upload + GridFS bytes
+  // PHOTO — full envelope, including the upload + bytes
   // -------------------------------------------------------------------
   it("photo: upload → create-product → decrypt envelope with fake key → recover original image bytes", async () => {
     const originalPhoto = Buffer.from(
@@ -270,8 +219,6 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       ])
     );
     mockFileTypeFromBuffer.mockResolvedValue({ mime: "image/png", ext: "png" });
-    // sharp returns the "EXIF-stripped" buffer that gets encrypted. Using the
-    // ORIGINAL bytes here so the round-trip can assert byte equality.
     mockSharpToBuffer.mockResolvedValue(originalPhoto);
 
     // Step 1 — POST /api/admin/photos with a PNG file.
@@ -279,33 +226,34 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const uploadRes = await adminPhotosPOST(buildFormRequest(file));
     expect(uploadRes.status).toBe(201);
     const uploadBody = await uploadRes.json();
-    expect(uploadBody.gridFsId).toBe("gridfs_photo_id_e2e");
     expect(typeof uploadBody.dek).toBe("string");
     expect(uploadBody.mime).toBe("image/png");
 
-    // GridFS captured the ciphertext (no plaintext at rest).
-    const ciphertext = mockGridFsCapturedBytes.value!;
-    expect(ciphertext).toBeTruthy();
+    // Find the blob that was created
+    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
+    expect(blob).not.toBeNull();
+    const ciphertext = Buffer.from(blob!.bytes);
     expect(ciphertext.equals(originalPhoto)).toBe(false);
-    expect(ciphertext.length).toBe(originalPhoto.length + 12 + 16); // IV + tag overhead
+    expect(ciphertext.length).toBe(originalPhoto.length + 12 + 16);
 
-    // Step 2 — register the Media (photo) pointing at the GridFS id.
+    // Step 2 — register the Media (photo) pointing at the blob id.
     const channel = await createChannel({
       slug: "showcase-photo-e2e",
-      satsrail_product_type_id: "pt_photo",
+      satsrailProductTypeId: "pt_photo",
     });
-    const media = await Media.create({
-      ref: 3,
-      channel_id: channel._id,
-      name: "Photo",
-      source_url: uploadBody.gridFsId, // for photos, source_url IS the GridFS id
-      media_type: "photo",
+    const media = await prisma.media.create({
+      data: {
+        ref: 3,
+        channelId: channel.id,
+        name: "Photo",
+        sourceUrl: blob!.id,
+        mediaType: "photo",
+      },
     });
 
     // Step 3 — POST /api/admin/media/[id]/create-product with the DEK.
-    // The route wraps the DEK under the portal key (envelope encryption).
     const cpReq = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media._id}/create-product`,
+      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       {
         name: "Photo Product",
         price_cents: 1,
@@ -314,27 +262,27 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       }
     );
     const cpRes = await createProductPOST(cpReq, {
-      params: Promise.resolve({ id: String(media._id) }),
+      params: Promise.resolve({ id: media.id }),
     });
     expect(cpRes.status).toBe(201);
 
-    const stored = await MediaProduct.findOne({ media_id: media._id }).lean();
+    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
     expect(stored).not.toBeNull();
-    expect(stored!.key_fingerprint).toBe(FAKE_KEY_FINGERPRINT);
+    expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
 
-    // Sanity: wrapped DEK length is small (~96 chars base64), NOT the photo size.
-    expect(stored!.encrypted_source_url.length).toBeLessThan(200);
+    // Sanity: wrapped DEK length is small, NOT the photo size.
+    expect(stored!.encryptedSourceUrl.length).toBeLessThan(200);
 
     // Step 4 — unwrap the DEK envelope with the fake portal key.
     const innerBytes = await clientDecryptBlob(
-      stored!.encrypted_source_url,
+      stored!.encryptedSourceUrl,
       FAKE_PORTAL_KEY,
       FAKE_PRODUCT_ID
     );
     const recoveredDekString = new TextDecoder().decode(innerBytes);
     expect(recoveredDekString).toBe(uploadBody.dek);
 
-    // Step 5 — base64url-decode the DEK and decrypt the GridFS ciphertext.
+    // Step 5 — base64url-decode the DEK and decrypt the ciphertext.
     const dekBytes = base64urlToBytes(recoveredDekString);
     expect(dekBytes.length).toBe(32);
     const recoveredPhoto = await clientDecryptBytesWithKey(
@@ -342,14 +290,13 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       dekBytes
     );
 
-    // Step 6 — bytes must match exactly. If they don't, the photo is unrecoverable.
     expect(Buffer.from(recoveredPhoto).equals(originalPhoto)).toBe(true);
   });
 
   it("photo: wrong portal key cannot unwrap the DEK envelope", async () => {
     const originalPhoto = Buffer.from(
       Uint8Array.from([
-        0xff, 0xd8, 0xff, 0xe0, // JPEG SOI + APP0
+        0xff, 0xd8, 0xff, 0xe0,
         ...Buffer.from("FAKE-JPEG-PAYLOAD"),
       ])
     );
@@ -360,19 +307,22 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const uploadRes = await adminPhotosPOST(buildFormRequest(file));
     const uploadBody = await uploadRes.json();
 
+    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
     const channel = await createChannel({
       slug: "showcase-photo-wrongkey",
-      satsrail_product_type_id: "pt_photo2",
+      satsrailProductTypeId: "pt_photo2",
     });
-    const media = await Media.create({
-      ref: 4,
-      channel_id: channel._id,
-      name: "Photo Wrong Key",
-      source_url: uploadBody.gridFsId,
-      media_type: "photo",
+    const media = await prisma.media.create({
+      data: {
+        ref: 4,
+        channelId: channel.id,
+        name: "Photo Wrong Key",
+        sourceUrl: blob!.id,
+        mediaType: "photo",
+      },
     });
     const cpReq = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media._id}/create-product`,
+      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       {
         name: "Photo Wrong Key",
         price_cents: 1,
@@ -381,20 +331,18 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       }
     );
     await createProductPOST(cpReq, {
-      params: Promise.resolve({ id: String(media._id) }),
+      params: Promise.resolve({ id: media.id }),
     });
 
-    const stored = await MediaProduct.findOne({ media_id: media._id }).lean();
+    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
     const wrongKey = genProductKey();
 
     await expect(
-      clientDecryptBlob(stored!.encrypted_source_url, wrongKey, FAKE_PRODUCT_ID)
+      clientDecryptBlob(stored!.encryptedSourceUrl, wrongKey, FAKE_PRODUCT_ID)
     ).rejects.toBeTruthy();
   });
 
-  it("photo: GridFS ciphertext cannot be decrypted with the WRONG DEK", async () => {
-    // Confirms the envelope binds the photo bytes to the SPECIFIC DEK
-    // returned by the upload — not just any 32-byte key.
+  it("photo: ciphertext cannot be decrypted with the WRONG DEK", async () => {
     const originalPhoto = Buffer.from(
       Uint8Array.from([0x89, 0x50, 0x4e, 0x47, ...Buffer.from("payload")])
     );
@@ -404,7 +352,8 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const file = new File([originalPhoto], "photo.png", { type: "image/png" });
     await adminPhotosPOST(buildFormRequest(file));
 
-    const ciphertext = mockGridFsCapturedBytes.value!;
+    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
+    const ciphertext = Buffer.from(blob!.bytes);
     const wrongDek = randomBytes(32);
     await expect(
       clientDecryptBytesWithKey(new Uint8Array(ciphertext), wrongDek)
@@ -412,37 +361,30 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
   });
 
   // -------------------------------------------------------------------
-  // Cross-product article (channel-level products that wrap on creation)
-  // -------------------------------------------------------------------
   it("article: fingerprint stored on MediaProduct matches SHA-256(portal key)", async () => {
-    // Pins the fingerprint computation contract — PaymentWall's
-    // `verifyKeyFingerprint(data.key, product.keyFingerprint)` MUST pass
-    // when the portal returns the same key it returned at create-product
-    // time. If portal-side and stored sha256 differ for any reason, every
-    // payment for this product would record `PaymentWall.fingerprint`
-    // failures.
     const channel = await createChannel({
       slug: "fp-check",
-      satsrail_product_type_id: "pt_fp",
+      satsrailProductTypeId: "pt_fp",
     });
-    const media = await Media.create({
-      ref: 5,
-      channel_id: channel._id,
-      name: "Fingerprint check",
-      source_url: "irrelevant body",
-      media_type: "article",
+    const media = await prisma.media.create({
+      data: {
+        ref: 5,
+        channelId: channel.id,
+        name: "Fingerprint check",
+        sourceUrl: "irrelevant body",
+        mediaType: "article",
+      },
     });
     const req = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media._id}/create-product`,
+      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       { name: "FP", price_cents: 1, access_duration_seconds: 86400 }
     );
-    await createProductPOST(req, { params: Promise.resolve({ id: String(media._id) }) });
+    await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
 
-    const stored = await MediaProduct.findOne({ media_id: media._id }).lean();
-    expect(stored!.key_fingerprint).toBe(FAKE_KEY_FINGERPRINT);
-    // Also confirm the fingerprint is what the CLIENT would compute from the same key.
+    const stored = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
     const clientComputed = await sha256HexOfString(FAKE_PORTAL_KEY);
-    expect(stored!.key_fingerprint).toBe(clientComputed);
+    expect(stored!.keyFingerprint).toBe(clientComputed);
   });
 });
 
