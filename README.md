@@ -69,6 +69,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for EC2, Docker, and other deployment options
 - **Payment-gated comments and flags** — only paying customers can interact
 - **White-label** — your name, your colors, your domain
 - **Pseudonymous customers** — sign up with a nickname, no email required
+- **RSS feeds** — per-channel `/c/{slug}/feed.xml` so viewers can follow new content in any RSS reader (auto-discovered via `<link rel="alternate">`)
 - **Admin dashboard** — manage channels, media, and categories
 - **NSFW toggle** — enable or disable adult content categories per instance
 
