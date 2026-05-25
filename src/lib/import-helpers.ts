@@ -4,6 +4,12 @@ import { getNextRef } from "@/models/Counter";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { schemas } from "@/lib/validate";
+import {
+  mediaBlobSchema,
+  parseMediaBlob,
+  plaintextForEncryption,
+  type MediaBlob,
+} from "@/lib/schemas/media-blob";
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -91,6 +97,20 @@ export class ApiThrottle {
 
 export function createApiThrottle(minGapMs = 1100): ApiThrottle {
   return new ApiThrottle(minGapMs);
+}
+
+// ─── Blob construction for import payloads ─────────────────────────
+
+/**
+ * Build a Media.blob payload from an ImportMedia entry. Photos are never
+ * imported via JSON (their bytes must be uploaded through /api/admin/photos),
+ * so this function only handles url/markdown.
+ */
+function buildBlobForImport(mData: ImportMedia): MediaBlob {
+  if (mData.media_type === "article") {
+    return { kind: "markdown", body: mData.source_url };
+  }
+  return { kind: "url", url: mData.source_url };
 }
 
 // ─── SatsRail Product Helpers ──────────────────────────────────────
@@ -190,7 +210,13 @@ export async function getProductKeySafe(
   }
 }
 
-// Create or update a MediaProduct with encryption
+// ─── Media-scoped product (direct sale) ────────────────────────────
+
+/**
+ * Create or update a media-scoped Product + its single MediaEncryptedBlob row.
+ * `plaintext` is the value to encrypt: source URL for video/audio/podcast,
+ * markdown body for article, or wrapped DEK for photo.
+ */
 export async function createEncryptedMediaProduct(
   sk: string,
   productData: {
@@ -202,21 +228,17 @@ export async function createEncryptedMediaProduct(
     external_ref: string;
   },
   mediaId: string,
-  sourceUrl: string,
+  plaintext: string,
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  const product = await createProductSafe(sk, productData, api, onStatus);
-  const keyResult = await getProductKeySafe(sk, product.id, productData, api, onStatus);
+  const satsrailProduct = await createProductSafe(sk, productData, api, onStatus);
+  const keyResult = await getProductKeySafe(sk, satsrailProduct.id, productData, api, onStatus);
 
   await onStatus?.("Encrypting content...");
-  const encryptedSourceUrl = encryptSourceUrl(sourceUrl, keyResult.key, keyResult.productId);
+  const encryptedSourceUrl = encryptSourceUrl(plaintext, keyResult.key, keyResult.productId);
 
-  // Upsert: update existing MediaProduct or create new one
-  const existingMp = await prisma.mediaProduct.findUnique({ where: { mediaId } });
-  const mpData = {
-    satsrailProductId: keyResult.productId,
-    encryptedSourceUrl,
+  const cachedFields = {
     keyFingerprint: keyResult.key_fingerprint,
     productName: productData.name,
     productPriceCents: productData.price_cents,
@@ -227,13 +249,35 @@ export async function createEncryptedMediaProduct(
     syncedAt: new Date(),
   };
 
-  if (existingMp) {
-    await onStatus?.("Updating encrypted product record...");
-    await prisma.mediaProduct.update({ where: { id: existingMp.id }, data: mpData });
-  } else {
-    await onStatus?.("Saving encrypted product record...");
-    await prisma.mediaProduct.create({ data: { mediaId, ...mpData } });
-  }
+  await onStatus?.("Saving encrypted product record...");
+  await prisma.$transaction(async (tx) => {
+    const product = await tx.product.upsert({
+      where: { mediaId },
+      create: {
+        satsrailProductId: keyResult.productId,
+        mediaId,
+        ...cachedFields,
+      },
+      update: {
+        satsrailProductId: keyResult.productId,
+        ...cachedFields,
+      },
+    });
+
+    await tx.mediaEncryptedBlob.upsert({
+      where: { productId_mediaId: { productId: product.id, mediaId } },
+      create: {
+        productId: product.id,
+        mediaId,
+        encryptedSourceUrl,
+        keyFingerprint: keyResult.key_fingerprint,
+      },
+      update: {
+        encryptedSourceUrl,
+        keyFingerprint: keyResult.key_fingerprint,
+      },
+    });
+  });
 }
 
 // ─── Channel Product Type Helpers ──────────────────────────────────
@@ -284,12 +328,15 @@ export async function tryCreateProductType(
 
 // ─── Media Helpers ─────────────────────────────────────────────────
 
-// Update an existing media product's metadata and re-encrypt if source URL changed
+/**
+ * Update an existing media-scoped Product's cached metadata, and re-encrypt
+ * the single MediaEncryptedBlob row when the source plaintext has changed.
+ */
 export async function updateExistingProduct(
   sk: string,
   existingProduct: { id: string; satsrailProductId: string },
   mData: ImportMediaWithProduct,
-  sourceUrlChanged: boolean,
+  plaintextChanged: boolean,
   channelDoc: { satsrailProductTypeId: string | null },
   externalRef: string,
   api: ApiThrottle,
@@ -303,12 +350,21 @@ export async function updateExistingProduct(
     access_duration_seconds: mData.product.access_duration_seconds,
   }));
 
-  if (!sourceUrlChanged) {
-    // Even when source URL didn't change, refresh cached external_ref so future
-    // exports carry the canonical value rather than the formula fallback.
-    await prisma.mediaProduct.update({
+  const cachedFields = {
+    productName: mData.product.name,
+    productPriceCents: mData.product.price_cents,
+    productCurrency: mData.product.currency,
+    productAccessDurationSeconds: mData.product.access_duration_seconds,
+    productExternalRef: externalRef,
+    syncedAt: new Date(),
+  };
+
+  if (!plaintextChanged) {
+    // Refresh cached metadata even when content didn't change, so future
+    // exports carry the canonical external_ref rather than the fallback.
+    await prisma.product.update({
       where: { id: existingProduct.id },
-      data: { productExternalRef: externalRef },
+      data: cachedFields,
     });
     return;
   }
@@ -320,21 +376,26 @@ export async function updateExistingProduct(
   }, api, onStatus);
 
   await onStatus?.("Re-encrypting content...");
-  const encryptedSourceUrl = encryptSourceUrl(mData.source_url, keyResult.key, keyResult.productId);
-  await prisma.mediaProduct.update({
-    where: { id: existingProduct.id },
-    data: {
-      satsrailProductId: keyResult.productId,
-      encryptedSourceUrl,
-      keyFingerprint: keyResult.key_fingerprint,
-      productName: mData.product.name,
-      productPriceCents: mData.product.price_cents,
-      productCurrency: mData.product.currency,
-      productAccessDurationSeconds: mData.product.access_duration_seconds,
-      productExternalRef: externalRef,
-      syncedAt: new Date(),
-    },
-  });
+  const newPlaintext = mData.media_type === "article" ? mData.source_url : mData.source_url;
+  const encryptedSourceUrl = encryptSourceUrl(newPlaintext, keyResult.key, keyResult.productId);
+
+  await prisma.$transaction([
+    prisma.product.update({
+      where: { id: existingProduct.id },
+      data: {
+        satsrailProductId: keyResult.productId,
+        keyFingerprint: keyResult.key_fingerprint,
+        ...cachedFields,
+      },
+    }),
+    prisma.mediaEncryptedBlob.updateMany({
+      where: { productId: existingProduct.id },
+      data: {
+        encryptedSourceUrl,
+        keyFingerprint: keyResult.key_fingerprint,
+      },
+    }),
+  ]);
 }
 
 // Handle product for an existing media item (update or create)
@@ -342,20 +403,20 @@ export async function handleExistingMediaProduct(
   sk: string,
   mData: ImportMediaWithProduct,
   existingMedia: { id: string; ref: number },
-  sourceUrlChanged: boolean,
+  plaintextChanged: boolean,
   channelDoc: { id: string; satsrailProductTypeId: string | null },
   errors: ImportError[],
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  const existingProduct = await prisma.mediaProduct.findUnique({
+  const existingProduct = await prisma.product.findUnique({
     where: { mediaId: existingMedia.id },
   });
   const externalRef = mData.product.external_ref || `md_${existingMedia.ref}`;
 
   if (existingProduct) {
     try {
-      await updateExistingProduct(sk, existingProduct, mData, sourceUrlChanged, channelDoc, externalRef, api, onStatus);
+      await updateExistingProduct(sk, existingProduct, mData, plaintextChanged, channelDoc, externalRef, api, onStatus);
     } catch (err) {
       errors.push({ entity: "media_product", name: mData.name, error: `Product update failed: ${errorMsg(err)}` });
     }
@@ -375,6 +436,11 @@ export async function handleExistingMediaProduct(
   }
 }
 
+/** Read the plaintext stored in Media.blob (URL, body, or wrapped DEK). */
+function plaintextFromMediaRow(media: { blob: unknown }): string {
+  return plaintextForEncryption(parseMediaBlob(media.blob));
+}
+
 // Find existing media by ref or name
 export async function findExistingMedia(mData: ImportMedia, channelId: string) {
   const byRef = mData.ref
@@ -392,20 +458,24 @@ export async function findExistingMedia(mData: ImportMedia, channelId: string) {
 export async function updateExistingMedia(
   sk: string | null,
   mData: ImportMedia,
-  existingMedia: { id: string; ref: number; sourceUrl: string },
+  existingMedia: { id: string; ref: number; blob: unknown },
   channelDoc: { id: string; satsrailProductTypeId: string | null },
   errors: ImportError[],
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  const sourceUrlChanged = Boolean(mData.source_url && mData.source_url !== existingMedia.sourceUrl);
+  const oldPlaintext = plaintextFromMediaRow(existingMedia);
+  const plaintextChanged = Boolean(mData.source_url && mData.source_url !== oldPlaintext);
+  const newBlob = buildBlobForImport(mData);
 
   await onStatus?.("Updating media record...");
   await prisma.media.update({
     where: { id: existingMedia.id },
     data: {
-      name: mData.name, description: mData.description || "",
-      sourceUrl: mData.source_url, mediaType: mData.media_type || "video",
+      name: mData.name,
+      description: mData.description || "",
+      blob: newBlob,
+      mediaType: mData.media_type || "video",
       thumbnailUrl: mData.thumbnail_url || "",
       ...(mData.preview_image_urls?.length ? { previewImageUrls: mData.preview_image_urls } : {}),
       ...(mData.position !== undefined ? { position: mData.position } : {}),
@@ -413,7 +483,7 @@ export async function updateExistingMedia(
   });
 
   if (mData.product && sk) {
-    await handleExistingMediaProduct(sk, mData as ImportMediaWithProduct, existingMedia, sourceUrlChanged, channelDoc, errors, api, onStatus);
+    await handleExistingMediaProduct(sk, mData as ImportMediaWithProduct, existingMedia, plaintextChanged, channelDoc, errors, api, onStatus);
   }
 }
 
@@ -452,13 +522,11 @@ export async function createNewMedia(
       channelId: channelDoc.id,
       name: mData.name,
       description: mData.description || "",
-      sourceUrl: mData.source_url,
+      blob: buildBlobForImport(mData),
       mediaType: mData.media_type || "video",
       thumbnailUrl: mData.thumbnail_url || "",
       previewImageUrls: mData.preview_image_urls || [],
       position: mData.position ?? (maxPos?.position ?? 0) + 1,
-      commentsCount: 0,
-      flagsCount: 0,
     },
   });
 
@@ -481,8 +549,12 @@ export async function createNewMedia(
   });
 }
 
-// ─── Channel Product Helpers ──────────────────────────────────────
+// ─── Channel-scoped product (bundle) ───────────────────────────────
 
+/**
+ * Create or refresh the channel-scoped Product for a channel, plus one
+ * MediaEncryptedBlob row per media in the channel.
+ */
 export async function createEncryptedChannelProduct(
   sk: string,
   productData: {
@@ -497,10 +569,9 @@ export async function createEncryptedChannelProduct(
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  // Check if ChannelProduct already exists for this channel
-  const existing = await prisma.channelProduct.findFirst({ where: { channelId } });
+  const existing = await prisma.product.findFirst({ where: { channelId } });
+
   if (existing) {
-    // Update SatsRail product metadata
     await onStatus?.("Updating channel product on SatsRail...");
     await api.throttle();
     await withRetry(() =>
@@ -511,30 +582,33 @@ export async function createEncryptedChannelProduct(
       })
     );
 
-    // Re-encrypt all media with the existing key
     await onStatus?.("Fetching encryption key...");
     const keyResult = await getProductKeySafe(sk, existing.satsrailProductId, productData, api, onStatus);
     const mediaItems = await prisma.media.findMany({
       where: { channelId },
-      select: { id: true, sourceUrl: true },
+      select: { id: true, blob: true },
     });
 
     await onStatus?.(`Encrypting ${mediaItems.length} media URLs...`);
 
-    // Transactionally replace the encrypted_media set: clear old, insert fresh.
+    // Transactionally replace this product's blob set: clear old, insert fresh.
     await prisma.$transaction([
-      prisma.channelProductMedia.deleteMany({ where: { channelProductId: existing.id } }),
-      ...mediaItems.map((m: { id: string; sourceUrl: string }) =>
-        prisma.channelProductMedia.create({
+      prisma.mediaEncryptedBlob.deleteMany({ where: { productId: existing.id } }),
+      ...mediaItems.map((m) =>
+        prisma.mediaEncryptedBlob.create({
           data: {
-            channelProductId: existing.id,
+            productId: existing.id,
             mediaId: m.id,
-            encryptedSourceUrl: encryptSourceUrl(m.sourceUrl, keyResult.key, keyResult.productId),
+            encryptedSourceUrl: encryptSourceUrl(
+              plaintextForEncryption(parseMediaBlob(m.blob)),
+              keyResult.key,
+              keyResult.productId
+            ),
             keyFingerprint: keyResult.key_fingerprint,
           },
         })
       ),
-      prisma.channelProduct.update({
+      prisma.product.update({
         where: { id: existing.id },
         data: {
           keyFingerprint: keyResult.key_fingerprint,
@@ -551,19 +625,18 @@ export async function createEncryptedChannelProduct(
     return;
   }
 
-  // Create new channel access product
   await onStatus?.("Creating channel access product on SatsRail...");
-  const product = await createProductSafe(sk, productData, api, onStatus);
-  const keyResult = await getProductKeySafe(sk, product.id, productData, api, onStatus);
+  const satsrailProduct = await createProductSafe(sk, productData, api, onStatus);
+  const keyResult = await getProductKeySafe(sk, satsrailProduct.id, productData, api, onStatus);
 
   const mediaItems = await prisma.media.findMany({
     where: { channelId },
-    select: { id: true, sourceUrl: true },
+    select: { id: true, blob: true },
   });
 
   await onStatus?.(`Encrypting ${mediaItems.length} media URLs...`);
 
-  await prisma.channelProduct.create({
+  await prisma.product.create({
     data: {
       channelId,
       satsrailProductId: keyResult.productId,
@@ -575,13 +648,23 @@ export async function createEncryptedChannelProduct(
       productExternalRef: productData.external_ref,
       productStatus: "active",
       syncedAt: new Date(),
-      encryptedMedia: {
-        create: mediaItems.map((m: { id: string; sourceUrl: string }) => ({
+      mediaEncryptedBlobs: {
+        create: mediaItems.map((m) => ({
           mediaId: m.id,
-          encryptedSourceUrl: encryptSourceUrl(m.sourceUrl, keyResult.key, keyResult.productId),
+          encryptedSourceUrl: encryptSourceUrl(
+            plaintextForEncryption(parseMediaBlob(m.blob)),
+            keyResult.key,
+            keyResult.productId
+          ),
           keyFingerprint: keyResult.key_fingerprint,
         })),
       },
     },
   });
 }
+
+// ─── Re-exports ─────────────────────────────────────────────────────
+
+// Re-export blob helpers so other modules can pull them from one place.
+export { mediaBlobSchema, parseMediaBlob, plaintextForEncryption };
+export type { MediaBlob };

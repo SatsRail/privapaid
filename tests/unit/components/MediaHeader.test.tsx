@@ -23,7 +23,6 @@ describe("MediaHeader", () => {
     name: "Test Media",
     products: [] as SerializedProduct[],
     viewsCount: 0,
-    commentsCount: 0,
     locale: "en",
   };
 
@@ -71,11 +70,6 @@ describe("MediaHeader", () => {
     // The prop is still accepted for backward compatibility but ignored.
     render(<MediaHeader {...baseProps} viewsCount={42} />);
     expect(screen.queryByText(/viewer\.media\.views/)).not.toBeInTheDocument();
-  });
-
-  it("never renders the comments line (it lives in the comments section heading)", () => {
-    render(<MediaHeader {...baseProps} commentsCount={7} />);
-    expect(screen.queryByText(/viewer\.media\.comments/)).not.toBeInTheDocument();
   });
 
   it("renders the access timer pill when remainingSeconds is set and a product is time-gated", () => {

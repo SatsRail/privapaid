@@ -14,7 +14,7 @@ interface NavbarProps {
   aboutText: string;
 }
 
-const HIDDEN_PATHS = ["/setup", "/admin", "/login", "/signup"];
+const HIDDEN_PATHS = ["/setup", "/admin", "/login"];
 
 export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps) {
   const pathname = usePathname();

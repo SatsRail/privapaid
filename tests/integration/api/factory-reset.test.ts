@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createChannel, createCategory, createCustomer, createSettings } from "../../helpers/factories";
+import { createChannel, createCategory, createSettings } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
 // Mock rate limit
@@ -107,7 +107,6 @@ describe("POST /api/admin/settings/reset", () => {
     // Seed some data
     await createChannel({ name: "Test Channel", slug: "test-ch" });
     await createCategory({ name: "Test Category", slug: "test-cat" });
-    await createCustomer({ nickname: "testuser" });
     await createSettings({
       instanceName: "Test Instance",
       merchantId: "m_123",
@@ -117,7 +116,6 @@ describe("POST /api/admin/settings/reset", () => {
     // Verify data exists
     expect(await prisma.channel.count()).toBeGreaterThan(0);
     expect(await prisma.category.count()).toBeGreaterThan(0);
-    expect(await prisma.customer.count()).toBeGreaterThan(0);
     expect(await prisma.settings.count()).toBeGreaterThan(0);
 
     const res = await POST(resetRequest({ confirm: "RESET" }));
@@ -132,7 +130,6 @@ describe("POST /api/admin/settings/reset", () => {
     // Verify all data is gone
     expect(await prisma.channel.count()).toBe(0);
     expect(await prisma.category.count()).toBe(0);
-    expect(await prisma.customer.count()).toBe(0);
     expect(await prisma.settings.count()).toBe(0);
   });
 

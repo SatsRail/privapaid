@@ -10,7 +10,6 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
   requireOwnerApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
-  requireCustomerApi: vi.fn().mockResolvedValue({ id: "customer-1", name: "testuser" }),
 }));
 vi.mock("@/lib/satsrail", () => ({ satsrail: mockSatsrailClient }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue("sk_test_key") }));

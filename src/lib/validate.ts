@@ -55,37 +55,9 @@ const slug = z
   .max(100)
   .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with hyphens");
 
-const nickname = z
-  .string()
-  .min(2)
-  .max(30)
-  .regex(/^[a-zA-Z0-9_]+$/, "Letters, numbers, and underscores only");
-
-const customerPassword = z
-  .string()
-  .min(10, "Must be at least 10 characters")
-  .max(128, "Must be 128 characters or fewer");
-
 // ─── Schemas ────────────────────────────────────────────────────────
 
 export const schemas = {
-  // Customer signup
-  customerSignup: z.object({
-    nickname,
-    password: customerPassword,
-  }),
-
-  // Customer profile update
-  customerProfile: z.object({
-    profile_image_id: z.string().optional(),
-  }),
-
-  // Customer purchases
-  customerPurchase: z.object({
-    order_id: z.string().min(1, "order_id is required"),
-    product_id: z.string().min(1, "product_id is required"),
-  }),
-
   // Category create
   categoryCreate: z.object({
     name: z.string().min(1, "Name is required").max(100).transform((s) => s.trim()),
@@ -197,31 +169,20 @@ export const schemas = {
     sentry_dsn: z.string().max(500).optional(),
   }),
 
-  // Comment create
+  // Like toggle — paired with POST /api/media/[id]/like.
+  // Client tracks its own like state in localStorage; the server just
+  // applies the +1 or -1 delta.
+  likeAction: z.object({
+    action: z.enum(["like", "unlike"]),
+  }),
+
+  // Comment create — anonymous body-only post, macaroon-gated upstream.
   commentCreate: z.object({
     body: z
       .string()
       .min(1, "Comment body required")
       .max(2000, "Comment too long (max 2000 chars)")
       .transform((s) => s.trim()),
-    nickname: z
-      .string()
-      .min(1, "Nickname required")
-      .max(30, "Nickname too long (max 30 chars)")
-      .transform((s) => s.trim())
-      .optional(),
-  }),
-
-  // Flag create
-  flagCreate: z.object({
-    flag_type: z.string().min(1, "Flag type is required"),
-  }),
-
-  // Like toggle — paired with POST /api/media/[id]/like.
-  // Client tracks its own like state in localStorage; the server just
-  // applies the +1 or -1 delta.
-  likeAction: z.object({
-    action: z.enum(["like", "unlike"]),
   }),
 
   // Admin create
@@ -271,11 +232,6 @@ export const schemas = {
   // Product type create
   productTypeCreate: z.object({
     name: z.string().min(1, "Name is required").max(100).transform((s) => s.trim()),
-  }),
-
-  // Favorites (add/remove channel)
-  favorite: z.object({
-    channel_id: mongoId,
   }),
 
   // Verify SatsRail API key

@@ -40,13 +40,6 @@ describe("middleware", () => {
       expect(res.headers.get("location")).toContain("callbackUrl");
     });
 
-    it("redirects to login when customer token", async () => {
-      mockGetToken.mockResolvedValue({ type: "customer" });
-      const res = await middleware(createRequest("/admin/channels"));
-      expect(res.status).toBe(307);
-      expect(res.headers.get("location")).toContain("/login");
-    });
-
     it("allows admin token through", async () => {
       mockGetToken.mockResolvedValue({ type: "admin", role: "owner" });
       const res = await middleware(createRequest("/admin/channels"));
@@ -111,35 +104,4 @@ describe("middleware", () => {
     });
   });
 
-  describe("customer API routes", () => {
-    it("allows signup without auth", async () => {
-      mockGetToken.mockResolvedValue(null);
-      const res = await middleware(createRequest("/api/customer/signup"));
-      expect(res.headers.get("x-middleware-next")).toBeTruthy();
-    });
-
-    it("allows check-nickname without auth", async () => {
-      mockGetToken.mockResolvedValue(null);
-      const res = await middleware(createRequest("/api/customer/check-nickname"));
-      expect(res.headers.get("x-middleware-next")).toBeTruthy();
-    });
-
-    it("returns 401 for protected customer routes when no token", async () => {
-      mockGetToken.mockResolvedValue(null);
-      const res = await middleware(createRequest("/api/customer/profile"));
-      expect(res.status).toBe(401);
-    });
-
-    it("returns 401 when admin tries customer routes", async () => {
-      mockGetToken.mockResolvedValue({ type: "admin", role: "owner" });
-      const res = await middleware(createRequest("/api/customer/profile"));
-      expect(res.status).toBe(401);
-    });
-
-    it("allows customer through protected routes", async () => {
-      mockGetToken.mockResolvedValue({ type: "customer" });
-      const res = await middleware(createRequest("/api/customer/profile"));
-      expect(res.headers.get("x-middleware-next")).toBeTruthy();
-    });
-  });
 });

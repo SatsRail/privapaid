@@ -7,18 +7,16 @@ export const dynamic = "force-dynamic";
 export default async function AdminDashboard() {
   const { locale } = await getInstanceConfig();
 
-  const [channelCount, mediaCount, customerCount, categoryCount] =
+  const [channelCount, mediaCount, categoryCount] =
     await Promise.all([
       prisma.channel.count({ where: { active: true } }),
       prisma.media.count(),
-      prisma.customer.count(),
       prisma.category.count({ where: { active: true } }),
     ]);
 
   const stats = [
     { label: t(locale, "admin.dashboard.channels"), value: channelCount, href: "/admin/channels" },
     { label: t(locale, "admin.dashboard.media_items"), value: mediaCount, href: "/admin/channels" },
-    { label: t(locale, "admin.dashboard.customers"), value: customerCount },
     { label: t(locale, "admin.dashboard.categories"), value: categoryCount, href: "/admin/categories" },
   ];
 

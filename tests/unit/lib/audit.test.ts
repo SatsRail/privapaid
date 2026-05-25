@@ -81,8 +81,8 @@ describe("audit", () => {
     mockAuditLogCreate.mockResolvedValue({});
 
     await audit({
-      actorId: "cust_1",
-      actorType: "customer",
+      actorId: "admin_1",
+      actorType: "admin",
       action: "view",
     });
 

@@ -10,12 +10,6 @@ interface AdminSession {
   type: "admin";
 }
 
-interface CustomerSession {
-  id: string;
-  name: string;
-  type: "customer";
-}
-
 /**
  * Get the current session or null. Wrapper around NextAuth's auth().
  */
@@ -52,21 +46,6 @@ export async function requireOwner(): Promise<AdminSession> {
 }
 
 /**
- * Require a customer session for server components. Redirects to login if not authenticated.
- */
-export async function requireCustomer(): Promise<CustomerSession> {
-  const session = await auth();
-  if (!session?.user || session.user.type !== "customer") {
-    redirect("/login");
-  }
-  return {
-    id: session.user.id,
-    name: session.user.name || "",
-    type: "customer",
-  };
-}
-
-/**
  * Require an admin session for API routes. Returns 401 JSON if not authenticated.
  */
 export async function requireAdminApi(): Promise<AdminSession | NextResponse> {
@@ -95,35 +74,4 @@ export async function requireOwnerApi(): Promise<
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   return result;
-}
-
-/**
- * Require a customer session for API routes. Returns 401 JSON if not authenticated.
- */
-export async function requireCustomerApi(): Promise<
-  CustomerSession | NextResponse
-> {
-  const session = await auth();
-  if (!session?.user || session.user.type !== "customer") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return {
-    id: session.user.id,
-    name: session.user.name || "",
-    type: "customer",
-  };
-}
-
-/**
- * Check if a customer has purchased a product that covers a given media item.
- * Uses the customer's purchases array and the media_products join collection.
- */
-export function hasPurchaseForProduct(
-  customerPurchases: Array<{ satsrail_product_id: string }>,
-  productIds: string[]
-): boolean {
-  const purchasedProductIds = new Set(
-    customerPurchases.map((p) => p.satsrail_product_id)
-  );
-  return productIds.some((id) => purchasedProductIds.has(id));
 }

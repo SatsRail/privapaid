@@ -3,13 +3,17 @@
 // Migration from MongoDB/Mongoose. See plan:
 // /Users/rafael/.claude/plans/privapaid-app-uses-mongodb-we-precious-harbor.md
 //
+// Product/blob flattening: see plan:
+// /Users/rafael/.claude/plans/privapaid-in-the-app-cryptic-russell.md
+//
 // Hard constraints:
 //   1. SatsRail always holds the encryption keys (never in this DB).
 //   2. Encrypted blob format must stay byte-identical:
 //        Base64( IV[12] + ciphertext + auth_tag[16] ), AAD = satsrailProductId.
 //   3. external_ref format `ch_<channel.ref>` / `md_<media.ref>` is opaque to
 //      the portal but must survive unchanged.
-//   4. Media.sourceUrl plaintext recovery store stays (key rotation source).
+//   4. Media.blob is the plaintext recovery store (admin-only). Key rotation
+//      reads it directly, so rotation doesn't depend on SatsRail's old_key.
 
 generator client {
   provider        = "prisma-client-js"
@@ -32,7 +36,6 @@ enum AdminRole {
 
 enum AuditActorType {
   admin
-  customer
   system
 }
 
@@ -102,8 +105,7 @@ model Channel {
 
   category           Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   media              Media[]
-  channelProducts    ChannelProduct[]
-  favoritedBy        Customer[]        @relation("CustomerFavorites")
+  products           Product[]
 
   @@index([categoryId])
   @@index([active])
@@ -117,36 +119,37 @@ model Media {
   channelId     String
   name          String
   description   String    @default("")
-  /// Plaintext recovery store. For video/audio/podcast: URL. For article:
-  /// markdown body. For photo: EncryptedPhotoBlob.id (ciphertext at rest).
-  /// Public routes MUST filter this out — admin-only. The re-encryption flow
-  /// reads it directly so rotation doesn't depend on SatsRail's old_key.
-  sourceUrl     String
   mediaType     MediaType @default(video)
-  /// Photo-only: per-photo DEK wrapped under operator's PHOTO_KEK. Allows
-  /// product creation without a SatsRail round-trip.
-  encryptedDek  String?
+  /// Plaintext recovery store + type-discriminated payload. Admin-only —
+  /// public routes MUST omit this field. The re-encryption flow reads it
+  /// directly, so rotation doesn't depend on SatsRail's old_key.
+  ///
+  /// Shape (validated by src/lib/schemas/media-blob.ts):
+  ///   video/audio/podcast: { kind: "url",      url: string }
+  ///   article:             { kind: "markdown", body: string }
+  ///   photo:               { kind: "photo",    blobId: EncryptedPhotoBlob.id,
+  ///                          encryptedDek: <DEK wrapped under PHOTO_KEK>,
+  ///                          mimeType: string }
+  blob          Json
   thumbnailUrl  String    @default("")
   thumbnailBytes     Bytes?   // replaces GridFS thumbnail
   thumbnailMimeType  String?
   /// Direct URLs (from import). Cap-of-6 enforced in application code.
   previewImageUrls   String[]  @default([])
   position           Int       @default(0)
-  commentsCount      Int       @default(0)
   viewsCount         Int       @default(0)
-  flagsCount         Int       @default(0)
   likesCount         Int       @default(0)
   sharesCount        Int       @default(0)
+  commentsCount      Int       @default(0)
   deletedAt          DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  channel              Channel                @relation(fields: [channelId], references: [id], onDelete: Restrict)
-  comments             Comment[]
-  flags                Flag[]
-  mediaProduct         MediaProduct?
-  channelProductMedias ChannelProductMedia[]
-  previewImages        PreviewImage[]
+  channel             Channel               @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  directSaleProduct   Product?              @relation("MediaDirectSaleProduct")
+  encryptedBlobs      MediaEncryptedBlob[]
+  previewImages       PreviewImage[]
+  comments            Comment[]
 
   @@index([channelId, position])
   @@index([channelId, viewsCount(sort: Desc)])
@@ -179,144 +182,92 @@ model EncryptedPhotoBlob {
   createdAt DateTime @default(now())
 }
 
-/// ChannelProduct — bundle product sold via SatsRail. One channel can have
-/// many; each contains one-or-more encrypted media entries (the bundle).
-model ChannelProduct {
-  id                           String    @id @default(cuid())
-  channelId                    String
-  /// UUID from SatsRail. Canonical product identifier.
-  satsrailProductId            String    @unique
-  /// SHA-256 hex of encryption key for client verification.
-  keyFingerprint               String?
-  // Cached product data from SatsRail (synced on demand to reduce round-trips)
+/// Product — flat mirror of the portal Products table. PrivaPaid never stores
+/// the portal product key; only cached display fields and the keyFingerprint.
+///
+/// Scope: exactly one of channelId/mediaId is set (CHECK constraint applied
+/// via raw SQL in the migration). The scope is derived from the portal's
+/// external_ref: `ch_N` → channelId, `md_N` → mediaId. PrivaPaid only
+/// consumes portal products with one of these two ref shapes.
+///
+/// Cardinality with MediaEncryptedBlob:
+///   channel-scoped Product → N MediaEncryptedBlob rows (one per media in the bundle)
+///   media-scoped   Product → 1 MediaEncryptedBlob row  (the direct sale)
+model Product {
+  id                String   @id @default(cuid())
+  /// UUID from SatsRail. Canonical product identifier across the rail.
+  satsrailProductId String   @unique
+  /// SHA-256 hex of the encryption key, for client-side verification only.
+  keyFingerprint    String?
+
+  channelId String?
+  mediaId   String?  @unique  // a media has at most one direct-sale product
+
+  // Cached portal Product fields (denormalized; queried in hot paths)
   productName                  String?
   productPriceCents            Int?
   productCurrency              String?
   productAccessDurationSeconds Int?
   productStatus                String?   @default("active")
   productSlug                  String?
-  productExternalRef           String?   // e.g. "ch_7"
+  productExternalRef           String?   // "ch_N" or "md_N"
   syncedAt                     DateTime?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 
-  channel         Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  encryptedMedia  ChannelProductMedia[]
+  channel             Channel?              @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  media               Media?                @relation("MediaDirectSaleProduct", fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaEncryptedBlobs MediaEncryptedBlob[]
 
-  @@index([channelId])
+  @@index([channelId, productStatus])
+  @@index([productStatus])
+  @@index([productExternalRef])
 }
 
-/// ChannelProductMedia — join table for ChannelProduct ↔ Media with the
-/// product-specific encrypted blob for each entry. Separate table (vs JSON)
-/// because key rotation re-encrypts each entry transactionally.
-model ChannelProductMedia {
-  id                  String   @id @default(cuid())
-  channelProductId    String
-  mediaId             String
+/// MediaEncryptedBlob — the only table holding per-asset ciphertext.
+/// One row per (productId, mediaId). The same media can be referenced by
+/// multiple rows when multiple products unlock it (direct sale + channel
+/// access, multiple tiers, etc.). Key rotation re-encrypts each row
+/// transactionally.
+///
+/// Patent claim 24 ("one payment → many keys, one per asset") is embodied
+/// here: each row carries its own ciphertext bound to its own product's
+/// AES key via AAD = Product.satsrailProductId.
+model MediaEncryptedBlob {
+  id                 String   @id @default(cuid())
+  productId          String
+  mediaId            String
+
   /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
-  /// AAD = ChannelProduct.satsrailProductId.
-  encryptedSourceUrl  String
-  keyFingerprint      String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  /// AAD = Product.satsrailProductId (UUID string).
+  /// Plaintext per Media.blob.kind:
+  ///   url      → source URL string
+  ///   markdown → article body
+  ///   photo    → per-photo DEK (then decrypts EncryptedPhotoBlob.bytes)
+  encryptedSourceUrl String
+  keyFingerprint     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  channelProduct ChannelProduct @relation(fields: [channelProductId], references: [id], onDelete: Cascade)
-  media          Media          @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media   Media   @relation(fields: [mediaId], references: [id], onDelete: Restrict)
 
-  @@unique([channelProductId, mediaId])
+  @@unique([productId, mediaId])
   @@index([mediaId])
+  @@index([productId])
 }
 
-/// MediaProduct — individual media item sold as a product (1:1 with Media).
-model MediaProduct {
-  id                           String    @id @default(cuid())
-  mediaId                      String    @unique
-  satsrailProductId            String    @unique
-  /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
-  /// AAD = satsrailProductId.
-  encryptedSourceUrl           String
-  keyFingerprint               String?
-  // Cached product data from SatsRail
-  productName                  String?
-  productPriceCents            Int?
-  productCurrency              String?
-  productAccessDurationSeconds Int?
-  productStatus                String?   @default("active")
-  productSlug                  String?
-  productExternalRef           String?   // e.g. "md_12"
-  syncedAt                     DateTime?
-  createdAt                    DateTime  @default(now())
-  updatedAt                    DateTime  @updatedAt
+/// Comment — anonymous thread on a media item. No author identity is
+/// stored; the macaroon gate at write time is the only authentication.
+model Comment {
+  id        String   @id @default(cuid())
+  mediaId   String
+  body      String
+  createdAt DateTime @default(now())
 
   media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-}
-
-/// Customer — buyer account.
-model Customer {
-  id                    String    @id @default(cuid())
-  nickname              String    @unique @db.Citext
-  passwordHash          String
-  /// Opaque external blob-storage reference. Set by clients via the profile
-  /// PATCH endpoint when images live outside the bytes column (e.g. an S3
-  /// key, a legacy GridFS id during migration, a CDN slug).
-  profileImageId        String?
-  profileImageBytes     Bytes?
-  profileImageMimeType  String?
-  deletedAt             DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-
-  favoriteChannels Channel[]  @relation("CustomerFavorites")
-  purchases        Purchase[]
-  comments         Comment[]
-  flags            Flag[]
-}
-
-/// Purchase — separate table replacing Customer.purchases[] embedded array.
-model Purchase {
-  id                String   @id @default(cuid())
-  customerId        String
-  satsrailOrderId   String
-  satsrailProductId String
-  purchasedAt       DateTime @default(now())
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId, purchasedAt(sort: Desc)])
-  @@index([satsrailProductId])
-}
-
-/// Comment — thread on media items. `customerId` nullable for anonymous.
-model Comment {
-  id         String   @id @default(cuid())
-  mediaId    String
-  customerId String?
-  nickname   String
-  body       String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  media    Media     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   @@index([mediaId, createdAt(sort: Desc)])
-  @@index([customerId])
-}
-
-/// Flag — content moderation. One customer can only flag the same media once.
-model Flag {
-  id         String   @id @default(cuid())
-  mediaId    String
-  customerId String
-  flagType   String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  media    Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@unique([mediaId, customerId])
-  @@index([customerId])
 }
 
 /// Settings — singleton (enforced by check constraint `id = 1`).

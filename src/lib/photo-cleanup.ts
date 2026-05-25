@@ -31,10 +31,10 @@ export interface CleanupResult {
 
 /**
  * Scan the EncryptedPhotoBlob table and remove any ciphertext row that has no
- * `Media` row pointing at it (photo media stores the blob id in `sourceUrl`).
- * Skips rows younger than `graceMs` so an in-progress upload isn't deleted out
- * from under the admin before they finish creating the Media row + first
- * product wrap.
+ * `Media` row pointing at it (photo media stores the blob id in
+ * `Media.blob.blobId`). Skips rows younger than `graceMs` so an in-progress
+ * upload isn't deleted out from under the admin before they finish creating
+ * the Media row + first product wrap.
  *
  * Why this matters: the upload endpoint persists ciphertext before the admin
  * has committed to creating a Media row. If the admin abandons the flow, the
@@ -75,7 +75,10 @@ export async function cleanupOrphanEncryptedPhotos(
       result.scanned++;
 
       const referenced = await prisma.media.findFirst({
-        where: { mediaType: "photo", sourceUrl: blob.id },
+        where: {
+          mediaType: "photo",
+          blob: { path: ["blobId"], equals: blob.id },
+        },
         select: { id: true },
       });
       if (referenced) {

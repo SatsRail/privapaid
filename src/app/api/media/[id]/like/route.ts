@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getProductsForMedia, verifyMacaroonAccess } from "@/lib/access-gate";
-import { auth } from "@/lib/auth";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -9,13 +8,10 @@ import { rateLimit } from "@/lib/rate-limit";
 // localStorage and sends `{ action: "like" | "unlike" }` whenever the
 // user flips it. Server applies the +1 / -1 delta.
 //
-// Gated behind payment — same access logic as comments and flags:
-//   1. Authenticated customer with a purchase record for one of this
-//      media's products, OR
-//   2. Macaroon-based proof of payment (anonymous payers).
-// Anything else returns 401. Liking content you haven't paid for would
-// pollute the engagement counter and let a non-payer drive the count
-// arbitrarily through the rate-limit ceiling.
+// Gated behind payment via macaroon-based proof of payment. Liking
+// content you haven't paid for would pollute the engagement counter
+// and let a non-payer drive the count arbitrarily through the
+// rate-limit ceiling.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -39,33 +35,13 @@ export async function POST(
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
-  // Single source of truth for product lookup — same call comments uses.
+  // Single source of truth for product lookup.
   const products = await getProductsForMedia(media.id, media.channelId);
   const productIds = products.map((p) => p.productId);
 
-  // Path 1: Logged-in customer with purchase record.
-  let allowed = false;
-  const session = await auth();
-  if (session?.user?.id && session.user.role === "customer") {
-    if (productIds.length > 0) {
-      const purchase = await prisma.purchase.findFirst({
-        where: {
-          customerId: session.user.id,
-          satsrailProductId: { in: productIds },
-        },
-        select: { id: true },
-      });
-      allowed = !!purchase;
-    }
-  }
+  const access = await verifyMacaroonAccess(productIds);
 
-  // Path 2: Macaroon-based proof of payment (anonymous payers).
-  if (!allowed) {
-    const access = await verifyMacaroonAccess(productIds);
-    allowed = access.granted;
-  }
-
-  if (!allowed) {
+  if (!access.granted) {
     return NextResponse.json(
       { error: "Payment required to like" },
       { status: 401 }

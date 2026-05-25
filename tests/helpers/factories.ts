@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import bcrypt from "bcryptjs";
 
 let refCounter = 1000;
 
@@ -43,25 +42,6 @@ export async function createChannel(overrides: Partial<{
       bio: "A test channel",
       active: true,
       ...overrides,
-    },
-  });
-}
-
-export async function createCustomer(
-  overrides: Partial<{
-    nickname: string;
-    passwordHash: string;
-    password: string;
-  }> = {}
-) {
-  const password = overrides.password || "TestPass123!@";
-  const rest = { ...overrides };
-  delete rest.password;
-  return prisma.customer.create({
-    data: {
-      nickname: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      passwordHash: await bcrypt.hash(password, 4),
-      ...rest,
     },
   });
 }

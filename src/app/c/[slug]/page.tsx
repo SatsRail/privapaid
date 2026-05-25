@@ -5,10 +5,8 @@ import { prisma } from "@/lib/prisma";
 import config, { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
 import MediaCard from "@/components/MediaCard";
-import FavoriteButton from "@/components/FavoriteButton";
 import ViewerShell from "@/components/ViewerShell";
 import ServerPagination from "@/components/ui/ServerPagination";
-import { auth } from "@/lib/auth";
 import { buildChannelSchema } from "@/lib/jsonld";
 import type { Metadata } from "next";
 
@@ -19,7 +17,6 @@ const PAGE_SIZE = 24;
 const SORT_OPTIONS = [
   { key: "position", label: "Default", orderBy: { position: "asc" as const } },
   { key: "views", label: "Most viewed", orderBy: { viewsCount: "desc" as const } },
-  { key: "comments", label: "Most commented", orderBy: { commentsCount: "desc" as const } },
   { key: "latest", label: "Latest", orderBy: { createdAt: "desc" as const } },
 ] satisfies ReadonlyArray<{ key: string; label: string; orderBy: Prisma.MediaOrderByWithRelationInput }>;
 
@@ -144,19 +141,6 @@ export default async function ChannelPage({ params, searchParams }: Props) {
     }
   }
 
-  // Check if current customer has favorited this channel
-  const session = await auth();
-  let isFavorited = false;
-  if (session?.user?.role === "customer" && session.user.id) {
-    const customer = await prisma.customer.findUnique({
-      where: { id: session.user.id },
-      select: {
-        favoriteChannels: { where: { id: channel.id }, select: { id: true } },
-      },
-    });
-    isFavorited = (customer?.favoriteChannels?.length ?? 0) > 0;
-  }
-
   const instanceConfig = await getInstanceConfig();
   const { locale } = instanceConfig;
   const cat = channel.category;
@@ -201,13 +185,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">{channel.name}</h1>
-              <FavoriteButton
-                channelId={channel.id}
-                initialFavorited={isFavorited}
-              />
-            </div>
+            <h1 className="text-2xl font-bold">{channel.name}</h1>
             {cat?.name && (
               <p className="text-sm text-zinc-400">{cat.name}</p>
             )}

@@ -13,7 +13,6 @@ interface MediaHeaderProps {
    * tight. YouTube-style placement.
    */
   viewsCount?: number;
-  commentsCount?: number;
   locale: string;
   remainingSeconds?: number | null;
 }

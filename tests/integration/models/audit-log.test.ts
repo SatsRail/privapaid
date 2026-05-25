@@ -50,14 +50,10 @@ describe("AuditLog model", () => {
     const admin = await prisma.auditLog.create({
       data: { actorId: "a1", actorType: "admin", action: "test" },
     });
-    const customer = await prisma.auditLog.create({
-      data: { actorId: "c1", actorType: "customer", action: "test" },
-    });
     const system = await prisma.auditLog.create({
       data: { actorId: "s1", actorType: "system", action: "test" },
     });
     expect(admin.actorType).toBe("admin");
-    expect(customer.actorType).toBe("customer");
     expect(system.actorType).toBe("system");
   });
 

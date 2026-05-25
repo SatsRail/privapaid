@@ -53,9 +53,7 @@ export async function POST(request: Request) {
 
     await prisma.$transaction(async (tx) => {
       // Children first (Restrict / Cascade leafs)
-      await tx.flag.deleteMany({}); truncated.push("Flag");
       await tx.comment.deleteMany({}); truncated.push("Comment");
-      await tx.purchase.deleteMany({}); truncated.push("Purchase");
       await tx.channelProductMedia.deleteMany({}); truncated.push("ChannelProductMedia");
       await tx.channelProduct.deleteMany({}); truncated.push("ChannelProduct");
       await tx.mediaProduct.deleteMany({}); truncated.push("MediaProduct");
@@ -64,7 +62,6 @@ export async function POST(request: Request) {
       await tx.encryptedPhotoBlob.deleteMany({}); truncated.push("EncryptedPhotoBlob");
       await tx.channel.deleteMany({}); truncated.push("Channel");
       await tx.category.deleteMany({}); truncated.push("Category");
-      await tx.customer.deleteMany({}); truncated.push("Customer");
       await tx.webhookEvent.deleteMany({}); truncated.push("WebhookEvent");
       await tx.auditLog.deleteMany({}); truncated.push("AuditLog");
       await tx.counter.deleteMany({}); truncated.push("Counter");

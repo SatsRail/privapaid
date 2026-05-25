@@ -45,7 +45,6 @@ export default function Sidebar({
   const isHome = pathname === "/";
   const isAdminPage = pathname.startsWith("/admin");
   const isLoggedIn = !!session?.user;
-  const isCustomer = isLoggedIn && (session.user as { type?: string }).type === "customer";
   const isAdmin = isLoggedIn && (session.user as { type?: string }).type === "admin";
 
   const languages: { code: Locale; labelKey: string }[] = [
@@ -83,7 +82,6 @@ export default function Sidebar({
           <div className="px-2 pt-2 pb-1">
             <UserSection
               isLoggedIn={isLoggedIn}
-              isCustomer={isCustomer}
               collapsed={collapsed}
               userName={session?.user?.name}
               t={t}
@@ -359,13 +357,11 @@ export default function Sidebar({
 
 function UserSection({
   isLoggedIn,
-  isCustomer,
   collapsed,
   userName,
   t,
 }: {
   isLoggedIn: boolean;
-  isCustomer: boolean;
   collapsed: boolean;
   userName: string | null | undefined;
   t: (key: string) => string;
@@ -390,21 +386,13 @@ function UserSection({
     );
   }
 
-  const avatar = isCustomer ? (
-    <Link href="/profile" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-opacity hover:opacity-80" style={avatarStyle} title={userName || t("viewer.navbar.profile")}>
-      {initial}
-    </Link>
-  ) : (
+  const avatar = (
     <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style={avatarStyle} title={userName || "Admin"}>
       {initial}
     </div>
   );
 
-  const nameEl = isCustomer ? (
-    <Link href="/profile" className="truncate text-sm font-medium transition-opacity hover:opacity-80" style={{ color: "var(--theme-text)" }}>
-      {userName}
-    </Link>
-  ) : (
+  const nameEl = (
     <span className="truncate text-sm font-medium" style={{ color: "var(--theme-text)" }}>
       {userName}
     </span>

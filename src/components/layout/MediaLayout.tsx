@@ -32,11 +32,10 @@ export default function MediaLayout({
   const hasPreview = previewImages.length > 0;
 
   // Single source of truth for "does the viewer have paid access?" All
-  // sibling components (MediaHeader pill, PaymentWall paywall/content,
-  // CommentSection comment form) read from this one hook. No periodic
-  // re-verification — the macaroon's own TTL is the source of truth for
-  // how long access lasts; we don't second-guess it.
-  const productIds = products.map((p) => p.productId);
+  // sibling components (MediaHeader pill, PaymentWall paywall/content)
+  // read from this one hook. No periodic re-verification — the
+  // macaroon's own TTL is the source of truth for how long access
+  // lasts; we don't second-guess it.
   const { access, claim, refresh } = useMediaAccess({
     mediaId: media._id,
     products: products.map((p) => ({
@@ -169,13 +168,10 @@ export default function MediaLayout({
             </div>
           )}
 
-          {/* Comments — single placement on every breakpoint. The duplicate
-              md:hidden / hidden md:block pair we used to render is gone:
-              now the right column hosts the channel sidebar, not comments. */}
+          {/* Comments — anonymous, macaroon-gated form. */}
           <ErrorBoundary>
             <CommentSection
               mediaId={media._id}
-              productIds={productIds}
               hasAccess={hasActiveAccess}
               onUnauthorized={refresh}
             />

@@ -31,8 +31,6 @@ describe("Media model", () => {
     expect(media.description).toBe("");
     expect(media.thumbnailUrl).toBe("");
     expect(media.position).toBe(0);
-    expect(media.commentsCount).toBe(0);
-    expect(media.flagsCount).toBe(0);
     expect(media.deletedAt).toBeNull();
   });
 

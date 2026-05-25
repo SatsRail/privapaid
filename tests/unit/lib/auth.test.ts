@@ -3,9 +3,7 @@
 // --- Hoisted mocks (must come before all imports) ---
 
 const mockSettingsFindFirst = vi.hoisted(() => vi.fn());
-const mockCustomerFindUnique = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
-const mockBcryptCompare = vi.hoisted(() => vi.fn());
 
 // Capture the NextAuth config so we can test callbacks and authorize fns
 const capturedConfig = vi.hoisted(() => ({ value: null as any }));
@@ -37,15 +35,6 @@ vi.mock("@/lib/prisma", () => ({
     settings: {
       findFirst: mockSettingsFindFirst,
     },
-    customer: {
-      findUnique: mockCustomerFindUnique,
-    },
-  },
-}));
-
-vi.mock("bcryptjs", () => ({
-  default: {
-    compare: mockBcryptCompare,
   },
 }));
 
@@ -56,7 +45,6 @@ await import("@/lib/auth");
 
 // Extract provider authorize functions and callbacks
 const adminProvider = capturedConfig.value.providers[0];
-const customerProvider = capturedConfig.value.providers[1];
 const { jwt: jwtCallback, session: sessionCallback } =
   capturedConfig.value.callbacks;
 
@@ -68,10 +56,9 @@ describe("auth", () => {
   // --- NextAuth configuration ---
 
   describe("NextAuth configuration", () => {
-    it("has two credential providers", () => {
-      expect(capturedConfig.value.providers).toHaveLength(2);
+    it("has one credential provider", () => {
+      expect(capturedConfig.value.providers).toHaveLength(1);
       expect(adminProvider.id).toBe("admin");
-      expect(customerProvider.id).toBe("customer");
     });
 
     it("uses jwt strategy", () => {
@@ -201,77 +188,6 @@ describe("auth", () => {
         password: "wrong",
       });
       expect(result).toBeNull();
-    });
-  });
-
-  // --- Customer authorize ---
-
-  describe("customer authorize", () => {
-    it("returns null when nickname is missing", async () => {
-      const result = await customerProvider.authorize({ password: "pass" });
-      expect(result).toBeNull();
-    });
-
-    it("returns null when password is missing", async () => {
-      const result = await customerProvider.authorize({ nickname: "nick" });
-      expect(result).toBeNull();
-    });
-
-    it("returns null when credentials are empty", async () => {
-      const result = await customerProvider.authorize({});
-      expect(result).toBeNull();
-    });
-
-    it("returns null when credentials are null", async () => {
-      const result = await customerProvider.authorize(null);
-      expect(result).toBeNull();
-    });
-
-    it("returns null when customer not found", async () => {
-      mockCustomerFindUnique.mockResolvedValue(null);
-
-      const result = await customerProvider.authorize({
-        nickname: "unknown",
-        password: "pass",
-      });
-      expect(result).toBeNull();
-    });
-
-    it("returns null when password does not match", async () => {
-      mockCustomerFindUnique.mockResolvedValue({
-        id: "cust_1",
-        nickname: "nick",
-        passwordHash: "$2a$hash",
-      });
-      mockBcryptCompare.mockResolvedValue(false);
-
-      const result = await customerProvider.authorize({
-        nickname: "nick",
-        password: "wrong",
-      });
-      expect(result).toBeNull();
-      expect(mockBcryptCompare).toHaveBeenCalledWith("wrong", "$2a$hash");
-    });
-
-    it("returns user when credentials are valid", async () => {
-      mockCustomerFindUnique.mockResolvedValue({
-        id: "cust_1",
-        nickname: "nick",
-        passwordHash: "$2a$hash",
-      });
-      mockBcryptCompare.mockResolvedValue(true);
-
-      const result = await customerProvider.authorize({
-        nickname: "nick",
-        password: "correct",
-      });
-
-      expect(result).toEqual({
-        id: "cust_1",
-        name: "nick",
-        type: "customer",
-        role: "customer",
-      });
     });
   });
 

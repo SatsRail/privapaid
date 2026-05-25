@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed (breaking)
+
+- **Customer account feature removed.** Nickname-based customer login, the
+  storefront favorites UI, the per-customer flags feature, and the customer
+  purchase history are gone. Payment + decryption flow is macaroon-only:
+  anonymous buyers pay via Lightning, the macaroon issued by SatsRail is the
+  proof of purchase. Removed models: `Customer`, `Purchase`, `Flag`, plus the
+  implicit `_CustomerFavorites` join. Removed routes: `/api/customer/*`,
+  `/api/media/[id]/flags`. Removed pages: `/login` is now admin-only;
+  `/signup` and `/profile` are gone. Removed Media counter: `flagsCount`.
+  Removed enum value: `AuditActorType.customer`. The `/login` page no longer
+  accepts nickname — email + password only (staff auth via SatsRail).
+  **Migration**: existing customer data is dropped; if you need to preserve
+  purchases for an export, do so before applying this version's schema.
+  Macaroon-based access for paying viewers is unaffected.
+
+### Changed
+
+- **Comments are now anonymous.** The `Comment` model no longer tracks a
+  nickname or a customer reference — body and timestamp only. The POST
+  route at `/api/media/[id]/comments` remains macaroon-gated (paying viewers
+  can post; anyone can read).
+
 ### Changed (breaking)
 
 - **Database migrated from MongoDB to PostgreSQL.** Mongoose → Prisma across the

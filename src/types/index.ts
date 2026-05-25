@@ -107,21 +107,7 @@ export interface SerializedMedia {
   thumbnailUrl: string;
   position: number;
   commentsCount: number;
-  flagsCount: number;
   productIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SerializedCustomer {
-  id: string;
-  nickname: string;
-  favoriteChannelIds: string[];
-  purchases: Array<{
-    satsrailOrderId: string;
-    satsrailProductId: string;
-    purchasedAt: string;
-  }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -129,8 +115,6 @@ export interface SerializedCustomer {
 export interface SerializedComment {
   id: string;
   mediaId: string;
-  customerId: string | null;
-  customerNickname?: string;
   body: string;
   createdAt: string;
 }

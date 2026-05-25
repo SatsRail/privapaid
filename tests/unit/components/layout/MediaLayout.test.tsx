@@ -21,9 +21,6 @@ vi.mock("@/components/PaymentWall", () => ({
 vi.mock("@/components/PreviewGallery", () => ({
   default: (props: { images: string[] }) => <div data-testid="preview-gallery">{props.images.length} images</div>,
 }));
-vi.mock("@/components/CommentSection", () => ({
-  default: (props: { mediaId: string }) => <div data-testid="comment-section">{props.mediaId}</div>,
-}));
 vi.mock("@/components/ChannelSidebar", () => ({
   default: (props: { items: { _id: string }[] }) => (
     <div data-testid="channel-sidebar">{props.items.length} siblings</div>
@@ -90,17 +87,10 @@ const baseData: MediaPageData = {
 };
 
 describe("MediaLayout", () => {
-  it("renders breadcrumb, header, and comment section ONCE (comments live under content)", () => {
-    // After the YouTube-style refactor: comments are no longer duplicated
-    // for mobile vs desktop. A single CommentSection sits in the main
-    // column, visible on every breakpoint. The right column is now the
-    // channel sidebar.
+  it("renders breadcrumb and header", () => {
     render(<MediaLayout {...baseData} />);
     expect(screen.getByTestId("breadcrumb")).toHaveTextContent("Test Video");
     expect(screen.getByTestId("header")).toHaveTextContent("Test Video");
-    const comments = screen.getAllByTestId("comment-section");
-    expect(comments.length).toBe(1);
-    expect(comments[0]).toHaveTextContent("m1");
   });
 
   it("renders the ChannelSidebar in the right column when siblings exist", () => {

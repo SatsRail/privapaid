@@ -113,8 +113,6 @@ export async function POST(req: NextRequest) {
       ...(encryptedDek ? { encryptedDek } : {}),
       thumbnailUrl: result.thumbnail_url || "",
       position: result.position ?? (maxPos?.position ?? 0) + 1,
-      commentsCount: 0,
-      flagsCount: 0,
     },
   });
 
@@ -179,9 +177,8 @@ export async function POST(req: NextRequest) {
         media_type: media.mediaType,
         thumbnail_url: media.thumbnailUrl,
         position: media.position,
-        comments_count: media.commentsCount,
         views_count: media.viewsCount,
-        flags_count: media.flagsCount,
+        comments_count: media.commentsCount,
         likes_count: media.likesCount,
         shares_count: media.sharesCount,
         created_at: media.createdAt,

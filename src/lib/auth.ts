@@ -1,12 +1,11 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { satsrail } from "@/lib/satsrail";
 
 declare module "next-auth" {
   interface User {
-    type?: "admin" | "customer";
+    type?: "admin";
     role?: string;
   }
 
@@ -15,7 +14,7 @@ declare module "next-auth" {
       id: string;
       name?: string | null;
       email?: string | null;
-      type?: "admin" | "customer";
+      type?: "admin";
       role?: string;
     };
   }
@@ -24,7 +23,7 @@ declare module "next-auth" {
 declare module "@auth/core/jwt" {
   interface JWT {
     userId?: string;
-    type?: "admin" | "customer";
+    type?: "admin";
     role?: string;
   }
 }
@@ -68,35 +67,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         } catch {
           return null;
         }
-      },
-    }),
-    Credentials({
-      id: "customer",
-      name: "Customer Login",
-      credentials: {
-        nickname: { label: "Nickname", type: "text" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        if (!credentials?.nickname || !credentials?.password) return null;
-
-        const customer = await prisma.customer.findUnique({
-          where: { nickname: credentials.nickname as string },
-        });
-        if (!customer) return null;
-
-        const valid = await bcrypt.compare(
-          credentials.password as string,
-          customer.passwordHash
-        );
-        if (!valid) return null;
-
-        return {
-          id: customer.id,
-          name: customer.nickname,
-          type: "customer" as const,
-          role: "customer",
-        };
       },
     }),
   ],

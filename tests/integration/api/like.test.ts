@@ -218,66 +218,6 @@ describe("Like API — POST /api/media/[id]/like", () => {
     expect(media!.likesCount).toBe(0);
   });
 
-  it("allows logged-in customer with a matching purchase", async () => {
-    const { mediaId } = await seedMedia();
-    const customer = await prisma.customer.create({
-      data: {
-        nickname: "liker1",
-        passwordHash: "hashed",
-        purchases: {
-          create: [{
-            satsrailOrderId: "ord_like_1",
-            satsrailProductId: "prod_like",
-          }],
-        },
-      },
-    });
-    mockAuth.mockResolvedValue({
-      user: { id: customer.id, name: "liker1", role: "customer" },
-    });
-    // Even if the macaroon check would fail, the session path wins first.
-    mockVerifyMacaroon.mockResolvedValue({ granted: false });
-
-    const req = jsonRequest(
-      `http://localhost:3000/api/media/${mediaId}/like`,
-      "POST",
-      { action: "like" }
-    );
-    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body).toEqual({ likes_count: 1 });
-  });
-
-  it("rejects a logged-in customer whose purchases do not cover this media", async () => {
-    const { mediaId } = await seedMedia();
-    const customer = await prisma.customer.create({
-      data: {
-        nickname: "nopurchase",
-        passwordHash: "hashed",
-        purchases: {
-          create: [{
-            satsrailOrderId: "ord_other",
-            satsrailProductId: "prod_unrelated",
-          }],
-        },
-      },
-    });
-    mockAuth.mockResolvedValue({
-      user: { id: customer.id, name: "nopurchase", role: "customer" },
-    });
-    mockVerifyMacaroon.mockResolvedValue({ granted: false });
-
-    const req = jsonRequest(
-      `http://localhost:3000/api/media/${mediaId}/like`,
-      "POST",
-      { action: "like" }
-    );
-    const res = await likeMedia(req, { params: Promise.resolve({ id: mediaId }) });
-    expect(res.status).toBe(401);
-  });
-
   it("allows anonymous payer via macaroon when no session is present", async () => {
     const { mediaId } = await seedMedia();
     mockAuth.mockResolvedValue(null);

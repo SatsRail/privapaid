@@ -22,23 +22,23 @@ function invalidJsonRequest(): Request {
 
 describe("validateBody", () => {
   it("returns parsed data for valid input", async () => {
-    const req = jsonRequest({ nickname: "testuser", password: "MyPass123!@abc" });
-    const result = await validateBody(req, schemas.customerSignup);
+    const req = jsonRequest({ body: "Great content!" });
+    const result = await validateBody(req, schemas.commentCreate);
     expect(isValidationError(result)).toBe(false);
-    expect(result).toEqual({ nickname: "testuser", password: "MyPass123!@abc" });
+    expect(result).toEqual({ body: "Great content!" });
   });
 
   it("returns 400 for invalid JSON", async () => {
     const req = invalidJsonRequest();
-    const result = await validateBody(req, schemas.customerSignup);
+    const result = await validateBody(req, schemas.commentCreate);
     expect(isValidationError(result)).toBe(true);
     const body = await (result as Response).json();
     expect(body.error).toBe("Invalid JSON body");
   });
 
   it("returns 400 with issues for validation failure", async () => {
-    const req = jsonRequest({ nickname: "", password: "short" });
-    const result = await validateBody(req, schemas.customerSignup);
+    const req = jsonRequest({ body: "" });
+    const result = await validateBody(req, schemas.commentCreate);
     expect(isValidationError(result)).toBe(true);
     const body = await (result as Response).json();
     expect(body.error).toBe("Validation failed");
@@ -61,30 +61,6 @@ describe("isValidationError", () => {
 });
 
 describe("schemas", () => {
-  describe("customerSignup", () => {
-    const schema = schemas.customerSignup;
-
-    it("accepts valid signup data", () => {
-      const result = schema.safeParse({ nickname: "testuser", password: "MyPass123!@abc" });
-      expect(result.success).toBe(true);
-    });
-
-    it("rejects short nickname", () => {
-      const result = schema.safeParse({ nickname: "a", password: "MyPass123!@abc" });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects nickname with special chars", () => {
-      const result = schema.safeParse({ nickname: "test user!", password: "MyPass123!@abc" });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects password shorter than 6 chars", () => {
-      const result = schema.safeParse({ nickname: "testuser", password: "12345" });
-      expect(result.success).toBe(false);
-    });
-  });
-
   describe("categoryCreate", () => {
     const schema = schemas.categoryCreate;
 
@@ -428,20 +404,6 @@ describe("schemas", () => {
     });
   });
 
-  describe("favorite", () => {
-    const schema = schemas.favorite;
-
-    it("accepts valid favorite", () => {
-      const result = schema.safeParse({ channel_id: "abc123" });
-      expect(result.success).toBe(true);
-    });
-
-    it("rejects empty channel_id", () => {
-      const result = schema.safeParse({ channel_id: "" });
-      expect(result.success).toBe(false);
-    });
-  });
-
   describe("verifyKey", () => {
     const schema = schemas.verifyKey;
 
@@ -454,39 +416,6 @@ describe("schemas", () => {
       const result = schema.safeParse({ satsrail_api_key: "  sk_live_abc123  " });
       expect(result.success).toBe(true);
       if (result.success) expect(result.data.satsrail_api_key).toBe("sk_live_abc123");
-    });
-  });
-
-  describe("customerProfile", () => {
-    const schema = schemas.customerProfile;
-
-    it("accepts profile with image", () => {
-      const result = schema.safeParse({ profile_image_id: "img_123" });
-      expect(result.success).toBe(true);
-    });
-
-    it("accepts empty object", () => {
-      const result = schema.safeParse({});
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe("customerPurchase", () => {
-    const schema = schemas.customerPurchase;
-
-    it("accepts valid purchase", () => {
-      const result = schema.safeParse({ order_id: "ord_123", product_id: "prod_456" });
-      expect(result.success).toBe(true);
-    });
-
-    it("rejects missing order_id", () => {
-      const result = schema.safeParse({ product_id: "prod_456" });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects empty product_id", () => {
-      const result = schema.safeParse({ order_id: "ord_123", product_id: "" });
-      expect(result.success).toBe(false);
     });
   });
 
@@ -603,20 +532,6 @@ describe("schemas", () => {
 
     it("rejects empty name", () => {
       const result = schema.safeParse({ name: "" });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  describe("flagCreate", () => {
-    const schema = schemas.flagCreate;
-
-    it("accepts valid flag", () => {
-      const result = schema.safeParse({ flag_type: "inappropriate" });
-      expect(result.success).toBe(true);
-    });
-
-    it("rejects empty flag_type", () => {
-      const result = schema.safeParse({ flag_type: "" });
       expect(result.success).toBe(false);
     });
   });

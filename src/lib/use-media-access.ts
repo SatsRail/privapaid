@@ -8,13 +8,13 @@ import { useCallback, useEffect, useState } from "react";
  *
  * Background — why this hook exists.
  *
- * Access state used to live in four components — PaymentWall, MediaHeader,
- * CommentSection, and MediaLayout — each running its own subset of the
- * checks. A periodic HeartbeatManager added a fifth race. A single portal
- * hiccup could revoke access mid-session in one component while the others
- * still believed everything was fine. That fragility was the source of
- * weeks of "image disappears" / "comments lock back up" / "timer doesn't
- * show until 30s later" bugs.
+ * Access state used to live in multiple components — PaymentWall,
+ * MediaHeader, and MediaLayout — each running its own subset of the
+ * checks. A periodic HeartbeatManager added another race. A single
+ * portal hiccup could revoke access mid-session in one component while
+ * the others still believed everything was fine. That fragility was
+ * the source of weeks of "image disappears" / "timer doesn't show
+ * until 30s later" bugs.
  *
  * The new model:
  *
@@ -26,12 +26,12 @@ import { useCallback, useEffect, useState } from "react";
  *   3. Fresh payments call `claim()` to inject the access data the
  *      portal delivered in the checkout payload — no roundtrip needed
  *      to know we just paid.
- *   4. Write paths that get a 401 (comments POST, etc.) call `refresh()`
- *      to re-check from the server.
+ *   4. Write paths that get a 401 call `refresh()` to re-check from
+ *      the server.
  *
- * Returns a discriminated union so consumers (MediaHeader, CommentSection,
- * PaymentWall) can branch cleanly: `loading` → render nothing, `inactive`
- * → render pay buttons, `active` → render content + clock + comment form.
+ * Returns a discriminated union so consumers (MediaHeader, PaymentWall)
+ * can branch cleanly: `loading` → render nothing, `inactive` → render
+ * pay buttons, `active` → render content + clock.
  */
 
 export interface MediaAccessProduct {

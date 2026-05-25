@@ -21,8 +21,6 @@ function isSetupRoute(pathname: string): boolean {
   return pathname === "/setup" || pathname.startsWith("/api/setup");
 }
 
-const CUSTOMER_API_PUBLIC = new Set(["/api/customer/signup", "/api/customer/check-nickname"]);
-
 function handleAdminPages(pathname: string, token: { type?: string; role?: string } | null, url: string): NextResponse | null {
   if (!pathname.startsWith("/admin")) return null;
 
@@ -53,17 +51,6 @@ function handleAdminApi(pathname: string, token: { type?: string; role?: string 
   return null;
 }
 
-function handleCustomerApi(pathname: string, token: { type?: string } | null): NextResponse | null {
-  if (!pathname.startsWith("/api/customer")) return null;
-  if (CUSTOMER_API_PUBLIC.has(pathname)) return null;
-
-  if (!token || token.type !== "customer") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  return null;
-}
-
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -76,7 +63,6 @@ export async function middleware(req: NextRequest) {
   return (
     handleAdminPages(pathname, token, req.url) ||
     handleAdminApi(pathname, token) ||
-    handleCustomerApi(pathname, token) ||
     NextResponse.next()
   );
 }
@@ -85,7 +71,6 @@ export const config = {
   matcher: [
     "/admin/:path*",
     "/api/admin/:path*",
-    "/api/customer/:path*",
     "/setup",
     "/api/setup/:path*",
   ],

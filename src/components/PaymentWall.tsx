@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSession } from "next-auth/react";
 import {
   base64urlToBytes,
   decryptBlob,
@@ -74,7 +73,6 @@ export default function PaymentWall({
   merchantLogo,
   merchantName,
 }: PaymentWallProps) {
-  const { data: session } = useSession();
   const { t, locale } = useLocale();
   const [decryptedBytes, setDecryptedBytes] = useState<Uint8Array | null>(null);
   const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
@@ -317,17 +315,6 @@ export default function PaymentWall({
         );
       }
 
-      if (session?.user?.role === "customer") {
-        fetch("/api/customer/purchases", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            order_id: "from_checkout",
-            product_id: activeProductId,
-          }),
-        }).catch((err) => console.error("Failed to record purchase:", err));
-      }
-
       const product = products.find((p) => p.productId === activeProductId);
       if (!product) {
         reportMessage(
@@ -373,7 +360,7 @@ export default function PaymentWall({
       });
       setCheckoutToken(null);
     },
-    [activeProductId, products, session, mediaId, reportException, reportMessage, onAccessClaim]
+    [activeProductId, products, mediaId, reportException, reportMessage, onAccessClaim]
   );
 
   if (decryptedBytes) {

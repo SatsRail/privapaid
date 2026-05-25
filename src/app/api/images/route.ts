@@ -11,11 +11,11 @@ import { rateLimit } from "@/lib/rate-limit";
  * the only standalone image store after the GridFS migration — and the row
  * id is returned to the caller so it can be embedded via /api/images/{id}.
  *
- * Owner-specific images (channel avatar, media thumbnail, logo, customer
- * avatar) have dedicated POST endpoints that write directly to the owning
- * row's Bytes column. This route stays for free-standing images uploaded
- * before the owning row exists yet (e.g. preview gallery uploads during
- * media creation, ImageUpload component in admin forms).
+ * Owner-specific images (channel avatar, media thumbnail, logo) have
+ * dedicated POST endpoints that write directly to the owning row's Bytes
+ * column. This route stays for free-standing images uploaded before the
+ * owning row exists yet (e.g. preview gallery uploads during media
+ * creation, ImageUpload component in admin forms).
  */
 export async function POST(req: NextRequest) {
   const limited = await rateLimit("image_upload", 30);
@@ -28,7 +28,6 @@ export async function POST(req: NextRequest) {
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
-  const context = (formData.get("context") as string) || "general";
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -46,11 +45,6 @@ export async function POST(req: NextRequest) {
       { error: "File too large (max 5MB)" },
       { status: 422 }
     );
-  }
-
-  // Customers can only upload their own profile image
-  if (session.user.type === "customer" && context !== "customer_profile") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Wrap everything past basic validation in a top-level try/catch so any

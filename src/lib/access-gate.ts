@@ -43,9 +43,12 @@ export interface AccessResult {
 // ── Product lookup ───────────────────────────────────────────────────
 
 /**
- * Return every product (MediaProduct + ChannelProduct) that covers a given
- * media item. This is the single source of truth for "what products gate
- * this content?"
+ * Return every product that covers a given media item. This is the single
+ * source of truth for "what products gate this content?"
+ *
+ * Reads from MediaEncryptedBlob, which carries one row per (product, media).
+ * The same media may be referenced by many rows when multiple products
+ * unlock it (direct-sale + channel access, multiple tiers, etc.).
  *
  * By default, archived products are filtered out — purchase UIs should not
  * show buy buttons for products the merchant has explicitly retired. Pass
@@ -54,74 +57,49 @@ export interface AccessResult {
  * means "stop selling", not "revoke everyone's access").
  *
  * The filter is `productStatus != "archived"` — active, inactive, and
- * undefined all pass. This is intentional: a missing status field must
- * never lock out a paying customer.
+ * null all pass. This is intentional: a missing status field must never
+ * lock out a paying customer.
+ *
+ * `channelId` is accepted for API compatibility with earlier callers but
+ * is no longer needed for the lookup — the (productId, mediaId) join
+ * already reaches all blobs regardless of scope.
  */
 export async function getProductsForMedia(
   mediaId: string,
-  channelId: string,
+  _channelId: string,
   options: { includeArchived?: boolean } = {}
 ): Promise<GatedProduct[]> {
-  const products: GatedProduct[] = [];
-  // Only filter out archived when we're NOT including them. Inactive and
-  // null status always pass — see the comment above.
-  const archivedFilter = options.includeArchived
+  const archivedProductFilter = options.includeArchived
     ? {}
-    : { productStatus: { not: "archived" } };
+    : { product: { productStatus: { not: "archived" } } };
 
-  const mediaProducts = await prisma.mediaProduct.findMany({
+  const blobs = await prisma.mediaEncryptedBlob.findMany({
     where: {
       mediaId,
-      ...archivedFilter,
+      ...archivedProductFilter,
     },
     select: {
-      satsrailProductId: true,
       encryptedSourceUrl: true,
       keyFingerprint: true,
-      productStatus: true,
-    },
-  });
-
-  for (const mp of mediaProducts) {
-    if (mp.encryptedSourceUrl) {
-      products.push({
-        productId: mp.satsrailProductId,
-        encryptedBlob: mp.encryptedSourceUrl,
-        keyFingerprint: mp.keyFingerprint ?? undefined,
-        status: mp.productStatus ?? undefined,
-      });
-    }
-  }
-
-  const channelProducts = await prisma.channelProduct.findMany({
-    where: {
-      channelId,
-      ...archivedFilter,
-      encryptedMedia: { some: { mediaId } },
-    },
-    select: {
-      satsrailProductId: true,
-      keyFingerprint: true,
-      productStatus: true,
-      encryptedMedia: {
-        where: { mediaId },
-        select: { encryptedSourceUrl: true },
+      product: {
+        select: {
+          satsrailProductId: true,
+          productStatus: true,
+        },
       },
     },
   });
 
-  for (const cp of channelProducts) {
-    const entry = cp.encryptedMedia[0];
-    if (entry?.encryptedSourceUrl) {
-      products.push({
-        productId: cp.satsrailProductId,
-        encryptedBlob: entry.encryptedSourceUrl,
-        keyFingerprint: cp.keyFingerprint ?? undefined,
-        status: cp.productStatus ?? undefined,
-      });
-    }
+  const products: GatedProduct[] = [];
+  for (const b of blobs) {
+    if (!b.encryptedSourceUrl) continue;
+    products.push({
+      productId: b.product.satsrailProductId,
+      encryptedBlob: b.encryptedSourceUrl,
+      keyFingerprint: b.keyFingerprint ?? undefined,
+      status: b.product.productStatus ?? undefined,
+    });
   }
-
   return products;
 }
 
