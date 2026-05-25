@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- **Database migrated from MongoDB to PostgreSQL.** Mongoose → Prisma across the
+  whole codebase. Field names converted from snake_case to camelCase
+  (`created_at` → `createdAt`, `_id` → `id`, etc.). Primary key shape changed
+  from 24-char ObjectId hex to ~25-char cuid string. Embedded arrays
+  (`Customer.purchases`, `ChannelProduct.encrypted_media`,
+  `Customer.favorite_channel_ids`) became dedicated tables (`Purchase`,
+  `ChannelProductMedia`, M2M `CustomerFavorites`).
+- **Binary storage replaced GridFS with `bytea` columns.** Channel profile
+  images, media thumbnails, and the instance logo now live in `Bytes` columns
+  on their owning rows. Preview images and encrypted photo blobs each get a
+  dedicated table (`PreviewImage`, `EncryptedPhotoBlob`). `Media.sourceUrl`
+  for photo media stores an `EncryptedPhotoBlob.id` rather than a GridFS file
+  id; encryption envelope is byte-identical (`Base64(IV[12]+ct+tag[16])`).
+- **TTL indexes replaced by app cron.** AuditLog (90d) and WebhookEvent (7d)
+  cleanup moved to `POST /api/internal/cleanup`, gated by `CLEANUP_SECRET`
+  bearer auth and scheduled by the deploy platform.
+- **Env var rename:** `MONGODB_URI` → `DATABASE_URL`. All `MONGO_*` vars
+  removed. `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` added for
+  docker-compose.
+- **Health endpoint shape:** `body.mongo` → `body.db`.
+- **Test infrastructure:** `mongodb-memory-server` → `@testcontainers/postgresql`.
+
+### Removed
+
+- `mongoose` and `mongodb-memory-server` deps
+- `src/lib/mongodb.ts`, `src/lib/gridfs.ts`, `src/lib/logo.ts`
+- All 12 Mongoose model files under `src/models/` (Counter.ts kept as a thin
+  Prisma helper preserving the `getNextRef(name)` signature)
+- `scripts/backfill-photo-deks.ts` (one-time legacy backfill; no longer needed)
+- `docker/mongo-init.js` and the `mongo` service in `docker-compose.yml`
+
+### Added
+
+- `prisma/schema.prisma` covering all 13 models with cuid IDs, citext indexes
+  for case-insensitive uniques, soft-delete `deletedAt` columns, denormalized
+  counters preserved, and a singleton `Settings` row enforced by check
+  constraint.
+- `src/lib/prisma.ts` global singleton (hot-reload safe).
+- `tests/helpers/postgres.ts` testcontainer harness with TRUNCATE-based reset.
+- `src/app/api/internal/cleanup/route.ts` cron-driven TTL replacement.
+- `src/lib/image-constants.ts` extracted from the deleted `gridfs.ts`.
+- `npm run db:migrate` / `db:deploy` / `db:studio` scripts.
+
 ## [0.9.0] - 2026-03-20
 
 ### Added

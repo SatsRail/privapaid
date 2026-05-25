@@ -164,7 +164,7 @@ Add media to an existing channel at **Admin > Channels > [channel] > Import**. T
 }
 ```
 
-Importable `media_type` values: `video`, `audio`, `article`, `podcast`. The `photo` type is **not** importable via JSON — photo bytes must be uploaded through the admin UI (`/api/admin/photos`) so the encrypted GridFS file and DEK envelope can be created. See [Media Types](#media-types) for full details on each type.
+Importable `media_type` values: `video`, `audio`, `article`, `podcast`. The `photo` type is **not** importable via JSON — photo bytes must be uploaded through the admin UI (`/api/admin/photos`) so the `EncryptedPhotoBlob` row and DEK envelope can be created. See [Media Types](#media-types) for full details on each type.
 
 Each media item can include a `product` with pricing — the import automatically creates the corresponding SatsRail product and encrypts the source URL. Imports are idempotent: re-importing with the same slugs or refs updates existing records.
 
@@ -174,7 +174,7 @@ Each media item can include a `product` with pricing — the import automaticall
 |-------|--------|
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript (strict mode) |
-| Database | MongoDB + Mongoose |
+| Database | PostgreSQL + Prisma |
 | Auth | NextAuth.js v5 (credentials) |
 | Encryption | AES-256-GCM via Web Crypto API (browser) and Node.js crypto (server) |
 | Payments | SatsRail (Bitcoin Lightning) |
@@ -185,36 +185,37 @@ Each media item can include a `product` with pricing — the import automaticall
 
 ### Encryption at Rest (and the plaintext recovery copy)
 
-Every piece of content has an **encrypted buyer-facing copy** in MongoDB:
-`MediaProduct.encrypted_source_url` (and `ChannelProduct.encrypted_media[].encrypted_source_url`)
+Every piece of content has an **encrypted buyer-facing copy** in Postgres:
+`MediaProduct.encryptedSourceUrl` (and `ChannelProductMedia.encryptedSourceUrl`)
 hold the AES-256-GCM ciphertext under the SatsRail product key, with the
 product's UUID bound as AAD so a blob encrypted for product A is mathematically
-useless in the context of product B. Photo bytes live encrypted in GridFS under
-a random per-photo DEK; the DEK itself is what the product key wraps. A single
-media item can be sold through multiple products (individually, as part of a
-bundle, etc.); each product-media combination produces a separately encrypted
-blob locked with that product's key.
+useless in the context of product B. Photo bytes live encrypted in the
+`EncryptedPhotoBlob` table (Postgres `bytea`) under a random per-photo DEK;
+the DEK itself is what the product key wraps. A single media item can be sold
+through multiple products (individually, as part of a bundle, etc.); each
+product-media combination produces a separately encrypted blob locked with
+that product's key.
 
 The blob format is `Base64(IV[12] + ciphertext + auth_tag[16])`. The browser
 splits the IV from the ciphertext+tag and decrypts using the Web Crypto API
 after payment. The server plays no role in buyer-side decryption.
 
 PrivaPaid also persists a **plaintext recovery copy** of each item on the
-`Media` document — `Media.source_url` for video/audio/article/podcast, and
-`Media.encrypted_dek` (the per-photo DEK wrapped under the operator's
+`Media` row — `Media.sourceUrl` for video/audio/article/podcast, and
+`Media.encryptedDek` (the per-photo DEK wrapped under the operator's
 `PHOTO_KEK`, decryptable server-side without SatsRail) for photos. This copy
 exists so admin-triggered key rotation can re-encrypt every product blob in a
 single in-DB operation, without depending on SatsRail still returning the old
 product key — that pipeline has failed in practice and used to brick rotations
 mid-way through.
 
-The cost of that choice is that a full MongoDB dump now exposes the plaintext
+The cost of that choice is that a full Postgres dump now exposes the plaintext
 source for non-photo media (and the wrapped DEK for photos, which stays opaque
 unless `PHOTO_KEK` is also leaked). Mitigations:
 
 - **No public route returns these fields.** The viewer page deliberately
-  forwards `source_url` only when `media_type === 'photo'`, and only as a
-  GridFS pointer to encrypted bytes. Regression test:
+  forwards `sourceUrl` only when `mediaType === 'photo'`, and only as an
+  `EncryptedPhotoBlob.id` pointer to encrypted bytes. Regression test:
   `tests/integration/pages/viewer-photo-page.test.ts`.
 - **Admin-only API surface.** Every endpoint that reads the plaintext fields
   lives under `/api/admin/*` and is gated by middleware + `requireOwnerApi()`
@@ -224,7 +225,7 @@ unless `PHOTO_KEK` is also leaked). Mitigations:
   keys from every captured event so a mid-rotation error doesn't ship
   plaintext to the error tracker. See `src/lib/sentry-scrub.ts`.
 - **`PHOTO_KEK` lives in env**, not the DB. Photo DEKs stay opaque under a
-  Mongo-only breach.
+  Postgres-only breach.
 
 Full discussion lives in [docs/ENCRYPTION.md](docs/ENCRYPTION.md) § "Threat model".
 
@@ -277,7 +278,7 @@ cp .env.local.example .env.local   # Fill in your values
 npm run dev                         # http://localhost:3001
 ```
 
-Requires Node.js and MongoDB (local or Atlas).
+Requires Node.js and PostgreSQL 16+ (`docker compose up -d postgres` or any managed Postgres).
 
 ## Commands
 

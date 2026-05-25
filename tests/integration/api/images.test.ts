@@ -1,57 +1,53 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { prisma } from "@/lib/prisma";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
-const { mockAuth, mockFileTypeFromBuffer, mockSharpMeta, mockSharpRotate, mockSharpToBuffer, mockBucketOpenUploadStream, mockUploadOn, mockUploadEnd, mockRateLimit } = vi.hoisted(() => ({
+// auth and file-type stay mocked — they're not part of what we're testing,
+// and the real auth() pulls in the full NextAuth flow.
+// sharp stays mocked too — its native binding is slow and we only need to
+// verify the route's handling of its results.
+const {
+  mockAuth,
+  mockFileTypeFromBuffer,
+  mockSharpMeta,
+  mockSharpRotate,
+  mockSharpToBuffer,
+  mockRateLimit,
+} = vi.hoisted(() => ({
   mockAuth: vi.fn().mockResolvedValue(null),
   mockFileTypeFromBuffer: vi.fn().mockResolvedValue({ mime: "image/png" }),
   mockSharpMeta: vi.fn().mockResolvedValue({ width: 100, height: 100 }),
   mockSharpRotate: vi.fn(),
   mockSharpToBuffer: vi.fn().mockResolvedValue(Buffer.from("stripped")),
-  mockBucketOpenUploadStream: vi.fn(),
-  mockUploadOn: vi.fn(),
-  mockUploadEnd: vi.fn(),
   mockRateLimit: vi.fn().mockResolvedValue(null),
 }));
 
-// Wire up sharp chain
-const mockSharpInstance = { metadata: mockSharpMeta, rotate: mockSharpRotate, toBuffer: mockSharpToBuffer };
+const mockSharpInstance = {
+  metadata: mockSharpMeta,
+  rotate: mockSharpRotate,
+  toBuffer: mockSharpToBuffer,
+};
 mockSharpRotate.mockReturnValue(mockSharpInstance);
 
-// Wire up upload stream
-const mockUploadStream = {
-  id: { toString: () => "grid_fs_id_123" },
-  on: mockUploadOn,
-  end: mockUploadEnd,
-};
-mockUploadOn.mockImplementation((event: string, cb: () => void) => {
-  if (event === "finish") setTimeout(cb, 0);
-  return mockUploadStream;
-});
-mockBucketOpenUploadStream.mockReturnValue(mockUploadStream);
-
-vi.mock("@/lib/rate-limit", () => ({
-  rateLimit: mockRateLimit,
-}));
-
-vi.mock("@/lib/auth", () => ({
-  auth: mockAuth,
-}));
-
-vi.mock("@/lib/gridfs", () => ({
-  getGridFSBucket: vi.fn().mockResolvedValue({
-    openUploadStream: mockBucketOpenUploadStream,
-  }),
-  ALLOWED_IMAGE_TYPES: ["image/jpeg", "image/png", "image/webp", "image/gif"],
-  MAX_IMAGE_SIZE: 5 * 1024 * 1024,
-}));
-
-vi.mock("file-type", () => ({
-  fileTypeFromBuffer: mockFileTypeFromBuffer,
-}));
-
+vi.mock("@/lib/rate-limit", () => ({ rateLimit: mockRateLimit }));
+vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
+vi.mock("file-type", () => ({ fileTypeFromBuffer: mockFileTypeFromBuffer }));
 vi.mock("sharp", () => ({
   default: vi.fn().mockReturnValue(mockSharpInstance),
+}));
+vi.mock("next/headers", () => ({
+  headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
 
 import { POST } from "@/app/api/images/route";
@@ -73,6 +69,14 @@ function makePngFile(size = 100): File {
 }
 
 describe("Images API — POST /api/images", () => {
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset defaults
@@ -81,13 +85,11 @@ describe("Images API — POST /api/images", () => {
     mockSharpMeta.mockResolvedValue({ width: 100, height: 100 });
     mockSharpRotate.mockReturnValue(mockSharpInstance);
     mockSharpToBuffer.mockResolvedValue(Buffer.from("stripped"));
+    mockRateLimit.mockResolvedValue(null);
+  });
 
-    // Reset upload stream event handler
-    mockUploadOn.mockImplementation((event: string, cb: () => void) => {
-      if (event === "finish") setTimeout(cb, 0);
-      return mockUploadStream;
-    });
-    mockBucketOpenUploadStream.mockReturnValue(mockUploadStream);
+  afterEach(async () => {
+    await clearCollections();
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -161,7 +163,18 @@ describe("Images API — POST /api/images", () => {
     const body = await res.json();
 
     expect(res.status).toBe(201);
-    expect(body.image_id).toBe("grid_fs_id_123");
+    expect(typeof body.image_id).toBe("string");
+    expect(body.image_id.length).toBeGreaterThan(0);
+
+    // Round-trip: the bytes the route wrote to Postgres should match what
+    // sharp returned (the "stripped" buffer).
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.image_id },
+      select: { bytes: true, mimeType: true },
+    });
+    expect(blob).not.toBeNull();
+    expect(blob!.mimeType).toBe("image/png");
+    expect(Buffer.from(blob!.bytes).equals(Buffer.from("stripped"))).toBe(true);
   });
 
   it("returns 422 when file magic bytes do not match allowed type", async () => {
@@ -219,15 +232,28 @@ describe("Images API — POST /api/images", () => {
     const body = await res.json();
 
     expect(res.status).toBe(201);
-    expect(body.image_id).toBe("grid_fs_id_123");
+    expect(typeof body.image_id).toBe("string");
+
+    // Confirm the row exists in Postgres
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.image_id },
+      select: { id: true },
+    });
+    expect(blob).not.toBeNull();
   });
 
   it("defaults context to general when not specified", async () => {
     const req = buildFormRequest({ file: makePngFile() });
     const res = await POST(req);
+    const body = await res.json();
 
     expect(res.status).toBe(201);
-    expect(mockBucketOpenUploadStream).toHaveBeenCalled();
+    // Even without context, the row lands in EncryptedPhotoBlob (the shim
+    // path described in the route comment).
+    const blob = await prisma.encryptedPhotoBlob.findUnique({
+      where: { id: body.image_id },
+    });
+    expect(blob).not.toBeNull();
   });
 
   it("returns rate limit response when rate limited", async () => {

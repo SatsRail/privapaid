@@ -52,9 +52,10 @@ cp .env.docker.example .env
 Edit `.env` with your production values:
 
 ```bash
-MONGODB_URI=mongodb://admin:YOUR_STRONG_PASSWORD@mongo:27017/media?authSource=admin
-MONGO_INITDB_ROOT_USERNAME=admin
-MONGO_INITDB_ROOT_PASSWORD=YOUR_STRONG_PASSWORD
+DATABASE_URL=postgresql://privapaid:YOUR_STRONG_PASSWORD@postgres:5432/privapaid?schema=public&connection_limit=20
+POSTGRES_USER=privapaid
+POSTGRES_PASSWORD=YOUR_STRONG_PASSWORD
+POSTGRES_DB=privapaid
 
 NEXTAUTH_URL=https://yourdomain.com
 NEXTAUTH_SECRET=$(openssl rand -base64 32)
@@ -149,29 +150,29 @@ eb create media-prod --single --instance-type t3.small
 Set all `.env` variables via EB environment properties:
 
 ```bash
-eb setenv MONGODB_URI="mongodb+srv://..." NEXTAUTH_URL="https://..." ...
+eb setenv DATABASE_URL="postgresql://..." NEXTAUTH_URL="https://..." ...
 ```
 
-### 4. MongoDB
+### 4. PostgreSQL
 
-Use **MongoDB Atlas** (not the Docker Compose mongo service):
-- Free tier (M0) handles small deployments
-- Shared clusters start at $9/month for production
-- EB doesn't support persistent volumes for local MongoDB
+Use a managed Postgres (RDS, Supabase, Neon, etc.) — not the Docker Compose `postgres` service:
+- RDS / Aurora Serverless v2 are the obvious EB pairings
+- EB doesn't support persistent volumes for a local Postgres container
+- The Docker entrypoint runs `prisma migrate deploy` on boot; the managed DB just needs to be reachable via `DATABASE_URL`
 
 ---
 
 ## Option C: Railway
 
-The fastest path to production. Railway handles Docker builds, MongoDB, and SSL automatically.
+The fastest path to production. Railway handles Docker builds, Postgres, and SSL automatically.
 
 ### 1. Deploy
 
 Click the button in [README.md](README.md) or visit [railway.com/deploy](https://railway.com/deploy/j2B0mN?referralCode=6xvEI7).
 
 Railway creates two services:
-- **App** — built from the Dockerfile in this repo
-- **MongoDB** — Railway plugin, automatically connected via `MONGODB_URI`
+- **App** — built from the Dockerfile in this repo (entrypoint runs `prisma migrate deploy` before starting)
+- **Postgres** — Railway plugin, automatically connected via `DATABASE_URL`
 
 ### 2. Set Environment Variables
 
@@ -203,23 +204,23 @@ Settings > Networking > Custom Domain. Railway handles SSL automatically.
 
 ---
 
-## MongoDB: Atlas vs Local
+## Postgres: Managed vs Local
 
-| | Atlas (Cloud) | Local (Docker Compose) |
+| | Managed (RDS / Supabase / Neon / Railway) | Local (Docker Compose) |
 |---|---|---|
-| **Setup** | Create cluster on atlas.mongodb.com | Included in docker-compose.yml |
+| **Setup** | Provision via provider console | Included in `docker-compose.yml` |
 | **Backups** | Automatic, point-in-time | Manual (see below) |
 | **Scaling** | Click to scale | Limited to server resources |
-| **Cost** | Free tier available, $9+/month for prod | Free (uses server disk) |
-| **Best for** | Production, Elastic Beanstalk | Development, small self-hosted |
+| **Cost** | Free tiers available, $5-15+/month for prod | Free (uses server disk) |
+| **Best for** | Production, Elastic Beanstalk, Railway | Development, small self-hosted |
 
-To use Atlas: replace `MONGODB_URI` in `.env` with your Atlas connection string and remove the `mongo` service from `docker-compose.yml`.
+To use a managed Postgres: set `DATABASE_URL` in `.env` to the provider's connection string and remove the `postgres` service from `docker-compose.yml`. The entrypoint's `prisma migrate deploy` runs on every boot — no extra step needed.
 
 ---
 
 ## Backups
 
-### MongoDB (Docker Compose)
+### Postgres (Docker Compose)
 
 Create a daily backup cron job:
 
@@ -228,10 +229,9 @@ Create a daily backup cron job:
 #!/bin/bash
 BACKUP_DIR=/home/ec2-user/backups/$(date +%Y%m%d)
 mkdir -p "$BACKUP_DIR"
-docker compose -f /home/ec2-user/media/docker-compose.yml exec -T mongo \
-  mongodump --authenticationDatabase admin \
-  -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
-  --archive > "$BACKUP_DIR/media.archive"
+docker compose -f /home/ec2-user/media/docker-compose.yml exec -T postgres \
+  pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom \
+  > "$BACKUP_DIR/media.dump"
 
 # Keep last 30 days
 find /home/ec2-user/backups -maxdepth 1 -mtime +30 -exec rm -rf {} +
@@ -244,8 +244,8 @@ sudo chmod +x /etc/cron.daily/media-backup
 ### Restore
 
 ```bash
-docker compose exec -T mongo mongorestore --authenticationDatabase admin \
-  -u admin -p YOUR_PASSWORD --archive < backups/20260315/media.archive
+docker compose exec -T postgres pg_restore --clean --if-exists \
+  -U "$POSTGRES_USER" -d "$POSTGRES_DB" < backups/20260315/media.dump
 ```
 
 ---
@@ -276,14 +276,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ```bash
 curl https://yourdomain.com/api/health
-# { "status": "ok", "mongo": "connected", "satsrail": "reachable" }
+# { "status": "ok", "db": "connected", "satsrail": "reachable" }
 ```
 
 ### Logs
 
 ```bash
-docker compose logs -f app     # App logs
-docker compose logs -f mongo   # MongoDB logs
+docker compose logs -f app       # App logs
+docker compose logs -f postgres  # Postgres logs
 ```
 
 ### Docker Status
@@ -298,7 +298,7 @@ docker stats                   # CPU/memory usage
 ## Rotating `SK_ENCRYPTION_KEY`
 
 `SK_ENCRYPTION_KEY` is the envelope key that protects every
-`Settings.satsrail_api_key_encrypted` row — i.e. your merchant's live
+`Settings.satsrailApiKeyEncrypted` row — i.e. your merchant's live
 `sk_live_` SatsRail API key at rest. Rotate it when you suspect leakage
 (stolen container, compromised env file, departed contractor with access),
 on a regular cadence (annually is a reasonable baseline), or after migrating
@@ -322,7 +322,7 @@ the runtime is configured for the other.
    Save it somewhere safe NOW — losing this between steps 2 and 5 means
    losing access to every encrypted merchant key.
 
-2. **Back up MongoDB.** A `mongodump` snapshot makes any failed rotation
+2. **Back up Postgres.** A `pg_dump` snapshot makes any failed rotation
    trivially reversible.
 
 3. **Stop the app** (or take it offline behind a maintenance page). This
@@ -334,7 +334,7 @@ the runtime is configured for the other.
    ```bash
    OLD_SK_ENCRYPTION_KEY=<current key> \
    NEW_SK_ENCRYPTION_KEY=<key from step 1> \
-   MONGODB_URI=mongodb://... \
+   DATABASE_URL=postgresql://... \
    npx tsx scripts/rotate-encryption-key.ts --dry-run
    ```
 
@@ -348,7 +348,7 @@ the runtime is configured for the other.
    ```bash
    OLD_SK_ENCRYPTION_KEY=<current key> \
    NEW_SK_ENCRYPTION_KEY=<key from step 1> \
-   MONGODB_URI=mongodb://... \
+   DATABASE_URL=postgresql://... \
    npx tsx scripts/rotate-encryption-key.ts
    ```
 
@@ -384,7 +384,7 @@ of old-wrapped and new-wrapped rows. Two recovery paths:
   were already done.
 - **Rollback:** swap OLD and NEW in env and re-run. The newly-wrapped
   rows decrypt with NEW (now treated as the "old"), and the un-touched
-  rows fail. Combined with the MongoDB backup from step 2, this is a
+  rows fail. Combined with the Postgres backup from step 2, this is a
   belt-and-braces option.
 
 ---
@@ -394,8 +394,9 @@ of old-wrapped and new-wrapped rows. Two recovery paths:
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | App won't start | Missing env vars | Check `docker compose logs app` for errors |
-| MongoDB connection refused | Mongo not ready | Wait for health check, check `docker compose logs mongo` |
-| Health check returns 503 | MongoDB or SatsRail down | Check `MONGODB_URI` and `SATSRAIL_API_URL` |
+| Postgres connection refused | Postgres not ready | Wait for health check, check `docker compose logs postgres` |
+| Health check returns 503 | Postgres or SatsRail down | Check `DATABASE_URL` and `SATSRAIL_API_URL` |
+| `prisma migrate deploy` fails on boot | Drift between schema and DB | Inspect with `npx prisma migrate status`; resolve with `npx prisma migrate resolve --applied <name>` if a migration was applied manually |
 | SSL not working | Certbot didn't run | Run `sudo certbot --nginx -d yourdomain.com` |
 | Payments not working | Wrong API keys | Verify `SK_ENCRYPTION_KEY` and SatsRail merchant config |
 | Seed script fails | Missing admin env vars | Set `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` in `.env` |

@@ -1,20 +1,30 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// Mock connectDB — readyState manipulated per-test
-const mockConnection = { readyState: 1 };
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi
-    .fn()
-    .mockImplementation(async () => ({ connection: mockConnection })),
-}));
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
+import { setupTestDB, teardownTestDB } from "../../helpers/postgres";
+import { prisma } from "@/lib/prisma";
 
 const originalFetch = global.fetch;
 const originalSatsrailUrl = process.env.SATSRAIL_API_URL;
 
 describe("GET /api/health", () => {
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
-    mockConnection.readyState = 1;
     process.env.SATSRAIL_API_URL = originalSatsrailUrl;
   });
 
@@ -25,6 +35,7 @@ describe("GET /api/health", () => {
 
   it("returns 200 when all services are healthy", async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
+    process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";
 
     const { GET } = await import("@/app/api/health/route");
     const res = await GET();
@@ -32,27 +43,18 @@ describe("GET /api/health", () => {
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.mongo).toBe("connected");
+    expect(body.db).toBe("connected");
     expect(body.satsrail).toBe("reachable");
   });
 
-  it("reports non-1 mongo readyState verbatim and still returns 200 if satsrail is up", async () => {
-    mockConnection.readyState = 2; // "connecting"
+  it("returns 503 with db:disconnected when prisma.$queryRaw rejects", async () => {
+    // Spy on $queryRaw and make it reject once. The real testcontainer Postgres
+    // stays up; we only simulate the failure mode at the call site.
+    vi.spyOn(prisma, "$queryRaw" as never).mockRejectedValueOnce(
+      new Error("offline") as never
+    );
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
-
-    const { GET } = await import("@/app/api/health/route");
-    const res = await GET();
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.status).toBe("ok");
-    expect(body.mongo).toBe("state_2");
-  });
-
-  it("returns 503 with mongo:disconnected when connectDB throws", async () => {
-    const { connectDB } = await import("@/lib/mongodb");
-    vi.mocked(connectDB).mockRejectedValueOnce(new Error("offline"));
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
+    process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";
 
     const { GET } = await import("@/app/api/health/route");
     const res = await GET();
@@ -60,13 +62,14 @@ describe("GET /api/health", () => {
 
     expect(res.status).toBe(503);
     expect(body.status).toBe("degraded");
-    expect(body.mongo).toBe("disconnected");
+    expect(body.db).toBe("disconnected");
   });
 
   it("reports http_<status> when satsrail returns non-ok", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
+    process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";
 
     const { GET } = await import("@/app/api/health/route");
     const res = await GET();
@@ -80,6 +83,7 @@ describe("GET /api/health", () => {
     global.fetch = vi
       .fn()
       .mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
+    process.env.SATSRAIL_API_URL = "https://satsrail.test/api/v1";
 
     const { GET } = await import("@/app/api/health/route");
     const res = await GET();
