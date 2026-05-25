@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/gridfs";
+import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/image-constants";
 import { rateLimit } from "@/lib/rate-limit";
 
 /**

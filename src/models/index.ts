@@ -1,9 +1,0 @@
-export { default as Admin } from "./Admin";
-export { default as Channel } from "./Channel";
-export { default as Media } from "./Media";
-export { default as MediaProduct } from "./MediaProduct";
-export { default as Customer } from "./Customer";
-export { default as Comment } from "./Comment";
-export { default as Flag } from "./Flag";
-export { default as Category } from "./Category";
-export { default as Settings } from "./Settings";

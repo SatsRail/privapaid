@@ -20,17 +20,6 @@ services:
         reservations:
           memory: 256M
 
-  mongo:
-    ports: []  # No external access in production
-    command: ["mongod", "--auth", "--bind_ip_all"]
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "1.0"
-        reservations:
-          memory: 512M
-
   postgres:
     ports: []  # No external access in production
     deploy:

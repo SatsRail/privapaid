@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
-import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/gridfs";
+import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/image-constants";
 import { rateLimit } from "@/lib/rate-limit";
 import { encryptBytes } from "@/lib/content-encryption";
 

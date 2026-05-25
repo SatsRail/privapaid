@@ -7,7 +7,7 @@ services:
     volumes:
       - app-data:/app/data
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
@@ -22,34 +22,6 @@ services:
           cpus: "1.0"
     restart: unless-stopped
 
-  mongo:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-changeme}
-      MONGO_APP_DB: ${MONGO_APP_DB:-media}
-      MONGO_APP_USER: ${MONGO_APP_USER:-privapaid}
-      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:-}
-    volumes:
-      - mongo-data:/data/db
-      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
-    healthcheck:
-      test: ["CMD", "mongosh", "-u", "${MONGO_INITDB_ROOT_USERNAME:-admin}", "-p", "${MONGO_INITDB_ROOT_PASSWORD:-changeme}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "1.0"
-    restart: unless-stopped
-
-  # Postgres — runs alongside Mongo during the MongoDB→PostgreSQL migration.
-  # Will replace Mongo entirely in Phase 4. See prisma/README.md.
   postgres:
     image: postgres:16-alpine
     ports:
@@ -74,6 +46,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongo-data:
   postgres-data:
   app-data:
