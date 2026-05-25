@@ -1,9 +1,5 @@
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
-import Channel from "@/models/Channel";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { getInstanceConfig } from "@/config/instance";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
@@ -33,26 +29,40 @@ interface EncryptedBlobInfo {
   created_at: string | null;
 }
 
-function blobPreview(blob: string | undefined): string | null {
+function blobPreview(blob: string | undefined | null): string | null {
   return blob ? `${blob.slice(0, 24)}...${blob.slice(-8)}` : null;
 }
 
+interface MediaProductRow {
+  satsrailProductId: string;
+  encryptedSourceUrl: string | null;
+  keyFingerprint: string | null;
+  createdAt: Date;
+}
+
+interface ChannelProductRow {
+  satsrailProductId: string;
+  keyFingerprint: string | null;
+  createdAt: Date;
+  encryptedMedia: { mediaId: string; encryptedSourceUrl: string | null }[];
+}
+
 function buildBlobIdsWithEncryption(
-  mediaProducts: { satsrail_product_id: string; encrypted_source_url?: string }[],
-  channelProductDocs: { satsrail_product_id: string; encrypted_media?: { media_id: unknown; encrypted_source_url?: string }[] }[],
+  mediaProducts: MediaProductRow[],
+  channelProductDocs: ChannelProductRow[],
   mediaId: string
 ): { mediaProductIds: Set<string>; channelProductIds: Set<string> } {
   const mediaProductIds = new Set(
-    mediaProducts.filter((p) => !!p.encrypted_source_url).map((p) => p.satsrail_product_id)
+    mediaProducts.filter((p) => !!p.encryptedSourceUrl).map((p) => p.satsrailProductId)
   );
   const channelProductIds = new Set(
     channelProductDocs
       .filter((cp) =>
-        cp.encrypted_media?.some(
-          (em) => String(em.media_id) === String(mediaId) && !!em.encrypted_source_url
+        cp.encryptedMedia.some(
+          (em) => em.mediaId === mediaId && !!em.encryptedSourceUrl
         )
       )
-      .map((cp) => cp.satsrail_product_id)
+      .map((cp) => cp.satsrailProductId)
   );
   return { mediaProductIds, channelProductIds };
 }
@@ -87,32 +97,32 @@ async function fetchProductDetails(
 }
 
 function buildEncryptedBlobs(
-  mediaProducts: { satsrail_product_id: string; encrypted_source_url?: string; key_fingerprint?: string; created_at?: Date }[],
-  channelProductDocs: { satsrail_product_id: string; encrypted_media?: { media_id: unknown; encrypted_source_url?: string }[]; key_fingerprint?: string; created_at?: Date }[],
+  mediaProducts: MediaProductRow[],
+  channelProductDocs: ChannelProductRow[],
   mediaId: string
 ): EncryptedBlobInfo[] {
   const blobs: EncryptedBlobInfo[] = [];
 
   for (const p of mediaProducts) {
     blobs.push({
-      product_id: p.satsrail_product_id, scope: "media",
-      blob_preview: blobPreview(p.encrypted_source_url),
-      blob_length: p.encrypted_source_url?.length ?? 0,
-      key_fingerprint: p.key_fingerprint || null,
-      created_at: p.created_at ? new Date(p.created_at).toISOString() : null,
+      product_id: p.satsrailProductId,
+      scope: "media",
+      blob_preview: blobPreview(p.encryptedSourceUrl),
+      blob_length: p.encryptedSourceUrl?.length ?? 0,
+      key_fingerprint: p.keyFingerprint || null,
+      created_at: p.createdAt ? p.createdAt.toISOString() : null,
     });
   }
 
   for (const cp of channelProductDocs) {
-    const entry = cp.encrypted_media?.find(
-      (em: { media_id: unknown }) => String(em.media_id) === String(mediaId)
-    );
+    const entry = cp.encryptedMedia.find((em) => em.mediaId === mediaId);
     blobs.push({
-      product_id: cp.satsrail_product_id, scope: "channel",
-      blob_preview: blobPreview(entry?.encrypted_source_url),
-      blob_length: entry?.encrypted_source_url?.length ?? 0,
-      key_fingerprint: cp.key_fingerprint || null,
-      created_at: cp.created_at ? new Date(cp.created_at).toISOString() : null,
+      product_id: cp.satsrailProductId,
+      scope: "channel",
+      blob_preview: blobPreview(entry?.encryptedSourceUrl),
+      blob_length: entry?.encryptedSourceUrl?.length ?? 0,
+      key_fingerprint: cp.keyFingerprint || null,
+      created_at: cp.createdAt ? cp.createdAt.toISOString() : null,
     });
   }
 
@@ -125,34 +135,51 @@ export default async function EditMediaPage({
   params: Promise<{ id: string; mediaId: string }>;
 }) {
   const { id: channelId, mediaId } = await params;
-  await connectDB();
 
   const [media, channel, instanceConfig] = await Promise.all([
-    Media.findById(mediaId).lean(),
-    Channel.findById(channelId).select("slug").lean(),
+    prisma.media.findUnique({ where: { id: mediaId } }),
+    prisma.channel.findUnique({ where: { id: channelId }, select: { slug: true } }),
     getInstanceConfig(),
   ]);
   if (!media) notFound();
 
   const currency = instanceConfig.currency;
 
-  const mediaProducts = await MediaProduct.find({ media_id: mediaId })
-    .select("satsrail_product_id encrypted_source_url key_fingerprint created_at")
-    .lean();
+  // MediaProduct is 1:1 with media — use findUnique to fetch, then normalize as array.
+  const mediaProductRow = await prisma.mediaProduct.findUnique({
+    where: { mediaId },
+    select: {
+      satsrailProductId: true,
+      encryptedSourceUrl: true,
+      keyFingerprint: true,
+      createdAt: true,
+    },
+  });
+  const mediaProducts: MediaProductRow[] = mediaProductRow ? [mediaProductRow] : [];
 
-  const channelProductDocs = await ChannelProduct.find({
-    channel_id: channelId,
-    "encrypted_media.media_id": media._id,
-  })
-    .select("satsrail_product_id encrypted_media key_fingerprint created_at")
-    .lean();
+  // Channel products that have an encrypted entry for this media.
+  const channelProductDocs = await prisma.channelProduct.findMany({
+    where: {
+      channelId,
+      encryptedMedia: { some: { mediaId } },
+    },
+    select: {
+      satsrailProductId: true,
+      keyFingerprint: true,
+      createdAt: true,
+      encryptedMedia: {
+        where: { mediaId },
+        select: { mediaId: true, encryptedSourceUrl: true },
+      },
+    },
+  });
 
   const allProductIds = [
-    ...mediaProducts.map((p) => p.satsrail_product_id),
-    ...channelProductDocs.map((p) => p.satsrail_product_id),
+    ...mediaProducts.map((p) => p.satsrailProductId),
+    ...channelProductDocs.map((p) => p.satsrailProductId),
   ];
 
-  const blobIds = buildBlobIdsWithEncryption(mediaProducts, channelProductDocs, String(media._id));
+  const blobIds = buildBlobIdsWithEncryption(mediaProducts, channelProductDocs, media.id);
 
   let productDetails: ProductDetail[] = [];
   const sk = await getMerchantKey();
@@ -164,19 +191,29 @@ export default async function EditMediaPage({
     }
   }
 
+  // Preview images: serve via the new bytea-backed route by PreviewImage.id.
+  const previewImages = await prisma.previewImage.findMany({
+    where: { mediaId: media.id },
+    select: { id: true },
+    orderBy: { position: "asc" },
+  });
+  const previewImageIds = previewImages.map((p) => p.id);
+
+  const thumbnailId = media.thumbnailBytes ? media.id : "";
+
   const serialized = {
-    _id: String(media._id),
+    _id: media.id,
     name: media.name,
     description: media.description || "",
-    source_url: media.source_url,
-    media_type: media.media_type,
-    thumbnail_url: media.thumbnail_url || "",
-    thumbnail_id: media.thumbnail_id || "",
-    preview_image_ids: media.preview_image_ids || [],
+    source_url: media.sourceUrl,
+    media_type: media.mediaType,
+    thumbnail_url: media.thumbnailUrl || "",
+    thumbnail_id: thumbnailId,
+    preview_image_ids: previewImageIds,
     product_ids: [...new Set([...allProductIds, ...productDetails.map((p) => p.id)])],
   };
 
-  const encryptedBlobs = buildEncryptedBlobs(mediaProducts, channelProductDocs, String(media._id));
+  const encryptedBlobs = buildEncryptedBlobs(mediaProducts, channelProductDocs, media.id);
 
   return (
     <div>
@@ -188,7 +225,7 @@ export default async function EditMediaPage({
           </span>
         )}
         <DeleteMediaButton
-          mediaId={String(media._id)}
+          mediaId={media.id}
           channelId={channelId}
           name={media.name}
         />

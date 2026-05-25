@@ -1,17 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import Customer from "@/models/Customer";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import config, { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
 import MediaCard from "@/components/MediaCard";
 import FavoriteButton from "@/components/FavoriteButton";
 import ViewerShell from "@/components/ViewerShell";
 import ServerPagination from "@/components/ui/ServerPagination";
-import { resolveImageUrl } from "@/lib/images";
 import { auth } from "@/lib/auth";
 import { buildChannelSchema } from "@/lib/jsonld";
 import type { Metadata } from "next";
@@ -21,11 +17,11 @@ export const dynamic = "force-dynamic";
 const PAGE_SIZE = 24;
 
 const SORT_OPTIONS = [
-  { key: "position", label: "Default", sort: { position: 1 } },
-  { key: "views", label: "Most viewed", sort: { views_count: -1 } },
-  { key: "comments", label: "Most commented", sort: { comments_count: -1 } },
-  { key: "latest", label: "Latest", sort: { created_at: -1 } },
-] as const;
+  { key: "position", label: "Default", orderBy: { position: "asc" as const } },
+  { key: "views", label: "Most viewed", orderBy: { viewsCount: "desc" as const } },
+  { key: "comments", label: "Most commented", orderBy: { commentsCount: "desc" as const } },
+  { key: "latest", label: "Latest", orderBy: { createdAt: "desc" as const } },
+] satisfies ReadonlyArray<{ key: string; label: string; orderBy: Prisma.MediaOrderByWithRelationInput }>;
 
 type SortKey = (typeof SORT_OPTIONS)[number]["key"];
 
@@ -36,10 +32,16 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  await connectDB();
-  const channel = await Channel.findOne({ slug, active: true })
-    .select("name bio profile_image_url profile_image_id")
-    .lean();
+  const channel = await prisma.channel.findFirst({
+    where: { slug, active: true },
+    select: {
+      id: true,
+      name: true,
+      bio: true,
+      profileImageUrl: true,
+      profileImageBytes: true,
+    },
+  });
 
   if (!channel) return { title: "Channel Not Found" };
 
@@ -47,9 +49,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const description = channel.bio
     ? channel.bio.slice(0, 160)
     : undefined;
-  const imageUrl = channel.profile_image_id
-    ? `/api/images/${channel.profile_image_id}`
-    : channel.profile_image_url
+  const imageUrl = channel.profileImageBytes
+    ? `/api/images/channel/${channel.id}`
+    : channel.profileImageUrl
       || instanceConfig.theme.logo
       || undefined;
 
@@ -85,42 +87,59 @@ export default async function ChannelPage({ params, searchParams }: Props) {
   const parsedPage = Math.max(1, parseInt(String(resolvedSearchParams.page || "1"), 10) || 1);
   const sortParam = String(resolvedSearchParams.sort || "position") as SortKey;
   const activeSort = SORT_OPTIONS.find((o) => o.key === sortParam) || SORT_OPTIONS[0];
-  await connectDB();
 
-  const channel = await Channel.findOne({ slug, active: true })
-    .populate("category_id", "name")
-    .lean();
+  const channel = await prisma.channel.findFirst({
+    where: { slug, active: true },
+    include: { category: { select: { name: true } } },
+  });
 
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
-  const totalMedia = await Media.countDocuments({ channel_id: channel._id });
+  const totalMedia = await prisma.media.count({ where: { channelId: channel.id } });
   const totalPages = Math.ceil(totalMedia / PAGE_SIZE) || 1;
   const page = Math.min(parsedPage, totalPages);
 
-  const media = await Media.find({ channel_id: channel._id })
-    .select("-source_url")
-    .sort(activeSort.sort)
-    .skip((page - 1) * PAGE_SIZE)
-    .limit(PAGE_SIZE)
-    .lean();
+  const media = await prisma.media.findMany({
+    where: { channelId: channel.id },
+    // Exclude sourceUrl from the listing — it's never needed for cards and
+    // we don't want to leak content URLs.
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      mediaType: true,
+      thumbnailUrl: true,
+      thumbnailBytes: true,
+      previewImageUrls: true,
+      commentsCount: true,
+      viewsCount: true,
+    },
+    orderBy: activeSort.orderBy,
+    skip: (page - 1) * PAGE_SIZE,
+    take: PAGE_SIZE,
+  });
 
   // Fetch cached product prices for all media in this channel
-  const mediaIds = media.map((m) => m._id);
-  const mediaProducts = await MediaProduct.find({
-    media_id: { $in: mediaIds },
-    product_status: "active",
-  })
-    .select("media_id product_price_cents product_currency")
-    .lean();
+  const mediaIds = media.map((m) => m.id);
+  const mediaProducts = await prisma.mediaProduct.findMany({
+    where: {
+      mediaId: { in: mediaIds },
+      productStatus: "active",
+    },
+    select: {
+      mediaId: true,
+      productPriceCents: true,
+      productCurrency: true,
+    },
+  });
 
   const priceMap = new Map<string, { cents: number; currency: string }>();
   for (const mp of mediaProducts) {
-    const key = String(mp.media_id);
-    if (!priceMap.has(key) && mp.product_price_cents != null) {
-      priceMap.set(key, {
-        cents: mp.product_price_cents,
-        currency: mp.product_currency || "USD",
+    if (!priceMap.has(mp.mediaId) && mp.productPriceCents != null) {
+      priceMap.set(mp.mediaId, {
+        cents: mp.productPriceCents,
+        currency: mp.productCurrency || "USD",
       });
     }
   }
@@ -129,29 +148,33 @@ export default async function ChannelPage({ params, searchParams }: Props) {
   const session = await auth();
   let isFavorited = false;
   if (session?.user?.role === "customer" && session.user.id) {
-    const customer = await Customer.findById(session.user.id)
-      .select("favorite_channel_ids")
-      .lean();
-    isFavorited = customer?.favorite_channel_ids?.some(
-      (id: unknown) => id?.toString() === channel._id.toString()
-    ) ?? false;
+    const customer = await prisma.customer.findUnique({
+      where: { id: session.user.id },
+      select: {
+        favoriteChannels: { where: { id: channel.id }, select: { id: true } },
+      },
+    });
+    isFavorited = (customer?.favoriteChannels?.length ?? 0) > 0;
   }
 
   const instanceConfig = await getInstanceConfig();
   const { locale } = instanceConfig;
-  const cat = channel.category_id as { name?: string } | null;
-  const socialLinks = Object.entries(channel.social_links || {}).filter(
-    ([, v]) => v
-  );
-  const avatarSrc = resolveImageUrl(channel.profile_image_id, channel.profile_image_url);
+  const cat = channel.category;
+  const socialLinks = Object.entries(
+    (channel.socialLinks as Record<string, string>) || {}
+  ).filter(([, v]) => v);
+  const avatarSrc = channel.profileImageBytes
+    ? `/api/images/channel/${channel.id}`
+    : channel.profileImageUrl || "";
 
   const channelJsonLd = buildChannelSchema(
     {
       name: channel.name,
       slug: channel.slug,
       bio: channel.bio,
-      profile_image_url: channel.profile_image_url,
-      profile_image_id: channel.profile_image_id,
+      profileImageUrl: channel.profileImageUrl,
+      id: channel.id,
+      hasProfileImage: !!channel.profileImageBytes,
     },
     instanceConfig
   );
@@ -181,7 +204,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold">{channel.name}</h1>
               <FavoriteButton
-                channelId={channel._id.toString()}
+                channelId={channel.id}
                 initialFavorited={isFavorited}
               />
             </div>
@@ -235,17 +258,35 @@ export default async function ChannelPage({ params, searchParams }: Props) {
 
         {media.length > 0 ? (
           <div className="grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
-            {media.map((m) => (
-              <MediaCard
-                key={String(m._id)}
-                channelSlug={channel.slug}
-                channelName={channel.name}
-                channelAvatarUrl={channel.profile_image_url}
-                channelAvatarId={channel.profile_image_id}
-                media={m}
-                price={priceMap.get(String(m._id))}
-              />
-            ))}
+            {media.map((m) => {
+              // The new bytea-backed image endpoints use distinct prefixes
+              // (e.g. /api/images/channel/<id>, /api/images/media-thumbnail/<id>)
+              // — different from the old GridFS-by-id route MediaCard's
+              // `resolveImageUrl(id)` was built for. Pre-resolve URLs here and
+              // pass them through as `channelAvatarUrl` / `thumbnail_url`.
+              const cardThumb = m.thumbnailBytes
+                ? `/api/images/media-thumbnail/${m.id}`
+                : m.thumbnailUrl || "";
+              return (
+                <MediaCard
+                  key={m.id}
+                  channelSlug={channel.slug}
+                  channelName={channel.name}
+                  channelAvatarUrl={avatarSrc}
+                  media={{
+                    _id: m.id,
+                    name: m.name,
+                    description: m.description,
+                    media_type: m.mediaType,
+                    thumbnail_url: cardThumb,
+                    preview_image_ids: [],
+                    comments_count: m.commentsCount,
+                    views_count: m.viewsCount,
+                  }}
+                  price={priceMap.get(m.id)}
+                />
+              );
+            })}
           </div>
         ) : (
           <p className="py-8 text-center text-zinc-500">

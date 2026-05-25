@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { getProductsForMedia, verifyMacaroonAccess } from "@/lib/access-gate";
-import Comment from "@/models/Comment";
-import Media from "@/models/Media";
-import Customer from "@/models/Customer";
 import { auth } from "@/lib/auth";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { rateLimit } from "@/lib/rate-limit";
@@ -13,22 +10,19 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  await connectDB();
 
-  const comments = await Comment.find({ media_id: id })
-    .populate("customer_id", "nickname")
-    .sort({ created_at: -1 })
-    .lean();
+  const comments = await prisma.comment.findMany({
+    where: { mediaId: id },
+    orderBy: { createdAt: "desc" },
+    include: { customer: { select: { nickname: true } } },
+  });
 
   const serialized = comments.map((c) => ({
-    _id: String(c._id),
+    _id: c.id,
     body: c.body,
-    created_at: c.created_at.toISOString(),
+    created_at: c.createdAt.toISOString(),
     customer: {
-      nickname:
-        c.nickname ||
-        (c.customer_id as { nickname?: string })?.nickname ||
-        "Anonymous",
+      nickname: c.nickname || c.customer?.nickname || "Anonymous",
     },
   }));
 
@@ -49,27 +43,34 @@ export async function POST(
 
   const { body, nickname: submittedNickname } = validated;
 
-  await connectDB();
-
   // Verify media exists
-  const media = await Media.findById(id);
+  const media = await prisma.media.findUnique({
+    where: { id },
+    select: { id: true, channelId: true },
+  });
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
   // Single source of truth for product lookup
-  const products = await getProductsForMedia(String(media._id), String(media.channel_id));
+  const products = await getProductsForMedia(media.id, media.channelId);
   const productIds = products.map((p) => p.productId);
 
   // Path 1: Logged-in customer with purchase record
   const session = await auth();
   if (session?.user?.id && session.user.role === "customer") {
-    const customer = await Customer.findById(session.user.id)
-      .select("purchases nickname")
-      .lean();
-    const hasPurchase = customer?.purchases?.some(
-      (p) => productIds.includes(p.satsrail_product_id)
-    );
+    const customer = await prisma.customer.findUnique({
+      where: { id: session.user.id },
+      select: {
+        nickname: true,
+        purchases: {
+          where: { satsrailProductId: { in: productIds } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    const hasPurchase = !!customer && customer.purchases.length > 0;
 
     if (hasPurchase) {
       // Authenticated customers post under their registered nickname.
@@ -78,19 +79,24 @@ export async function POST(
       // comment as an obfuscation tactic.
       const nickname =
         customer?.nickname || session.user.name || "Anonymous";
-      const comment = await Comment.create({
-        media_id: id,
-        customer_id: session.user.id,
-        nickname,
-        body: body.trim(),
+      const comment = await prisma.comment.create({
+        data: {
+          mediaId: id,
+          customerId: session.user.id,
+          nickname,
+          body: body.trim(),
+        },
       });
-      await Media.findByIdAndUpdate(id, { $inc: { comments_count: 1 } });
+      await prisma.media.update({
+        where: { id },
+        data: { commentsCount: { increment: 1 } },
+      });
 
       return NextResponse.json(
         {
-          _id: String(comment._id),
+          _id: comment.id,
           body: comment.body,
-          created_at: comment.created_at.toISOString(),
+          created_at: comment.createdAt.toISOString(),
           customer: { nickname },
         },
         { status: 201 }
@@ -116,19 +122,24 @@ export async function POST(
     );
   }
 
-  const comment = await Comment.create({
-    media_id: id,
-    nickname: submittedNickname,
-    body: body.trim(),
+  const comment = await prisma.comment.create({
+    data: {
+      mediaId: id,
+      nickname: submittedNickname,
+      body: body.trim(),
+    },
   });
 
-  await Media.findByIdAndUpdate(id, { $inc: { comments_count: 1 } });
+  await prisma.media.update({
+    where: { id },
+    data: { commentsCount: { increment: 1 } },
+  });
 
   return NextResponse.json(
     {
-      _id: String(comment._id),
+      _id: comment.id,
       body: comment.body,
-      created_at: comment.created_at.toISOString(),
+      created_at: comment.createdAt.toISOString(),
       customer: { nickname: submittedNickname },
     },
     { status: 201 }

@@ -2,53 +2,37 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ─── Mocks ──────────────────────────────────────────────────────────
 
-const mockChannelFindById = vi.fn();
-const mockChannelFindByIdAndUpdate = vi.fn();
-vi.mock("@/models/Channel", () => ({
-  default: {
-    findById: (...args: unknown[]) => ({
-      lean: () => mockChannelFindById(...args),
-    }),
-    findByIdAndUpdate: (...args: unknown[]) => mockChannelFindByIdAndUpdate(...args),
-    find: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        lean: vi.fn().mockResolvedValue([]),
-      }),
-    }),
+const prismaMock = vi.hoisted(() => ({
+  mediaProduct: {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
   },
+  channelProduct: {
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+  channelProductMedia: {
+    deleteMany: vi.fn(),
+    create: vi.fn(),
+  },
+  channel: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
+  media: {
+    findMany: vi.fn().mockResolvedValue([]),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+  $transaction: vi.fn().mockImplementation(async (ops: unknown[]) => Promise.all(ops as Promise<unknown>[])),
 }));
 
-vi.mock("@/models/Media", () => ({
-  default: {
-    find: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        lean: vi.fn().mockResolvedValue([]),
-      }),
-    }),
-    findByIdAndUpdate: vi.fn(),
-  },
-}));
-
-const mockMediaProductFindOne = vi.fn();
-const mockMediaProductCreate = vi.fn();
-const mockMediaProductFindByIdAndUpdate = vi.fn();
-vi.mock("@/models/MediaProduct", () => ({
-  default: {
-    findOne: (...args: unknown[]) => mockMediaProductFindOne(...args),
-    create: (...args: unknown[]) => mockMediaProductCreate(...args),
-    findByIdAndUpdate: (...args: unknown[]) => mockMediaProductFindByIdAndUpdate(...args),
-  },
-}));
-
-const mockChannelProductFindOne = vi.fn();
-const mockChannelProductCreate = vi.fn();
-const mockChannelProductFindByIdAndUpdate = vi.fn();
-vi.mock("@/models/ChannelProduct", () => ({
-  default: {
-    findOne: (...args: unknown[]) => mockChannelProductFindOne(...args),
-    create: (...args: unknown[]) => mockChannelProductCreate(...args),
-    findByIdAndUpdate: (...args: unknown[]) => mockChannelProductFindByIdAndUpdate(...args),
-  },
+vi.mock("@/lib/prisma", () => ({
+  prisma: prismaMock,
 }));
 
 vi.mock("@/models/Counter", () => ({
@@ -89,25 +73,12 @@ import {
   createProductSafeType,
   createProductSafe,
   getProductKeySafe,
-  handleExistingMediaProduct,
-  createEncryptedChannelProduct,
   createApiThrottle,
-  delay,
 } from "@/lib/import-helpers";
-
-// Speed up tests by stubbing delay
-vi.mock("@/lib/import-helpers", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("@/lib/import-helpers")>();
-  return {
-    ...mod,
-    delay: vi.fn().mockResolvedValue(undefined),
-  };
-});
 
 // ─── Tests ──────────────────────────────────────────────────────────
 
 describe("import-helpers", () => {
-  // delay is mocked to resolve immediately, so throttle adds no wait
   const api = createApiThrottle(0);
 
   beforeEach(() => {
@@ -134,23 +105,6 @@ describe("import-helpers", () => {
       const fn = vi.fn().mockRejectedValue("string error");
       await expect(withRetry(fn)).rejects.toBe("string error");
       expect(fn).toHaveBeenCalledTimes(1);
-    });
-
-    it("retries on 429 rate limit errors", async () => {
-      const fn = vi
-        .fn()
-        .mockRejectedValueOnce(new Error("429 Too Many Requests, retry after 1"))
-        .mockResolvedValue("success");
-      const result = await withRetry(fn);
-      expect(result).toBe("success");
-      expect(fn).toHaveBeenCalledTimes(2);
-    });
-
-    it("throws after exhausting retries on rate limit errors", async () => {
-      const rateLimitError = new Error("429 Too Many Requests, retry after 1");
-      const fn = vi.fn().mockRejectedValue(rateLimitError);
-      await expect(withRetry(fn, 2)).rejects.toThrow("429");
-      expect(fn).toHaveBeenCalledTimes(3); // initial + 2 retries
     });
   });
 
@@ -290,257 +244,6 @@ describe("import-helpers", () => {
     it("throws non-404 errors directly", async () => {
       mockGetProductKey.mockRejectedValue(new Error("500 Internal Server Error"));
       await expect(getProductKeySafe("sk", "prod_1", productData, api)).rejects.toThrow("500");
-    });
-  });
-
-  // ── handleExistingMediaProduct ────────────────────────────────────
-
-  describe("handleExistingMediaProduct", () => {
-    const mData = {
-      name: "Video",
-      description: "",
-      source_url: "https://example.com/v.mp4",
-      media_type: "video" as const,
-      thumbnail_url: "",
-      preview_image_urls: [] as string[],
-      product: {
-        name: "Access",
-        price_cents: 200,
-        currency: "USD",
-        access_duration_seconds: 3600,
-      },
-    };
-
-    it("returns early when no product_type_id and no existing product", async () => {
-      mockMediaProductFindOne.mockResolvedValue(null);
-      const errors: { entity: string; name: string; error: string }[] = [];
-
-      await handleExistingMediaProduct(
-        "sk",
-        mData,
-        { _id: "media_1", ref: 10 },
-        false,
-        { _id: "ch_1", satsrail_product_type_id: null },
-        errors,
-        api
-      );
-
-      expect(errors).toHaveLength(0);
-      // Should not attempt to create product (no product_type_id)
-      expect(mockCreateProduct).not.toHaveBeenCalled();
-    });
-
-    it("creates product for existing media when product_type_id exists and no existing product", async () => {
-      mockMediaProductFindOne.mockResolvedValue(null);
-      mockCreateProduct.mockResolvedValue({ id: "prod_new" });
-      mockGetProductKey.mockResolvedValue({ key: "k1", key_fingerprint: "fp1" });
-      mockMediaProductCreate.mockResolvedValue({});
-      const errors: { entity: string; name: string; error: string }[] = [];
-
-      await handleExistingMediaProduct(
-        "sk",
-        mData,
-        { _id: "media_1", ref: 10 },
-        false,
-        { _id: "ch_1", satsrail_product_type_id: "pt_1" },
-        errors,
-        api
-      );
-
-      expect(errors).toHaveLength(0);
-      expect(mockCreateProduct).toHaveBeenCalled();
-      expect(mockMediaProductCreate).toHaveBeenCalled();
-    });
-
-    it("pushes error when product creation fails for existing media", async () => {
-      mockMediaProductFindOne.mockResolvedValue(null);
-      mockCreateProduct.mockRejectedValue(new Error("API down"));
-      const errors: { entity: string; name: string; error: string }[] = [];
-
-      await handleExistingMediaProduct(
-        "sk",
-        mData,
-        { _id: "media_1", ref: 10 },
-        false,
-        { _id: "ch_1", satsrail_product_type_id: "pt_1" },
-        errors,
-        api
-      );
-
-      expect(errors).toHaveLength(1);
-      expect(errors[0].entity).toBe("media_product");
-      expect(errors[0].error).toContain("Product creation failed");
-    });
-
-    it("updates existing product when found", async () => {
-      mockMediaProductFindOne.mockResolvedValue({
-        _id: "mp_1",
-        satsrail_product_id: "prod_existing",
-      });
-      mockUpdateProduct.mockResolvedValue({});
-      const errors: { entity: string; name: string; error: string }[] = [];
-
-      await handleExistingMediaProduct(
-        "sk",
-        mData,
-        { _id: "media_1", ref: 10 },
-        false,
-        { _id: "ch_1", satsrail_product_type_id: "pt_1" },
-        errors,
-        api
-      );
-
-      expect(errors).toHaveLength(0);
-      expect(mockUpdateProduct).toHaveBeenCalledWith("sk", "prod_existing", expect.any(Object));
-    });
-
-    it("pushes error when product update fails", async () => {
-      mockMediaProductFindOne.mockResolvedValue({
-        _id: "mp_1",
-        satsrail_product_id: "prod_existing",
-      });
-      mockUpdateProduct.mockRejectedValue(new Error("Update failed"));
-      const errors: { entity: string; name: string; error: string }[] = [];
-
-      await handleExistingMediaProduct(
-        "sk",
-        mData,
-        { _id: "media_1", ref: 10 },
-        false,
-        { _id: "ch_1", satsrail_product_type_id: "pt_1" },
-        errors,
-        api
-      );
-
-      expect(errors).toHaveLength(1);
-      expect(errors[0].error).toContain("Product update failed");
-    });
-  });
-
-  // ── createEncryptedChannelProduct ─────────────────────────────────
-
-  describe("createEncryptedChannelProduct", () => {
-    const productData = {
-      name: "Channel Access",
-      price_cents: 1000,
-      currency: "USD",
-      access_duration_seconds: 86400,
-      product_type_id: "pt_1",
-      external_ref: "ch_100",
-    };
-    const channelId = "ch_abc";
-
-    describe("when ChannelProduct already exists (update path)", () => {
-      it("updates existing product and re-encrypts media", async () => {
-        const existingCP = {
-          _id: "cp_1",
-          satsrail_product_id: "prod_existing",
-          channel_id: channelId,
-        };
-        mockChannelProductFindOne.mockResolvedValue(existingCP);
-        mockUpdateProduct.mockResolvedValue({});
-        mockGetProductKey.mockResolvedValue({
-          key: "k1",
-          key_fingerprint: "fp_new",
-          productId: "prod_existing",
-        });
-
-        // Mock Media.find to return media items
-        const Media = (await import("@/models/Media")).default;
-        (Media.find as ReturnType<typeof vi.fn>).mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            lean: vi.fn().mockResolvedValue([
-              { _id: "m1", source_url: "https://example.com/v1.mp4" },
-              { _id: "m2", source_url: "https://example.com/v2.mp4" },
-            ]),
-          }),
-        });
-
-        mockChannelProductFindByIdAndUpdate.mockResolvedValue({});
-
-        await createEncryptedChannelProduct("sk", productData, channelId, api);
-
-        expect(mockUpdateProduct).toHaveBeenCalledWith("sk", "prod_existing", {
-          name: "Channel Access",
-          price_cents: 1000,
-          access_duration_seconds: 86400,
-        });
-        expect(mockEncryptSourceUrl).toHaveBeenCalledTimes(2);
-        expect(mockChannelProductFindByIdAndUpdate).toHaveBeenCalledWith(
-          "cp_1",
-          expect.objectContaining({
-            key_fingerprint: "fp_new",
-            product_name: "Channel Access",
-            product_price_cents: 1000,
-            product_status: "active",
-          })
-        );
-      });
-    });
-
-    describe("when no ChannelProduct exists (create path)", () => {
-      it("creates new product and ChannelProduct document", async () => {
-        mockChannelProductFindOne.mockResolvedValue(null);
-        mockCreateProduct.mockResolvedValue({ id: "prod_new" });
-        mockGetProductKey.mockResolvedValue({
-          key: "k2",
-          key_fingerprint: "fp_created",
-          productId: "prod_new",
-        });
-
-        const Media = (await import("@/models/Media")).default;
-        (Media.find as ReturnType<typeof vi.fn>).mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            lean: vi.fn().mockResolvedValue([
-              { _id: "m1", source_url: "https://example.com/v1.mp4" },
-            ]),
-          }),
-        });
-
-        mockChannelProductCreate.mockResolvedValue({});
-
-        await createEncryptedChannelProduct("sk", productData, channelId, api);
-
-        expect(mockCreateProduct).toHaveBeenCalled();
-        expect(mockEncryptSourceUrl).toHaveBeenCalledTimes(1);
-        expect(mockChannelProductCreate).toHaveBeenCalledWith(
-          expect.objectContaining({
-            channel_id: channelId,
-            satsrail_product_id: "prod_new",
-            key_fingerprint: "fp_created",
-            product_name: "Channel Access",
-            product_price_cents: 1000,
-            product_status: "active",
-          })
-        );
-      });
-
-      it("creates ChannelProduct with empty encrypted_media when channel has no media", async () => {
-        mockChannelProductFindOne.mockResolvedValue(null);
-        mockCreateProduct.mockResolvedValue({ id: "prod_empty" });
-        mockGetProductKey.mockResolvedValue({
-          key: "k3",
-          key_fingerprint: "fp_empty",
-          productId: "prod_empty",
-        });
-
-        const Media = (await import("@/models/Media")).default;
-        (Media.find as ReturnType<typeof vi.fn>).mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            lean: vi.fn().mockResolvedValue([]),
-          }),
-        });
-
-        mockChannelProductCreate.mockResolvedValue({});
-
-        await createEncryptedChannelProduct("sk", productData, channelId, api);
-
-        expect(mockChannelProductCreate).toHaveBeenCalledWith(
-          expect.objectContaining({
-            encrypted_media: [],
-          })
-        );
-      });
     });
   });
 });

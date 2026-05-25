@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia } from "../../helpers/factories";
 
 // Mock rate limit
@@ -11,11 +10,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock admin auth
@@ -29,7 +23,7 @@ vi.mock("@/lib/auth-helpers", () => ({
 
 import { NextRequest, NextResponse } from "next/server";
 import { PATCH } from "@/app/api/admin/media/reorder/route";
-import Media from "@/models/Media";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildRequest(body: unknown): NextRequest {
@@ -58,7 +52,7 @@ describe("PATCH /api/admin/media/reorder", () => {
 
   it("reorders media by updating positions", async () => {
     const channel = await createChannel();
-    const channelId = String(channel._id);
+    const channelId = channel.id;
 
     const m1 = await createMedia(channelId, { name: "Media A", position: 0 });
     const m2 = await createMedia(channelId, { name: "Media B", position: 1 });
@@ -66,9 +60,9 @@ describe("PATCH /api/admin/media/reorder", () => {
 
     const req = buildRequest({
       items: [
-        { id: String(m1._id), position: 2 },
-        { id: String(m2._id), position: 0 },
-        { id: String(m3._id), position: 1 },
+        { id: m1.id, position: 2 },
+        { id: m2.id, position: 0 },
+        { id: m3.id, position: 1 },
       ],
     });
 
@@ -78,9 +72,9 @@ describe("PATCH /api/admin/media/reorder", () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
 
-    const updated1 = await Media.findById(m1._id);
-    const updated2 = await Media.findById(m2._id);
-    const updated3 = await Media.findById(m3._id);
+    const updated1 = await prisma.media.findUnique({ where: { id: m1.id } });
+    const updated2 = await prisma.media.findUnique({ where: { id: m2.id } });
+    const updated3 = await prisma.media.findUnique({ where: { id: m3.id } });
 
     expect(updated1?.position).toBe(2);
     expect(updated2?.position).toBe(0);
@@ -105,9 +99,9 @@ describe("PATCH /api/admin/media/reorder", () => {
 
   it("returns 400 for items with negative position", async () => {
     const channel = await createChannel();
-    const media = await createMedia(String(channel._id));
+    const media = await createMedia(channel.id);
     const req = buildRequest({
-      items: [{ id: String(media._id), position: -1 }],
+      items: [{ id: media.id, position: -1 }],
     });
     const res = await PATCH(req);
 
@@ -122,13 +116,10 @@ describe("PATCH /api/admin/media/reorder", () => {
   });
 
   it("returns the auth response when requireAdminApi rejects the request", async () => {
-    // `requireAdminApi` returns a NextResponse (401/403) when auth fails.
-    // The route's `if (auth instanceof NextResponse) return auth;` must
-    // surface it without touching the DB.
     vi.mocked(requireAdminApi).mockResolvedValueOnce(
       NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     );
-    const req = buildRequest({ items: [{ id: "x".repeat(24), position: 0 }] });
+    const req = buildRequest({ items: [{ id: "ckxyz12345678", position: 0 }] });
     const res = await PATCH(req);
     expect(res.status).toBe(401);
   });

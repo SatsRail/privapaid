@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { requireOwnerApi } from "@/lib/auth-helpers";
 import { clearConfigCache } from "@/config/instance";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import Settings from "@/models/Settings";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
 import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -18,31 +15,50 @@ async function syncProductCaches(secretKey: string): Promise<number> {
     const productsResponse = await satsrail.listProducts(secretKey);
     const products = productsResponse.data || [];
 
-    const productMap = new Map<string, Record<string, unknown>>();
+    const productMap = new Map<
+      string,
+      {
+        productName: string;
+        productPriceCents: number | undefined;
+        productCurrency: string | undefined;
+        productAccessDurationSeconds: number | undefined;
+        productStatus: string | undefined;
+        productSlug: string | undefined;
+        productExternalRef: string | null;
+        syncedAt: Date;
+      }
+    >();
     for (const p of products) {
       productMap.set(p.id, {
-        product_name: p.name, product_price_cents: p.price_cents,
-        product_currency: p.currency, product_access_duration_seconds: p.access_duration_seconds,
-        product_status: p.status, product_slug: p.slug,
-        product_external_ref: p.external_ref ?? null,
-        synced_at: new Date(),
+        productName: p.name,
+        productPriceCents: p.price_cents,
+        productCurrency: p.currency,
+        productAccessDurationSeconds: p.access_duration_seconds,
+        productStatus: p.status,
+        productSlug: p.slug,
+        productExternalRef: p.external_ref ?? null,
+        syncedAt: new Date(),
       });
     }
 
-    const mediaProducts = await MediaProduct.find({}).select("satsrail_product_id").lean();
+    const mediaProducts = await prisma.mediaProduct.findMany({
+      select: { id: true, satsrailProductId: true },
+    });
     for (const mp of mediaProducts) {
-      const cached = productMap.get(mp.satsrail_product_id);
+      const cached = productMap.get(mp.satsrailProductId);
       if (cached) {
-        await MediaProduct.updateOne({ _id: mp._id }, { $set: cached });
+        await prisma.mediaProduct.update({ where: { id: mp.id }, data: cached });
         synced++;
       }
     }
 
-    const channelProducts = await ChannelProduct.find({}).select("satsrail_product_id").lean();
+    const channelProducts = await prisma.channelProduct.findMany({
+      select: { id: true, satsrailProductId: true },
+    });
     for (const cp of channelProducts) {
-      const cached = productMap.get(cp.satsrail_product_id);
+      const cached = productMap.get(cp.satsrailProductId);
       if (cached) {
-        await ChannelProduct.updateOne({ _id: cp._id }, { $set: cached });
+        await prisma.channelProduct.update({ where: { id: cp.id }, data: cached });
         synced++;
       }
     }
@@ -67,10 +83,10 @@ export async function POST() {
 
     const merchant = await satsrail.getMerchant(secretKey);
 
-    await connectDB();
-    const settings = await Settings.findOne({ setup_completed: true })
-      .select("logo_image_id")
-      .lean();
+    const settings = await prisma.settings.findFirst({
+      where: { setupCompleted: true },
+      select: { id: true, logoBytes: true },
+    });
 
     if (!settings) {
       return NextResponse.json(
@@ -79,21 +95,27 @@ export async function POST() {
       );
     }
 
-    const updates: Record<string, unknown> = {
-      merchant_name: merchant.name || "",
-      merchant_currency: merchant.currency || "USD",
-      merchant_locale: merchant.locale || "en",
+    const updates: {
+      merchantName: string;
+      merchantCurrency: string;
+      merchantLocale: string;
+      logoUrl?: string;
+    } = {
+      merchantName: merchant.name || "",
+      merchantCurrency: merchant.currency || "USD",
+      merchantLocale: merchant.locale || "en",
     };
 
-    // Only update logo_url if no custom logo was uploaded via GridFS
-    if (!settings.logo_image_id) {
-      updates.logo_url = merchant.logo_url || "";
+    // Only update logoUrl if no custom logo was uploaded via Bytes column.
+    const hasCustomLogo = Boolean(settings.logoBytes);
+    if (!hasCustomLogo) {
+      updates.logoUrl = merchant.logo_url || "";
     }
 
-    await Settings.updateOne(
-      { setup_completed: true },
-      { $set: updates }
-    );
+    await prisma.settings.update({
+      where: { id: settings.id },
+      data: updates,
+    });
 
     const productsSynced = await syncProductCaches(secretKey);
 
@@ -110,7 +132,7 @@ export async function POST() {
     revalidatePath("/", "layout");
 
     return NextResponse.json({
-      logo_url: settings.logo_image_id ? undefined : (merchant.logo_url || ""),
+      logo_url: hasCustomLogo ? undefined : (merchant.logo_url || ""),
       merchant_name: merchant.name || "",
       products_synced: productsSynced,
       synced: true,

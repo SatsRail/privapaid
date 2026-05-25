@@ -7,18 +7,18 @@
  * Or via env vars:
  *   ADMIN_EMAIL=admin@example.com ADMIN_NAME="Admin" ADMIN_PASSWORD=password123 npx tsx scripts/seed-admin.ts
  *
- * Requires MONGODB_URI in .env.local or environment.
+ * Requires DATABASE_URL in .env.local or environment.
  */
 
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import { prisma } from "@/lib/prisma";
 
-const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-  console.error("MONGODB_URI not set. Check .env.local");
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("DATABASE_URL not set. Check .env.local");
   process.exit(1);
 }
 
@@ -34,36 +34,34 @@ if (!email || !password) {
 }
 
 async function seed() {
-  await mongoose.connect(MONGODB_URI!);
-  console.log("Connected to MongoDB");
+  console.log("Connected to Postgres via Prisma");
 
-  const db = mongoose.connection.db!;
-  const collection = db.collection("admins");
-
-  const existing = await collection.findOne({ email });
+  const existing = await prisma.admin.findUnique({ where: { email: email! } });
   if (existing) {
     console.log(`Admin with email ${email} already exists. Skipping.`);
-    await mongoose.disconnect();
     return;
   }
 
   const passwordHash = await bcrypt.hash(password!, 12);
 
-  await collection.insertOne({
-    email,
-    password_hash: passwordHash,
-    name,
-    role: "owner",
-    active: true,
-    created_at: new Date(),
-    updated_at: new Date(),
+  await prisma.admin.create({
+    data: {
+      email: email!,
+      passwordHash,
+      name,
+      role: "owner",
+      active: true,
+    },
   });
 
   console.log(`Superadmin created: ${email}`);
-  await mongoose.disconnect();
 }
 
-seed().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+seed()
+  .catch((err) => {
+    console.error("Seed failed:", err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

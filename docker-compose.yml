@@ -48,6 +48,32 @@ services:
           cpus: "1.0"
     restart: unless-stopped
 
+  # Postgres — runs alongside Mongo during the MongoDB→PostgreSQL migration.
+  # Will replace Mongo entirely in Phase 4. See prisma/README.md.
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-privapaid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-privapaid}
+      POSTGRES_DB: ${POSTGRES_DB:-privapaid}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-privapaid} -d ${POSTGRES_DB:-privapaid}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+
 volumes:
   mongo-data:
+  postgres-data:
   app-data:

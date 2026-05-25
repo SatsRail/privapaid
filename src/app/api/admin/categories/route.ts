@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -15,8 +14,9 @@ function slugify(text: string): string {
 export async function GET() {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
-  const categories = await Category.find().sort({ position: 1 }).lean();
+  const categories = await prisma.category.findMany({
+    orderBy: { position: "asc" },
+  });
   return NextResponse.json({ data: categories });
 }
 
@@ -27,12 +27,10 @@ export async function POST(req: NextRequest) {
   const result = await validateBody(req, schemas.categoryCreate);
   if (isValidationError(result)) return result;
 
-  await connectDB();
-
   const { name, position, active } = result;
   const slug = result.slug || slugify(name);
 
-  const existing = await Category.findOne({ slug });
+  const existing = await prisma.category.findUnique({ where: { slug } });
   if (existing) {
     return NextResponse.json(
       { error: "A category with this slug already exists" },
@@ -40,16 +38,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const maxPosition = await Category.findOne()
-    .sort({ position: -1 })
-    .select("position")
-    .lean();
+  const maxPosition = await prisma.category.findFirst({
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
 
-  const category = await Category.create({
-    name: name.trim(),
-    slug,
-    position: position ?? (maxPosition?.position ?? 0) + 1,
-    active: active ?? true,
+  const category = await prisma.category.create({
+    data: {
+      name: name.trim(),
+      slug,
+      position: position ?? (maxPosition?.position ?? 0) + 1,
+      active: active ?? true,
+    },
   });
 
   audit({
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     actorType: "admin",
     action: "category.create",
     targetType: "category",
-    targetId: String(category._id),
+    targetId: category.id,
     details: { name: category.name, slug: category.slug },
   });
 

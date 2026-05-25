@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -38,15 +37,16 @@ export async function POST(
 
   const { id } = await params;
 
-  await connectDB();
-  const channel = await Channel.findOne({ _id: id, deleted_at: null }).lean();
+  const channel = await prisma.channel.findFirst({
+    where: { id, deletedAt: null },
+  });
   if (!channel) {
     return NextResponse.json({ error: "Channel not found" }, { status: 404 });
   }
 
   const channelDoc: { _id: string; satsrail_product_type_id: string | null } = {
-    _id: String(channel._id),
-    satsrail_product_type_id: channel.satsrail_product_type_id,
+    _id: channel.id,
+    satsrail_product_type_id: channel.satsrailProductTypeId,
   };
 
   const totalSteps = importMedia.length;
@@ -92,8 +92,9 @@ export async function POST(
               api
             );
             channelDoc.satsrail_product_type_id = productType.id;
-            await Channel.findByIdAndUpdate(channelDoc._id, {
-              satsrail_product_type_id: productType.id,
+            await prisma.channel.update({
+              where: { id: channelDoc._id },
+              data: { satsrailProductTypeId: productType.id },
             });
           } catch (err) {
             await send("error", { error: `Product type creation failed: ${errorMsg(err)}` });

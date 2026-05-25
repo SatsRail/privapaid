@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { getProductsForMedia } from "@/lib/access-gate";
-import Flag from "@/models/Flag";
-import Media from "@/models/Media";
-import Customer from "@/models/Customer";
 import { auth } from "@/lib/auth";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 
@@ -23,23 +21,27 @@ export async function POST(
 
   const { flag_type } = result;
 
-  await connectDB();
-
-  const media = await Media.findById(id);
+  const media = await prisma.media.findUnique({
+    where: { id },
+    select: { id: true, channelId: true },
+  });
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
   // Single source of truth: check both media-level and channel-level products
-  const products = await getProductsForMedia(String(media._id), String(media.channel_id));
+  const products = await getProductsForMedia(media.id, media.channelId);
   const productIds = products.map((p) => p.productId);
 
-  const customer = await Customer.findById(session.user.id)
-    .select("purchases")
-    .lean();
-  const hasPurchase = customer?.purchases?.some(
-    (p) => productIds.includes(p.satsrail_product_id)
-  );
+  const hasPurchase =
+    productIds.length > 0 &&
+    !!(await prisma.purchase.findFirst({
+      where: {
+        customerId: session.user.id,
+        satsrailProductId: { in: productIds },
+      },
+      select: { id: true },
+    }));
 
   if (!hasPurchase) {
     return NextResponse.json(
@@ -48,25 +50,29 @@ export async function POST(
     );
   }
 
-  // One flag per customer per media (enforced by unique index)
-  const existing = await Flag.findOne({
-    media_id: id,
-    customer_id: session.user.id,
-  });
-  if (existing) {
-    return NextResponse.json(
-      { error: "Already flagged" },
-      { status: 409 }
-    );
+  try {
+    await prisma.flag.create({
+      data: {
+        mediaId: id,
+        customerId: session.user.id,
+        flagType: flag_type.trim(),
+      },
+    });
+  } catch (err) {
+    // Unique constraint (mediaId, customerId) — already flagged.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json({ error: "Already flagged" }, { status: 409 });
+    }
+    throw err;
   }
 
-  await Flag.create({
-    media_id: id,
-    customer_id: session.user.id,
-    flag_type: flag_type.trim(),
+  await prisma.media.update({
+    where: { id },
+    data: { flagsCount: { increment: 1 } },
   });
-
-  await Media.findByIdAndUpdate(id, { $inc: { flags_count: 1 } });
 
   return NextResponse.json({ ok: true }, { status: 201 });
 }

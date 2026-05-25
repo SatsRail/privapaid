@@ -1,15 +1,10 @@
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
 import config, { getInstanceConfig } from "@/config/instance";
 import { COOKIE_NAME, getStoredProductIds } from "@/lib/macaroon-cookie";
 import ViewerShell from "@/components/ViewerShell";
 import MediaLayout from "@/components/layout/MediaLayout";
-import { resolveImageUrl } from "@/lib/images";
 import { buildMediaSchema, buildBreadcrumbSchema } from "@/lib/jsonld";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -21,34 +16,60 @@ interface Props {
   searchParams: Promise<{ preview?: string }>;
 }
 
+function resolveChannelAvatar(channel: {
+  id: string;
+  profileImageBytes: Uint8Array | null;
+  profileImageUrl: string;
+}): string {
+  if (channel.profileImageBytes) return `/api/images/channel/${channel.id}`;
+  return channel.profileImageUrl || "";
+}
+
+function resolveMediaThumb(media: {
+  id: string;
+  thumbnailBytes: Uint8Array | null;
+  thumbnailUrl: string;
+}): string {
+  if (media.thumbnailBytes) return `/api/images/media-thumbnail/${media.id}`;
+  return media.thumbnailUrl || "";
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, mediaId } = await params;
-  await connectDB();
 
-  const channel = await Channel.findOne({ slug, active: true })
-    .select("name")
-    .lean();
+  const channel = await prisma.channel.findFirst({
+    where: { slug, active: true },
+    select: { id: true, name: true },
+  });
   if (!channel) return { title: "Not Found" };
 
-  const media = await Media.findById(mediaId)
-    .select("name description media_type thumbnail_url thumbnail_id")
-    .lean();
+  const media = await prisma.media.findUnique({
+    where: { id: mediaId },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      mediaType: true,
+      thumbnailUrl: true,
+      thumbnailBytes: true,
+    },
+  });
   if (!media) return { title: "Not Found" };
 
   const instanceConfig = await getInstanceConfig();
   const description = media.description
     ? media.description.slice(0, 160)
     : undefined;
-  const imageUrl = media.thumbnail_id
-    ? `/api/images/${media.thumbnail_id}`
-    : media.thumbnail_url
+  const imageUrl = media.thumbnailBytes
+    ? `/api/images/media-thumbnail/${media.id}`
+    : media.thumbnailUrl
       || instanceConfig.theme.logo
       || undefined;
 
   // Map media_type to OG type
-  const ogType = media.media_type === "video" ? "video.other"
-    : media.media_type === "article" ? "article"
-    : media.media_type === "audio" || media.media_type === "podcast" ? "music.song"
+  const ogType = media.mediaType === "video" ? "video.other"
+    : media.mediaType === "article" ? "article"
+    : media.mediaType === "audio" || media.mediaType === "podcast" ? "music.song"
     : "website";
 
   return {
@@ -73,43 +94,67 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function MediaPlayerPage({ params, searchParams }: Props) {
   const { slug, mediaId } = await params;
   const { preview } = await searchParams;
-  await connectDB();
 
   const instanceConfig = await getInstanceConfig();
   const { locale } = instanceConfig;
 
-  const channel = await Channel.findOne({ slug, active: true })
-    .lean();
+  const channel = await prisma.channel.findFirst({
+    where: { slug, active: true },
+  });
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
-  // We fetch source_url (no exclusion) because for photo media it holds the
-  // GridFS pointer the client needs to download encrypted bytes. The pointer
-  // is safe to expose (bytes are useless without the DEK). For non-photo
-  // media source_url is the plaintext content URL — we keep it server-side
-  // by only surfacing it via `photo_gridfs_id` below when media_type === "photo".
-  const media = await Media.findOne({ _id: mediaId, channel_id: channel._id })
-    .lean();
+  // We fetch sourceUrl (no exclusion) because for photo media it holds the
+  // EncryptedPhotoBlob.id the client needs to download encrypted bytes. The
+  // pointer is safe to expose (bytes are useless without the DEK). For
+  // non-photo media sourceUrl is the plaintext content URL — we keep it
+  // server-side by only surfacing it via `photo_gridfs_id` below when
+  // mediaType === "photo".
+  const media = await prisma.media.findFirst({
+    where: { id: mediaId, channelId: channel.id },
+  });
   if (!media) notFound();
 
-  // Get all media products for this media item — INCLUDING archived.
-  // Archived products must still be verifiable for users who already paid
-  // (archiving means "stop selling new", not "revoke existing access").
-  // We filter archived OUT later, but only from the purchase-UI list,
-  // not the verification list.
-  const mediaProducts = await MediaProduct.find({
-    media_id: media._id,
-  })
-    .select("satsrail_product_id encrypted_source_url key_fingerprint product_name product_price_cents product_currency product_access_duration_seconds product_status")
-    .lean();
+  // Get the (optional) MediaProduct row — INCLUDING archived. Archived
+  // products must still be verifiable for users who already paid (archiving
+  // means "stop selling new", not "revoke existing access"). We filter
+  // archived OUT later, but only from the purchase-UI list, not the
+  // verification list.
+  const mediaProductRow = await prisma.mediaProduct.findUnique({
+    where: { mediaId: media.id },
+    select: {
+      satsrailProductId: true,
+      encryptedSourceUrl: true,
+      keyFingerprint: true,
+      productName: true,
+      productPriceCents: true,
+      productCurrency: true,
+      productAccessDurationSeconds: true,
+      productStatus: true,
+    },
+  });
+  const mediaProducts = mediaProductRow ? [mediaProductRow] : [];
 
   // Get channel-level products that cover this media — same archive policy.
-  const channelProducts = await ChannelProduct.find({
-    channel_id: channel._id,
-    "encrypted_media.media_id": media._id,
-  })
-    .select("satsrail_product_id key_fingerprint encrypted_media product_name product_price_cents product_currency product_access_duration_seconds product_status")
-    .lean();
+  const channelProductsRaw = await prisma.channelProduct.findMany({
+    where: {
+      channelId: channel.id,
+      encryptedMedia: { some: { mediaId: media.id } },
+    },
+    select: {
+      satsrailProductId: true,
+      keyFingerprint: true,
+      productName: true,
+      productPriceCents: true,
+      productCurrency: true,
+      productAccessDurationSeconds: true,
+      productStatus: true,
+      encryptedMedia: {
+        where: { mediaId: media.id },
+        select: { mediaId: true, encryptedSourceUrl: true },
+      },
+    },
+  });
 
   // Serialize for client — merge media-level and channel-level products.
   // The full list (including archived) feeds the macaroon-cookie intersection
@@ -117,29 +162,27 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   // matching product happens to be archived.
   const allProducts = [
     ...mediaProducts.map((mp) => ({
-      productId: mp.satsrail_product_id,
-      encryptedBlob: mp.encrypted_source_url,
-      keyFingerprint: mp.key_fingerprint,
-      name: mp.product_name,
-      priceCents: mp.product_price_cents,
-      currency: mp.product_currency,
-      accessDurationSeconds: mp.product_access_duration_seconds,
-      status: mp.product_status,
+      productId: mp.satsrailProductId,
+      encryptedBlob: mp.encryptedSourceUrl,
+      keyFingerprint: mp.keyFingerprint,
+      name: mp.productName,
+      priceCents: mp.productPriceCents,
+      currency: mp.productCurrency,
+      accessDurationSeconds: mp.productAccessDurationSeconds,
+      status: mp.productStatus,
     })),
-    ...channelProducts.flatMap((cp) => {
-      const entry = cp.encrypted_media.find(
-        (em) => String(em.media_id) === String(media._id)
-      );
+    ...channelProductsRaw.flatMap((cp) => {
+      const entry = cp.encryptedMedia.find((em) => em.mediaId === media.id);
       if (!entry) return [];
       return [{
-        productId: cp.satsrail_product_id,
-        encryptedBlob: entry.encrypted_source_url,
-        keyFingerprint: cp.key_fingerprint,
-        name: cp.product_name,
-        priceCents: cp.product_price_cents,
-        currency: cp.product_currency,
-        accessDurationSeconds: cp.product_access_duration_seconds,
-        status: cp.product_status,
+        productId: cp.satsrailProductId,
+        encryptedBlob: entry.encryptedSourceUrl,
+        keyFingerprint: cp.keyFingerprint,
+        name: cp.productName,
+        priceCents: cp.productPriceCents,
+        currency: cp.productCurrency,
+        accessDurationSeconds: cp.productAccessDurationSeconds,
+        status: cp.productStatus,
       }];
     }),
   ].filter((p) => p.encryptedBlob);
@@ -166,60 +209,75 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     try {
       const session = await auth();
       if (session?.user?.type === "admin") {
-        const fullMedia = await Media.findById(mediaId)
-          .select("source_url")
-          .lean();
-        adminPreviewSourceUrl = fullMedia?.source_url ?? null;
+        const fullMedia = await prisma.media.findUnique({
+          where: { id: mediaId },
+          select: { sourceUrl: true },
+        });
+        adminPreviewSourceUrl = fullMedia?.sourceUrl ?? null;
       }
     } catch {
       // Not authenticated — ignore preview param
     }
   }
 
-  // Resolve preview images and thumbnail
+  // Resolve preview images: stored bytea rows + direct URLs.
+  const previewImageRows = await prisma.previewImage.findMany({
+    where: { mediaId: media.id },
+    select: { id: true },
+    orderBy: { position: "asc" },
+  });
   const previewImages = [
-    ...(media.preview_image_ids || []).map((id: string) => `/api/images/${id}`),
-    ...(media.preview_image_urls || []),
+    ...previewImageRows.map((p) => `/api/images/preview/${p.id}`),
+    ...(media.previewImageUrls || []),
   ].slice(0, 6);
 
-  const thumbSrc = resolveImageUrl(media.thumbnail_id, media.thumbnail_url);
+  const thumbSrc = resolveMediaThumb(media);
 
   // Sibling-media list for the YouTube-style "up next" sidebar. Most-viewed
   // first (founder's choice — surface the channel's hits), current media
-  // excluded, capped at 20 items. Stable secondary sort on _id keeps the
+  // excluded, capped at 20 items. Stable secondary sort on id keeps the
   // order deterministic across tied view counts.
-  const siblingDocs = await Media.find({
-    channel_id: channel._id,
-    _id: { $ne: media._id },
-  })
-    .select("name thumbnail_id thumbnail_url media_type views_count created_at")
-    .sort({ views_count: -1, _id: 1 })
-    .limit(20)
-    .lean();
+  const siblingDocs = await prisma.media.findMany({
+    where: {
+      channelId: channel.id,
+      id: { not: media.id },
+    },
+    select: {
+      id: true,
+      name: true,
+      thumbnailBytes: true,
+      thumbnailUrl: true,
+      mediaType: true,
+      viewsCount: true,
+      createdAt: true,
+    },
+    orderBy: [{ viewsCount: "desc" }, { id: "asc" }],
+    take: 20,
+  });
 
   const siblingMedia = siblingDocs.map((m) => ({
-    _id: String(m._id),
+    _id: m.id,
     name: m.name,
-    thumbnailSrc: resolveImageUrl(m.thumbnail_id, m.thumbnail_url),
-    mediaType: m.media_type,
-    viewsCount: m.views_count ?? 0,
-    href: `/c/${slug}/${String(m._id)}`,
+    thumbnailSrc: resolveMediaThumb(m),
+    mediaType: m.mediaType,
+    viewsCount: m.viewsCount ?? 0,
+    href: `/c/${slug}/${m.id}`,
     // YouTube-style "X views • Y days ago" — the createdAt is serialized as
     // an ISO string so the client component can format it via Intl.
-    createdAt: (m.created_at instanceof Date ? m.created_at : new Date(m.created_at ?? Date.now())).toISOString(),
+    createdAt: m.createdAt.toISOString(),
   }));
 
   // JSON-LD structured data
   const mediaJsonLd = buildMediaSchema(
     {
-      _id: String(media._id),
+      id: media.id,
       name: media.name,
       description: media.description,
-      media_type: media.media_type,
-      thumbnail_url: media.thumbnail_url,
-      thumbnail_id: media.thumbnail_id,
-      created_at: media.created_at,
-      updated_at: media.updated_at,
+      mediaType: media.mediaType,
+      thumbnailUrl: media.thumbnailUrl,
+      hasThumbnail: !!media.thumbnailBytes,
+      createdAt: media.createdAt,
+      updatedAt: media.updatedAt,
     },
     { name: channel.name, slug: channel.slug },
     instanceConfig
@@ -237,31 +295,37 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   // Assemble page data for layout components
   const pageData = {
     media: {
-      _id: String(media._id),
+      _id: media.id,
       name: media.name,
       description: media.description,
-      media_type: media.media_type,
-      thumbnail_url: media.thumbnail_url,
-      thumbnail_id: media.thumbnail_id,
-      views_count: media.views_count,
-      comments_count: media.comments_count,
-      likes_count: media.likes_count ?? 0,
-      shares_count: media.shares_count ?? 0,
-      // For photo media, surface the GridFS pointer to the client so it can
-      // fetch the encrypted bytes after unwrapping the DEK.
-      photo_gridfs_id: media.media_type === "photo" ? media.source_url : undefined,
+      media_type: media.mediaType,
+      thumbnail_url: media.thumbnailUrl,
+      thumbnail_id: media.thumbnailBytes ? media.id : undefined,
+      views_count: media.viewsCount,
+      comments_count: media.commentsCount,
+      likes_count: media.likesCount ?? 0,
+      shares_count: media.sharesCount ?? 0,
+      // For photo media, surface the EncryptedPhotoBlob id to the client so
+      // it can fetch the encrypted bytes after unwrapping the DEK.
+      photo_gridfs_id: media.mediaType === "photo" ? media.sourceUrl : undefined,
     },
     channel: {
       name: channel.name,
       slug: channel.slug,
       // Avatar for the under-video ChannelBlock. Falls back gracefully to
       // an initial when both fields are absent.
-      profileImageUrl: resolveImageUrl(
-        channel.profile_image_id,
-        channel.profile_image_url
-      ),
+      profileImageUrl: resolveChannelAvatar(channel),
     },
-    products,
+    products: products.map((p) => ({
+      productId: p.productId,
+      encryptedBlob: p.encryptedBlob as string,
+      keyFingerprint: p.keyFingerprint ?? undefined,
+      name: p.name ?? undefined,
+      priceCents: p.priceCents ?? undefined,
+      currency: p.currency ?? undefined,
+      accessDurationSeconds: p.accessDurationSeconds ?? undefined,
+      status: p.status ?? undefined,
+    })),
     storedProductIds,
     previewImages,
     thumbSrc,

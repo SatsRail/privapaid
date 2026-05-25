@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
+import { prisma } from "@/lib/prisma";
 import CategoryForm from "../../CategoryForm";
 
 export const dynamic = "force-dynamic";
@@ -11,12 +10,11 @@ export default async function EditCategoryPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await connectDB();
-  const category = await Category.findById(id).lean();
+  const category = await prisma.category.findUnique({ where: { id } });
   if (!category) notFound();
 
   const serialized = {
-    _id: String(category._id),
+    _id: category.id,
     name: category.name,
     slug: category.slug,
     position: category.position,

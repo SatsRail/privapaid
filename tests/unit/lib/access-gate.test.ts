@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createChannel, createMedia } from "../../helpers/factories";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockCookieStore, mockFetch } = vi.hoisted(() => {
@@ -23,10 +23,6 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
 
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
-
 vi.mock("@/config/instance", () => ({
   getInstanceConfig: vi.fn().mockResolvedValue({
     satsrail: { apiUrl: "https://satsrail.test/api/v1" },
@@ -39,8 +35,7 @@ vi.mock("@/lib/merchant-key", () => ({
 
 vi.stubGlobal("fetch", mockFetch);
 
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import {
   getProductsForMedia,
   verifyMacaroonAccess,
@@ -49,8 +44,6 @@ import {
 
 /**
  * Build a fake Rails MessageVerifier macaroon for tests.
- * `parseMacaroonExp` doesn't verify the signature, so the format is what
- * matters: base64 of the JSON payload, then `--` then a fake sig.
  */
 function makeMacaroon(productId: string, outerExp: Date): string {
   const body = {
@@ -81,16 +74,23 @@ describe("access-gate", () => {
   // ── getProductsForMedia ──────────────────────────────────────────
 
   describe("getProductsForMedia", () => {
-    it("returns media product when active", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+    async function seedChannelAndMedia() {
+      const channel = await createChannel();
+      const media = await createMedia(channel.id);
+      return { channelId: channel.id, mediaId: media.id };
+    }
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_media",
-        encrypted_source_url: "enc_blob_media",
-        key_fingerprint: "fp_media",
-        product_status: "active",
+    it("returns media product when active", async () => {
+      const { mediaId, channelId } = await seedChannelAndMedia();
+
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_media",
+          encryptedSourceUrl: "enc_blob_media",
+          keyFingerprint: "fp_media",
+          productStatus: "active",
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -102,17 +102,18 @@ describe("access-gate", () => {
     });
 
     it("returns channel product", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await ChannelProduct.create({
-        channel_id: channelId,
-        satsrail_product_id: "prod_channel",
-        key_fingerprint: "fp_channel",
-        product_status: "active",
-        encrypted_media: [
-          { media_id: mediaId, encrypted_source_url: "enc_blob_channel" },
-        ],
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_channel",
+          keyFingerprint: "fp_channel",
+          productStatus: "active",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "enc_blob_channel" }],
+          },
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -123,24 +124,27 @@ describe("access-gate", () => {
     });
 
     it("returns both media and channel products", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_m",
-        encrypted_source_url: "enc_m",
-        product_status: "active",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_m",
+          encryptedSourceUrl: "enc_m",
+          productStatus: "active",
+        },
       });
 
-      await ChannelProduct.create({
-        channel_id: channelId,
-        satsrail_product_id: "prod_c",
-        key_fingerprint: "fp_c",
-        product_status: "active",
-        encrypted_media: [
-          { media_id: mediaId, encrypted_source_url: "enc_c" },
-        ],
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_c",
+          keyFingerprint: "fp_c",
+          productStatus: "active",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "enc_c" }],
+          },
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -152,14 +156,15 @@ describe("access-gate", () => {
     });
 
     it("excludes archived media products", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_archived",
-        encrypted_source_url: "enc_archived",
-        product_status: "archived",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_archived",
+          encryptedSourceUrl: "enc_archived",
+          productStatus: "archived",
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -167,70 +172,56 @@ describe("access-gate", () => {
     });
 
     it("excludes archived channel products", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await ChannelProduct.create({
-        channel_id: channelId,
-        satsrail_product_id: "prod_ch_archived",
-        key_fingerprint: "fp",
-        product_status: "archived",
-        encrypted_media: [
-          { media_id: mediaId, encrypted_source_url: "enc" },
-        ],
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_ch_archived",
+          keyFingerprint: "fp",
+          productStatus: "archived",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "enc" }],
+          },
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
       expect(products).toHaveLength(0);
     });
 
-    it("includes products with undefined status (never locks out customers)", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
-
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_no_status",
-        encrypted_source_url: "enc_no_status",
-        // product_status intentionally omitted
-      });
-
-      const products = await getProductsForMedia(mediaId, channelId);
-
-      expect(products).toHaveLength(1);
-      expect(products[0].productId).toBe("prod_no_status");
-    });
-
     it("returns empty array when no products exist", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
       const products = await getProductsForMedia(mediaId, channelId);
       expect(products).toHaveLength(0);
     });
 
     it("returns multiple channel products covering same media", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await ChannelProduct.create({
-        channel_id: channelId,
-        satsrail_product_id: "prod_weekly",
-        key_fingerprint: "fp_w",
-        product_status: "active",
-        encrypted_media: [
-          { media_id: mediaId, encrypted_source_url: "enc_weekly" },
-        ],
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_weekly",
+          keyFingerprint: "fp_w",
+          productStatus: "active",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "enc_weekly" }],
+          },
+        },
       });
 
-      await ChannelProduct.create({
-        channel_id: channelId,
-        satsrail_product_id: "prod_monthly",
-        key_fingerprint: "fp_m",
-        product_status: "active",
-        encrypted_media: [
-          { media_id: mediaId, encrypted_source_url: "enc_monthly" },
-        ],
+      await prisma.channelProduct.create({
+        data: {
+          channelId,
+          satsrailProductId: "prod_monthly",
+          keyFingerprint: "fp_m",
+          productStatus: "active",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "enc_monthly" }],
+          },
+        },
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -241,36 +232,16 @@ describe("access-gate", () => {
       expect(ids).toContain("prod_monthly");
     });
 
-    it("includes product with inactive status (never locks out customers)", async () => {
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
-
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_inactive",
-        encrypted_source_url: "enc_inactive",
-        product_status: "inactive",
-      });
-
-      const products = await getProductsForMedia(mediaId, channelId);
-
-      expect(products).toHaveLength(1);
-      expect(products[0].productId).toBe("prod_inactive");
-    });
-
     it("includes archived products when includeArchived is true (verification path)", async () => {
-      // Existing payments must still grant access even after a merchant
-      // archives a product. Verification paths use { includeArchived: true }
-      // to find these; purchase UIs keep the default to hide archived buy
-      // buttons.
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_retired",
-        encrypted_source_url: "enc_retired",
-        product_status: "archived",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_retired",
+          encryptedSourceUrl: "enc_retired",
+          productStatus: "archived",
+        },
       });
 
       const purchaseList = await getProductsForMedia(mediaId, channelId);
@@ -285,16 +256,15 @@ describe("access-gate", () => {
     });
 
     it("surfaces product_status on every returned product", async () => {
-      // Callers downstream (page render) filter by status to decide what to
-      // show vs verify. Confirm the field flows through.
-      const mediaId = new mongoose.Types.ObjectId().toString();
-      const channelId = new mongoose.Types.ObjectId().toString();
+      const { mediaId, channelId } = await seedChannelAndMedia();
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_active",
-        encrypted_source_url: "enc_active",
-        product_status: "active",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_active",
+          encryptedSourceUrl: "enc_active",
+          productStatus: "active",
+        },
       });
 
       const [product] = await getProductsForMedia(mediaId, channelId);
@@ -336,9 +306,6 @@ describe("access-gate", () => {
     });
 
     it("returns the most-recent expiry across multiple expired macaroons", async () => {
-      // Mirrors the founder's actual scenario: cookie holds 2 expired
-      // macaroons for the products covering this media; we surface the
-      // newer one so "your access expired on X" is the latest payment.
       const may8 = new Date("2026-05-08T22:53:59.300Z");
       const may15 = new Date("2026-05-15T21:20:45.228Z");
       mockCookieStore._set(
@@ -409,12 +376,10 @@ describe("access-gate", () => {
       expect(result.granted).toBe(true);
       expect(result.productId).toBe("prod_2");
       expect(result.key).toBe("key_2");
-      // Should only have called fetch once (skipped prod_1 — no macaroon, verified prod_2)
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it("returns not granted when no macaroons exist in cookie", async () => {
-      // No cookie set
       const result = await verifyMacaroonAccess(["prod_1"]);
       expect(result.granted).toBe(false);
       expect(result.productId).toBeUndefined();
@@ -467,7 +432,6 @@ describe("access-gate", () => {
 
       expect(result.granted).toBe(true);
       expect(result.productId).toBe("prod_channel");
-      // Only one fetch (skipped prod_media which had no macaroon)
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 

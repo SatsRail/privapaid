@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createCustomer } from "../../helpers/factories";
-import Customer from "@/models/Customer";
+import { prisma } from "@/lib/prisma";
 
 // Mock rate limit to not interfere with tests
 vi.mock("@/lib/rate-limit", () => ({
@@ -12,11 +11,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers (required by rate-limit in case it's not fully mocked)
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB to use the already-connected mongoose instance
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock HIBP breach check. The real signup hits api.pwnedpasswords.com;
@@ -66,7 +60,7 @@ describe("POST /api/customer/signup", () => {
     expect(body.id).toBeDefined();
 
     // Verify customer exists in DB
-    const customer = await Customer.findOne({ nickname: "newuser" });
+    const customer = await prisma.customer.findFirst({ where: { nickname: "newuser" } });
     expect(customer).toBeTruthy();
   });
 
@@ -139,14 +133,14 @@ describe("POST /api/customer/signup", () => {
     expect(res.status).toBe(429);
 
     // Verify rate-limit short-circuit ran before DB insert
-    const count = await Customer.countDocuments({ nickname: "ratelimited" });
+    const count = await prisma.customer.count({ where: { nickname: "ratelimited" } });
     expect(count).toBe(0);
   });
 
-  it("returns 409 when MongoDB raises a duplicate key error during create", async () => {
-    const spy = vi
-      .spyOn(Customer, "create")
-      .mockRejectedValueOnce({ code: 11000, message: "E11000 duplicate key" } as never);
+  it("returns 409 when Prisma raises a duplicate key error during create", async () => {
+    const spy = vi.spyOn(prisma.customer, "create").mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }) as never
+    );
 
     const req = signupRequest({
       nickname: "racey",
@@ -158,10 +152,10 @@ describe("POST /api/customer/signup", () => {
     spy.mockRestore();
   });
 
-  it("returns 500 when Customer.create throws a non-duplicate error", async () => {
+  it("returns 500 when prisma.customer.create throws a non-duplicate error", async () => {
     const spy = vi
-      .spyOn(Customer, "create")
-      .mockRejectedValueOnce(new Error("mongo down") as never);
+      .spyOn(prisma.customer, "create")
+      .mockRejectedValueOnce(new Error("db down") as never);
 
     const req = signupRequest({
       nickname: "broken",
@@ -189,7 +183,7 @@ describe("POST /api/customer/signup", () => {
     expect((await res.json()).error).toMatch(/known data breaches/i);
 
     // And the Customer was NOT created.
-    const exists = await Customer.findOne({ nickname: "breachuser" }).lean();
+    const exists = await prisma.customer.findFirst({ where: { nickname: "breachuser" } });
     expect(exists).toBeNull();
   });
 });

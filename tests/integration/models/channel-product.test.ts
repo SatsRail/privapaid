@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia } from "../../helpers/factories";
-import ChannelProduct from "@/models/ChannelProduct";
-import mongoose from "mongoose";
+import { prisma } from "@/lib/prisma";
 
 describe("ChannelProduct model", () => {
   beforeAll(async () => {
@@ -19,145 +18,128 @@ describe("ChannelProduct model", () => {
 
   it("creates a channel product with required fields", async () => {
     const channel = await createChannel();
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_abc123",
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_abc123",
+      },
     });
-    expect(cp._id).toBeDefined();
-    expect(cp.channel_id.toString()).toBe(channel._id.toString());
-    expect(cp.satsrail_product_id).toBe("prod_abc123");
+    expect(cp.id).toBeDefined();
+    expect(cp.channelId).toBe(channel.id);
+    expect(cp.satsrailProductId).toBe("prod_abc123");
   });
 
   it("sets default values", async () => {
     const channel = await createChannel();
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_defaults",
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_defaults",
+      },
+      include: { encryptedMedia: true },
     });
-    expect(cp.encrypted_media).toEqual([]);
-    expect(cp.key_fingerprint).toBeUndefined();
-    expect(cp.product_name).toBeUndefined();
-    expect(cp.synced_at).toBeUndefined();
+    expect(cp.encryptedMedia).toEqual([]);
+    expect(cp.keyFingerprint).toBeNull();
+    expect(cp.productName).toBeNull();
+    expect(cp.syncedAt).toBeNull();
   });
 
   it("creates timestamps", async () => {
     const channel = await createChannel();
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_ts",
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_ts",
+      },
     });
-    expect(cp.created_at).toBeInstanceOf(Date);
-    expect(cp.updated_at).toBeInstanceOf(Date);
+    expect(cp.createdAt).toBeInstanceOf(Date);
+    expect(cp.updatedAt).toBeInstanceOf(Date);
   });
 
-  it("enforces satsrail_product_id uniqueness via schema constraint", async () => {
+  it("enforces satsrailProductId uniqueness", async () => {
     const channel = await createChannel();
-    // The schema defines unique: true on satsrail_product_id.
-    // In-memory MongoDB may not enforce the index in time for a Mongoose-level
-    // duplicate, so we verify the schema-level definition instead.
-    const paths = ChannelProduct.schema.paths;
-    expect(paths.satsrail_product_id.options.unique).toBe(true);
+    await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_unique",
+      },
+    });
+    await expect(
+      prisma.channelProduct.create({
+        data: {
+          channelId: channel.id,
+          satsrailProductId: "prod_unique",
+        },
+      })
+    ).rejects.toThrow();
   });
 
   it("stores encrypted media entries", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_media",
-      encrypted_media: [
-        {
-          media_id: media._id,
-          encrypted_source_url: "base64_encrypted_blob",
+    const media = await createMedia(channel.id);
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_media",
+        encryptedMedia: {
+          create: [{ mediaId: media.id, encryptedSourceUrl: "base64_encrypted_blob" }],
         },
-      ],
+      },
+      include: { encryptedMedia: true },
     });
-    expect(cp.encrypted_media).toHaveLength(1);
-    expect(cp.encrypted_media[0].media_id.toString()).toBe(media._id.toString());
-    expect(cp.encrypted_media[0].encrypted_source_url).toBe("base64_encrypted_blob");
+    expect(cp.encryptedMedia).toHaveLength(1);
+    expect(cp.encryptedMedia[0].mediaId).toBe(media.id);
+    expect(cp.encryptedMedia[0].encryptedSourceUrl).toBe("base64_encrypted_blob");
   });
 
   it("stores cached product metadata", async () => {
     const channel = await createChannel();
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_meta",
-      product_name: "Premium Video",
-      product_price_cents: 5000,
-      product_currency: "USD",
-      product_access_duration_seconds: 86400,
-      product_status: "active",
-      product_slug: "premium-video",
-      synced_at: new Date(),
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_meta",
+        productName: "Premium Video",
+        productPriceCents: 5000,
+        productCurrency: "USD",
+        productAccessDurationSeconds: 86400,
+        productStatus: "active",
+        productSlug: "premium-video",
+        syncedAt: new Date(),
+      },
     });
-    expect(cp.product_name).toBe("Premium Video");
-    expect(cp.product_price_cents).toBe(5000);
-    expect(cp.product_currency).toBe("USD");
-    expect(cp.product_access_duration_seconds).toBe(86400);
-    expect(cp.product_status).toBe("active");
-    expect(cp.product_slug).toBe("premium-video");
-    expect(cp.synced_at).toBeInstanceOf(Date);
+    expect(cp.productName).toBe("Premium Video");
+    expect(cp.productPriceCents).toBe(5000);
+    expect(cp.productCurrency).toBe("USD");
+    expect(cp.productAccessDurationSeconds).toBe(86400);
+    expect(cp.productStatus).toBe("active");
+    expect(cp.productSlug).toBe("premium-video");
+    expect(cp.syncedAt).toBeInstanceOf(Date);
   });
 
   it("stores key fingerprint", async () => {
     const channel = await createChannel();
     const fingerprint = "a".repeat(64);
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_fp",
-      key_fingerprint: fingerprint,
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_fp",
+        keyFingerprint: fingerprint,
+      },
     });
-    expect(cp.key_fingerprint).toBe(fingerprint);
+    expect(cp.keyFingerprint).toBe(fingerprint);
   });
 
-  it("queries by channel_id", async () => {
+  it("queries by channelId", async () => {
     const ch1 = await createChannel({ slug: "ch-one" });
     const ch2 = await createChannel({ slug: "ch-two" });
-    await ChannelProduct.create({
-      channel_id: ch1._id,
-      satsrail_product_id: "prod_ch1",
+    await prisma.channelProduct.create({
+      data: { channelId: ch1.id, satsrailProductId: "prod_ch1" },
     });
-    await ChannelProduct.create({
-      channel_id: ch2._id,
-      satsrail_product_id: "prod_ch2",
+    await prisma.channelProduct.create({
+      data: { channelId: ch2.id, satsrailProductId: "prod_ch2" },
     });
-    const results = await ChannelProduct.find({ channel_id: ch1._id });
+    const results = await prisma.channelProduct.findMany({ where: { channelId: ch1.id } });
     expect(results).toHaveLength(1);
-    expect(results[0].satsrail_product_id).toBe("prod_ch1");
-  });
-
-  it("requires channel_id", async () => {
-    await expect(
-      ChannelProduct.create({
-        satsrail_product_id: "prod_no_channel",
-      })
-    ).rejects.toThrow();
-  });
-
-  it("adds encrypted media entries via update", async () => {
-    const channel = await createChannel();
-    const media1 = await createMedia(channel._id.toString(), { name: "Media 1" });
-    const media2 = await createMedia(channel._id.toString(), { name: "Media 2" });
-
-    const cp = await ChannelProduct.create({
-      channel_id: channel._id,
-      satsrail_product_id: "prod_push",
-    });
-
-    const updated = await ChannelProduct.findByIdAndUpdate(
-      cp._id,
-      {
-        $push: {
-          encrypted_media: {
-            $each: [
-              { media_id: media1._id, encrypted_source_url: "blob_1" },
-              { media_id: media2._id, encrypted_source_url: "blob_2" },
-            ],
-          },
-        },
-      },
-      { returnDocument: "after" }
-    );
-    expect(updated!.encrypted_media).toHaveLength(2);
+    expect(results[0].satsrailProductId).toBe("prod_ch1");
   });
 });

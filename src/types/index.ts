@@ -1,5 +1,3 @@
-import type { Types } from "mongoose";
-
 // --- API Response wrapper ---
 
 export interface ApiResponse<T> {
@@ -29,10 +27,10 @@ export interface ChannelFormData {
   name: string;
   slug?: string;
   bio?: string;
-  category_id?: string;
+  categoryId?: string;
   nsfw?: boolean;
-  profile_image_url?: string;
-  social_links?: {
+  profileImageUrl?: string;
+  socialLinks?: {
     youtube?: string;
     twitter?: string;
     discord?: string;
@@ -44,12 +42,12 @@ export interface ChannelFormData {
 }
 
 export interface MediaFormData {
-  channel_id: string;
+  channelId: string;
   name: string;
   description?: string;
-  source_url: string;
-  media_type: "video" | "audio" | "article" | "photo" | "podcast";
-  thumbnail_url?: string;
+  sourceUrl: string;
+  mediaType: "video" | "audio" | "article" | "photo" | "podcast";
+  thumbnailUrl?: string;
   position?: number;
 }
 
@@ -64,77 +62,77 @@ export interface CreateProductFormData {
 // --- Serialized document types (for API responses) ---
 
 export interface SerializedCategory {
-  _id: string;
+  id: string;
   name: string;
   slug: string;
   position: number;
   active: boolean;
-  created_at: string;
+  createdAt: string;
 }
 
 export interface SerializedAdmin {
-  _id: string;
+  id: string;
   email: string;
   name: string;
   role: string;
   active: boolean;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SerializedChannel {
-  _id: string;
+  id: string;
   name: string;
   slug: string;
   bio: string;
-  category_id: string | null;
-  category_name?: string;
+  categoryId: string | null;
+  categoryName?: string;
   nsfw: boolean;
   ref: number;
-  profile_image_url: string;
-  social_links: Record<string, string>;
-  is_live: boolean;
+  profileImageUrl: string;
+  socialLinks: Record<string, string>;
+  isLive: boolean;
   active: boolean;
-  media_count: number;
-  created_at: string;
-  updated_at: string;
+  mediaCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SerializedMedia {
-  _id: string;
-  channel_id: string;
+  id: string;
+  channelId: string;
   name: string;
   description: string;
-  media_type: string;
-  thumbnail_url: string;
+  mediaType: string;
+  thumbnailUrl: string;
   position: number;
-  comments_count: number;
-  flags_count: number;
-  product_ids: string[];
-  created_at: string;
-  updated_at: string;
+  commentsCount: number;
+  flagsCount: number;
+  productIds: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SerializedCustomer {
-  _id: string;
+  id: string;
   nickname: string;
-  favorite_channel_ids: string[];
+  favoriteChannelIds: string[];
   purchases: Array<{
-    satsrail_order_id: string;
-    satsrail_product_id: string;
-    purchased_at: string;
+    satsrailOrderId: string;
+    satsrailProductId: string;
+    purchasedAt: string;
   }>;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SerializedComment {
-  _id: string;
-  media_id: string;
-  customer_id: string;
-  customer_nickname?: string;
+  id: string;
+  mediaId: string;
+  customerId: string | null;
+  customerNickname?: string;
   body: string;
-  created_at: string;
+  createdAt: string;
 }
 
 // --- Pagination ---

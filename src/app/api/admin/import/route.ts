@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
-import Channel from "@/models/Channel";
+import { prisma } from "@/lib/prisma";
 import { getNextRef } from "@/models/Counter";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
@@ -24,6 +22,7 @@ import {
   updateExistingMedia,
   createEncryptedChannelProduct,
 } from "@/lib/import-helpers";
+import type { Prisma } from "@prisma/client";
 
 type ImportCategory = { slug: string; name: string; position?: number; active?: boolean };
 
@@ -35,38 +34,43 @@ async function importCategoriesPhase(
   const results: EntityResults = { created: 0, updated: 0, errors: [] };
   const slugToId = new Map<string, string>();
 
-  const existingCategories = await Category.find().lean();
+  const existingCategories = await prisma.category.findMany();
   for (const cat of existingCategories) {
-    slugToId.set(cat.slug, String(cat._id));
+    slugToId.set(cat.slug, cat.id);
   }
 
   for (const catData of importCategories) {
     await sendProgress("categories", catData.name, "processing");
     try {
       const catSlug = catData.slug || slugify(catData.name);
-      const existing = await Category.findOne({ slug: catSlug });
+      const existing = await prisma.category.findUnique({ where: { slug: catSlug } });
 
       if (existing) {
-        await Category.findByIdAndUpdate(existing._id, {
-          name: catData.name,
-          ...(catData.position !== undefined ? { position: catData.position } : {}),
-          active: catData.active ?? true,
+        await prisma.category.update({
+          where: { id: existing.id },
+          data: {
+            name: catData.name,
+            ...(catData.position !== undefined ? { position: catData.position } : {}),
+            active: catData.active ?? true,
+          },
         });
-        slugToId.set(catSlug, String(existing._id));
+        slugToId.set(catSlug, existing.id);
         results.updated++;
       } else {
-        const maxPos = await Category.findOne()
-          .sort({ position: -1 })
-          .select("position")
-          .lean();
-
-        const category = await Category.create({
-          name: catData.name,
-          slug: catSlug,
-          position: catData.position ?? (maxPos?.position ?? 0) + 1,
-          active: catData.active ?? true,
+        const maxPos = await prisma.category.findFirst({
+          orderBy: { position: "desc" },
+          select: { position: true },
         });
-        slugToId.set(catSlug, String(category._id));
+
+        const category = await prisma.category.create({
+          data: {
+            name: catData.name,
+            slug: catSlug,
+            position: catData.position ?? (maxPos?.position ?? 0) + 1,
+            active: catData.active ?? true,
+          },
+        });
+        slugToId.set(catSlug, category.id);
         results.created++;
       }
       await sendProgress("categories", catData.name, "done");
@@ -91,9 +95,11 @@ async function importChannelsPhase(
   const results: EntityResults = { created: 0, updated: 0, errors: [] };
   const slugToDoc = new Map<string, { _id: string; satsrail_product_type_id: string | null }>();
 
-  const existingChannels = await Channel.find({ deleted_at: null }).lean();
+  const existingChannels = await prisma.channel.findMany({
+    where: { deletedAt: null },
+  });
   for (const ch of existingChannels) {
-    slugToDoc.set(ch.slug, { _id: String(ch._id), satsrail_product_type_id: ch.satsrail_product_type_id });
+    slugToDoc.set(ch.slug, { _id: ch.id, satsrail_product_type_id: ch.satsrailProductTypeId });
   }
 
   for (const chData of importChannels) {
@@ -108,10 +114,17 @@ async function importChannelsPhase(
         if (sk) await ensureChannelProductType(sk, existing, chData, results.errors, api, onStatus);
 
         await onStatus("Updating channel record...");
-        await Channel.findByIdAndUpdate(existing._id, {
-          name: chData.name, bio: chData.bio || "", category_id: categoryId || undefined,
-          nsfw: chData.nsfw ?? false, social_links: chData.social_links || {},
-          profile_image_url: chData.profile_image_url || "", active: chData.active ?? true,
+        await prisma.channel.update({
+          where: { id: existing._id },
+          data: {
+            name: chData.name,
+            bio: chData.bio || "",
+            category: categoryId ? { connect: { id: categoryId } } : { disconnect: true },
+            nsfw: chData.nsfw ?? false,
+            socialLinks: (chData.social_links || {}) as Prisma.InputJsonValue,
+            profileImageUrl: chData.profile_image_url || "",
+            active: chData.active ?? true,
+          },
         });
         results.updated++;
       } else {
@@ -119,14 +132,23 @@ async function importChannelsPhase(
         await onStatus("Creating channel record...");
         const satsrailProductTypeId = sk ? await tryCreateProductType(sk, chData.name, `ch_${ref}`, results.errors, api, onStatus) : null;
 
-        const channel = await Channel.create({
-          ref, name: chData.name, slug: chSlug, satsrail_product_type_id: satsrailProductTypeId,
-          bio: chData.bio || "", category_id: categoryId || undefined, nsfw: chData.nsfw ?? false,
-          profile_image_url: chData.profile_image_url || "", social_links: chData.social_links || {},
-          active: chData.active ?? true, media_count: 0,
+        const channel = await prisma.channel.create({
+          data: {
+            ref,
+            name: chData.name,
+            slug: chSlug,
+            satsrailProductTypeId,
+            bio: chData.bio || "",
+            categoryId: categoryId || undefined,
+            nsfw: chData.nsfw ?? false,
+            profileImageUrl: chData.profile_image_url || "",
+            socialLinks: (chData.social_links || {}) as Prisma.InputJsonValue,
+            active: chData.active ?? true,
+            mediaCount: 0,
+          },
         });
 
-        slugToDoc.set(chSlug, { _id: String(channel._id), satsrail_product_type_id: satsrailProductTypeId });
+        slugToDoc.set(chSlug, { _id: channel.id, satsrail_product_type_id: satsrailProductTypeId });
         results.created++;
       }
       await sendProgress("channels", chData.name, "done");
@@ -201,7 +223,10 @@ async function importChannelProductsPhase(
     await sendProgress("channel_products", chData.name, "processing");
     const onStatus: StatusFn = (detail) => sendStatus(chData.name, detail);
     try {
-      const channel = await Channel.findById(channelDoc._id).lean();
+      const channel = await prisma.channel.findUnique({
+        where: { id: channelDoc._id },
+        select: { ref: true },
+      });
       if (!channel || channel.ref == null) {
         results.errors.push({ entity: "channel_product", name: chData.name, error: "Channel has no ref assigned" });
         await sendProgress("channel_products", chData.name, "error", "Channel has no ref assigned");
@@ -279,8 +304,6 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        await connectDB();
-
         // Phase 1: Categories
         await send("phase", { phase: "categories", total: importCategories.length });
         const { results: categoryResults, slugToId: categorySlugToId } =

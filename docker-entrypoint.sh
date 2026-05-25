@@ -38,7 +38,7 @@ if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SK_ENCRYPTION_KEY" ]; then
   if detect_ephemeral_fs; then
     echo "ERROR: $DATA_DIR is on ephemeral storage (tmpfs/overlay)." >&2
     echo "       Auto-generating secrets here would lose them on restart and" >&2
-    echo "       brick every encrypted record in MongoDB." >&2
+    echo "       brick every encrypted record in Postgres." >&2
     echo "       Set NEXTAUTH_SECRET and SK_ENCRYPTION_KEY explicitly in env," >&2
     echo "       or mount a persistent volume at $DATA_DIR." >&2
     exit 1
@@ -61,12 +61,19 @@ if [ -z "$SK_ENCRYPTION_KEY" ]; then
   echo "SK_ENCRYPTION_KEY=$SK_ENCRYPTION_KEY" >> "$GENERATED_ENV"
   export SK_ENCRYPTION_KEY
   echo "Generated SK_ENCRYPTION_KEY — back up $GENERATED_ENV NOW. Losing this"
-  echo "  key means losing access to every encrypted merchant key in MongoDB."
+  echo "  key means losing access to every encrypted merchant key in Postgres."
 fi
 
 # Lock down the generated-env file so it isn't world-readable.
 if [ -f "$GENERATED_ENV" ]; then
   chmod 600 "$GENERATED_ENV" 2>/dev/null || true
+fi
+
+# Apply pending Prisma migrations before starting the server. Idempotent —
+# `migrate deploy` is the production-safe variant (no schema drift checks,
+# no prompts). Fails fast if DATABASE_URL is missing or unreachable.
+if [ -n "$DATABASE_URL" ]; then
+  npx prisma migrate deploy
 fi
 
 exec "$@"

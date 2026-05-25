@@ -1,19 +1,28 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
-import { connectDB } from "@/lib/mongodb";
-import { getLogoBuffer } from "@/lib/logo";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(_req: Request) {
   try {
-    await connectDB();
-    const settings = await Settings.findOne({ setup_completed: true }).lean();
+    const settings = await prisma.settings.findFirst({
+      where: { setupCompleted: true },
+      select: { logoBytes: true, logoMimeType: true, logoUrl: true },
+    });
 
-    if (!settings?.logo_image_id && !settings?.logo_url) {
+    if (!settings || (!settings.logoBytes && !settings.logoUrl)) {
       return NextResponse.redirect(new URL("/favicon.ico", _req.url));
     }
 
-    const logoBuffer = await getLogoBuffer(settings);
+    let logoBuffer: Buffer | null = null;
+    if (settings.logoBytes) {
+      logoBuffer = Buffer.from(settings.logoBytes);
+    } else if (settings.logoUrl) {
+      const res = await fetch(settings.logoUrl);
+      if (res.ok) {
+        logoBuffer = Buffer.from(await res.arrayBuffer());
+      }
+    }
+
     if (!logoBuffer) {
       return NextResponse.redirect(new URL("/favicon.ico", _req.url));
     }

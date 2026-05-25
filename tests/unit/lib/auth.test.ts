@@ -2,9 +2,8 @@
 
 // --- Hoisted mocks (must come before all imports) ---
 
-const mockConnectDB = vi.hoisted(() => vi.fn());
-const mockSettingsFindOne = vi.hoisted(() => vi.fn());
-const mockCustomerFindOne = vi.hoisted(() => vi.fn());
+const mockSettingsFindFirst = vi.hoisted(() => vi.fn());
+const mockCustomerFindUnique = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockBcryptCompare = vi.hoisted(() => vi.fn());
 
@@ -27,25 +26,20 @@ vi.mock("next-auth/providers/credentials", () => ({
   default: (opts: any) => opts,
 }));
 
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: mockConnectDB,
-}));
-
 vi.mock("@/lib/satsrail", () => ({
   satsrail: {
     createSession: mockCreateSession,
   },
 }));
 
-vi.mock("@/models/Settings", () => ({
-  default: {
-    findOne: mockSettingsFindOne,
-  },
-}));
-
-vi.mock("@/models/Customer", () => ({
-  default: {
-    findOne: mockCustomerFindOne,
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    settings: {
+      findFirst: mockSettingsFindFirst,
+    },
+    customer: {
+      findUnique: mockCustomerFindUnique,
+    },
   },
 }));
 
@@ -69,7 +63,6 @@ const { jwt: jwtCallback, session: sessionCallback } =
 describe("auth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockConnectDB.mockResolvedValue(undefined);
   });
 
   // --- NextAuth configuration ---
@@ -114,23 +107,19 @@ describe("auth", () => {
     });
 
     it("returns null when settings not found", async () => {
-      mockSettingsFindOne.mockReturnValue({ lean: () => Promise.resolve(null) });
+      mockSettingsFindFirst.mockResolvedValue(null);
 
       const result = await adminProvider.authorize({
         email: "user@test.com",
         password: "pass123",
       });
       expect(result).toBeNull();
-      expect(mockConnectDB).toHaveBeenCalled();
     });
 
-    it("returns null when settings has no merchant_id", async () => {
-      mockSettingsFindOne.mockReturnValue({
-        lean: () =>
-          Promise.resolve({
-            merchant_id: null,
-            satsrail_api_url: "https://api.test.com",
-          }),
+    it("returns null when settings has no merchantId", async () => {
+      mockSettingsFindFirst.mockResolvedValue({
+        merchantId: null,
+        satsrailApiUrl: "https://api.test.com",
       });
 
       const result = await adminProvider.authorize({
@@ -140,13 +129,10 @@ describe("auth", () => {
       expect(result).toBeNull();
     });
 
-    it("returns null when settings has no satsrail_api_url", async () => {
-      mockSettingsFindOne.mockReturnValue({
-        lean: () =>
-          Promise.resolve({
-            merchant_id: "m_1",
-            satsrail_api_url: null,
-          }),
+    it("returns null when settings has no satsrailApiUrl", async () => {
+      mockSettingsFindFirst.mockResolvedValue({
+        merchantId: "m_1",
+        satsrailApiUrl: null,
       });
 
       const result = await adminProvider.authorize({
@@ -157,12 +143,9 @@ describe("auth", () => {
     });
 
     it("returns null when merchant not found in session merchants", async () => {
-      mockSettingsFindOne.mockReturnValue({
-        lean: () =>
-          Promise.resolve({
-            merchant_id: "m_1",
-            satsrail_api_url: "https://api.test.com",
-          }),
+      mockSettingsFindFirst.mockResolvedValue({
+        merchantId: "m_1",
+        satsrailApiUrl: "https://api.test.com",
       });
       mockCreateSession.mockResolvedValue({
         merchants: [{ id: "m_other", name: "Other", role: "owner" }],
@@ -176,12 +159,9 @@ describe("auth", () => {
     });
 
     it("returns user when merchant matches", async () => {
-      mockSettingsFindOne.mockReturnValue({
-        lean: () =>
-          Promise.resolve({
-            merchant_id: "m_1",
-            satsrail_api_url: "https://api.test.com",
-          }),
+      mockSettingsFindFirst.mockResolvedValue({
+        merchantId: "m_1",
+        satsrailApiUrl: "https://api.test.com",
       });
       mockCreateSession.mockResolvedValue({
         merchants: [
@@ -210,12 +190,9 @@ describe("auth", () => {
     });
 
     it("returns null when createSession throws", async () => {
-      mockSettingsFindOne.mockReturnValue({
-        lean: () =>
-          Promise.resolve({
-            merchant_id: "m_1",
-            satsrail_api_url: "https://api.test.com",
-          }),
+      mockSettingsFindFirst.mockResolvedValue({
+        merchantId: "m_1",
+        satsrailApiUrl: "https://api.test.com",
       });
       mockCreateSession.mockRejectedValue(new Error("API error"));
 
@@ -251,7 +228,7 @@ describe("auth", () => {
     });
 
     it("returns null when customer not found", async () => {
-      mockCustomerFindOne.mockResolvedValue(null);
+      mockCustomerFindUnique.mockResolvedValue(null);
 
       const result = await customerProvider.authorize({
         nickname: "unknown",
@@ -261,10 +238,10 @@ describe("auth", () => {
     });
 
     it("returns null when password does not match", async () => {
-      mockCustomerFindOne.mockResolvedValue({
-        _id: { toString: () => "cust_1" },
+      mockCustomerFindUnique.mockResolvedValue({
+        id: "cust_1",
         nickname: "nick",
-        password_hash: "$2a$hash",
+        passwordHash: "$2a$hash",
       });
       mockBcryptCompare.mockResolvedValue(false);
 
@@ -277,10 +254,10 @@ describe("auth", () => {
     });
 
     it("returns user when credentials are valid", async () => {
-      mockCustomerFindOne.mockResolvedValue({
-        _id: { toString: () => "cust_1" },
+      mockCustomerFindUnique.mockResolvedValue({
+        id: "cust_1",
         nickname: "nick",
-        password_hash: "$2a$hash",
+        passwordHash: "$2a$hash",
       });
       mockBcryptCompare.mockResolvedValue(true);
 

@@ -22,7 +22,6 @@ export default defineConfig({
       reportsDirectory: "./coverage",
       include: [
         "src/lib/**",
-        "src/models/**",
         "src/app/api/**",
         "src/middleware.ts",
         "src/components/**",

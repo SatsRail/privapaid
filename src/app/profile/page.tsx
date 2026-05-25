@@ -1,7 +1,5 @@
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { requireCustomer } from "@/lib/auth-helpers";
-import Customer from "@/models/Customer";
-import Comment from "@/models/Comment";
 import { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
 import ViewerShell from "@/components/ViewerShell";
@@ -12,11 +10,21 @@ export const dynamic = "force-dynamic";
 export default async function ProfilePage() {
   const session = await requireCustomer();
   const { locale } = await getInstanceConfig();
-  await connectDB();
 
-  const customer = await Customer.findById(session.id)
-    .select("nickname created_at")
-    .lean();
+  const customer = await prisma.customer.findUnique({
+    where: { id: session.id },
+    include: {
+      comments: {
+        include: {
+          media: {
+            include: { channel: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      },
+    },
+  });
 
   if (!customer) {
     return (
@@ -28,34 +36,21 @@ export default async function ProfilePage() {
     );
   }
 
-  const comments = await Comment.find({ customer_id: session.id })
-    .sort({ created_at: -1 })
-    .limit(100)
-    .populate({
-      path: "media_id",
-      select: "name channel_id",
-      populate: { path: "channel_id", select: "name slug" },
-    })
-    .lean();
-
-  const serializedComments = comments.map((c) => {
-    const media = c.media_id as unknown as {
-      _id: string;
-      name: string;
-      channel_id: { _id: string; name: string; slug: string } | null;
-    } | null;
+  const serializedComments = customer.comments.map((c) => {
+    const media = c.media;
+    const channel = media?.channel;
 
     return {
-      _id: String(c._id),
+      _id: c.id,
       body: c.body,
       nickname: c.nickname,
-      created_at: new Date(c.created_at).toISOString(),
+      created_at: c.createdAt.toISOString(),
       media: media
         ? {
-            _id: String(media._id),
+            _id: media.id,
             name: media.name,
-            channel_slug: media.channel_id?.slug || null,
-            channel_name: media.channel_id?.name || null,
+            channel_slug: channel?.slug || null,
+            channel_name: channel?.name || null,
           }
         : null,
     };
@@ -84,7 +79,7 @@ export default async function ProfilePage() {
               style={{ color: "var(--theme-text-secondary)" }}
             >
               {t(locale, "viewer.profile.member_since")}{" "}
-              {new Date(customer.created_at).toLocaleDateString()}
+              {customer.createdAt.toLocaleDateString()}
             </p>
           </div>
         </div>

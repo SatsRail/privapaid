@@ -1,14 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHmac } from "crypto";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
-import WebhookEvent from "@/models/WebhookEvent";
-
-// Mock connectDB to use the already-connected mongoose instance
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { prisma } from "@/lib/prisma";
 
 // Import the route handler
 import { POST } from "@/app/api/webhooks/satsrail/route";
@@ -65,9 +59,9 @@ describe("POST /api/webhooks/satsrail", () => {
     expect(body.received).toBe(true);
 
     // Verify event was recorded
-    const event = await WebhookEvent.findOne({ event_id: "evt_test_1" });
+    const event = await prisma.webhookEvent.findFirst({ where: { eventId: "evt_test_1" } });
     expect(event).toBeTruthy();
-    expect(event!.event_type).toBe("product.key_rotated");
+    expect(event!.eventType).toBe("product.key_rotated");
   });
 
   it("returns 401 for invalid signature", async () => {
@@ -120,7 +114,7 @@ describe("POST /api/webhooks/satsrail", () => {
     expect(body2.duplicate).toBe(true);
 
     // Only one event recorded
-    const count = await WebhookEvent.countDocuments({ event_id: "evt_duplicate" });
+    const count = await prisma.webhookEvent.count({ where: { eventId: "evt_duplicate" } });
     expect(count).toBe(1);
   });
 
@@ -138,11 +132,6 @@ describe("POST /api/webhooks/satsrail", () => {
   });
 
   it("concurrent identical deliveries produce exactly one DB row", async () => {
-    // Regression: pre-fix the handler did findOne + create, so two
-    // racing requests could both miss findOne and both call create. The
-    // unique index would still survive (one insert wins) but the loser
-    // returned 500 instead of a clean duplicate ack. Now it's an atomic
-    // upsert read.
     const payload = JSON.stringify({
       id: "evt_race",
       type: "merchant.plan_changed",
@@ -162,8 +151,8 @@ describe("POST /api/webhooks/satsrail", () => {
     const duplicates = [b1, b2].filter((b) => b.duplicate === true);
     expect(duplicates).toHaveLength(1);
 
-    // Only one row in the collection.
-    const count = await WebhookEvent.countDocuments({ event_id: "evt_race" });
+    // Only one row in the table.
+    const count = await prisma.webhookEvent.count({ where: { eventId: "evt_race" } });
     expect(count).toBe(1);
   });
 

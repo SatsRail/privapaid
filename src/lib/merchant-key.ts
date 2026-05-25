@@ -1,5 +1,4 @@
-import { connectDB } from "@/lib/mongodb";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 import { decryptSecretKey } from "@/lib/encryption";
 
 /**
@@ -7,12 +6,13 @@ import { decryptSecretKey } from "@/lib/encryption";
  * Returns null if no key is configured.
  */
 export async function getMerchantKey(): Promise<string | null> {
-  await connectDB();
-  const settings = await Settings.findOne().select("satsrail_api_key_encrypted").lean();
+  const settings = await prisma.settings.findFirst({
+    select: { satsrailApiKeyEncrypted: true },
+  });
 
-  if (!settings?.satsrail_api_key_encrypted) {
+  if (!settings?.satsrailApiKeyEncrypted) {
     return null;
   }
 
-  return decryptSecretKey(settings.satsrail_api_key_encrypted);
+  return decryptSecretKey(settings.satsrailApiKeyEncrypted);
 }

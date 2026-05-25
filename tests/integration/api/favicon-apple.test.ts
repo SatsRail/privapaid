@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createSettings } from "../../helpers/factories";
-
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
+import { prisma } from "@/lib/prisma";
 
 const { getLogoBufferMock } = vi.hoisted(() => ({
   getLogoBufferMock: vi.fn(),
@@ -57,13 +53,16 @@ describe("GET /api/favicon/apple", () => {
   });
 
   it("redirects when settings exist but have no logo configured", async () => {
-    await createSettings({ logo_url: "", logo_image_id: "" });
+    await createSettings({ instanceName: "x" });
+    // Settings is created without logoBytes/logoUrl by default → factory leaves them empty
+    await prisma.settings.update({ where: { id: 1 }, data: { logoUrl: "" } });
     const res = await GET(buildReq());
     expect(res.headers.get("location")).toContain("/favicon.ico");
   });
 
   it("redirects when getLogoBuffer returns null", async () => {
-    await createSettings({ logo_url: "https://example.com/logo.png" });
+    await createSettings({ instanceName: "x" });
+    await prisma.settings.update({ where: { id: 1 }, data: { logoUrl: "https://example.com/logo.png" } });
     getLogoBufferMock.mockResolvedValue(null);
 
     const res = await GET(buildReq());
@@ -71,7 +70,8 @@ describe("GET /api/favicon/apple", () => {
   });
 
   it("returns a PNG response when the logo can be processed", async () => {
-    await createSettings({ logo_url: "https://example.com/logo.png" });
+    await createSettings({ instanceName: "x" });
+    await prisma.settings.update({ where: { id: 1 }, data: { logoUrl: "https://example.com/logo.png" } });
     getLogoBufferMock.mockResolvedValue(Buffer.from("fake-png"));
 
     const res = await GET(buildReq());
@@ -81,7 +81,8 @@ describe("GET /api/favicon/apple", () => {
   });
 
   it("falls back to redirect when sharp throws", async () => {
-    await createSettings({ logo_url: "https://example.com/logo.png" });
+    await createSettings({ instanceName: "x" });
+    await prisma.settings.update({ where: { id: 1 }, data: { logoUrl: "https://example.com/logo.png" } });
     getLogoBufferMock.mockResolvedValue(Buffer.from("bad-bytes"));
     sharpToBuffer.mockRejectedValueOnce(new Error("sharp boom"));
 

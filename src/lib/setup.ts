@@ -1,14 +1,16 @@
-import { connectDB } from "./mongodb";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 
-// Always check MongoDB directly — no in-memory caching.
+// Always check Postgres directly — no in-memory caching.
 // All pages use force-dynamic, so fresh reads are expected.
 export async function isSetupComplete(): Promise<boolean> {
-  await connectDB();
-  const settings = await Settings.findOne({ setup_completed: true }).lean();
+  const settings = await prisma.settings.findFirst({
+    where: { setupCompleted: true },
+    select: { id: true },
+  });
   return !!settings;
 }
 
 // No-op: caching was removed but callers still reference this.
- 
-export function clearSetupCache(): void { /* intentional no-op */ }
+export function clearSetupCache(): void {
+  /* intentional no-op */
+}

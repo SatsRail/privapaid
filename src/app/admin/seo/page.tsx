@@ -1,17 +1,16 @@
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/auth-helpers";
-import Settings from "@/models/Settings";
 import SeoForm from "./SeoForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function SeoPage() {
   await requireOwner();
-  await connectDB();
 
-  const settings = await Settings.findOne({ setup_completed: true })
-    .select("google_analytics_id google_site_verification")
-    .lean();
+  const settings = await prisma.settings.findFirst({
+    where: { setupCompleted: true },
+    select: { googleAnalyticsId: true, googleSiteVerification: true },
+  });
 
   if (!settings) {
     return (
@@ -22,8 +21,8 @@ export default async function SeoPage() {
   }
 
   const initialValues = {
-    google_analytics_id: settings.google_analytics_id || "",
-    google_site_verification: settings.google_site_verification || "",
+    google_analytics_id: settings.googleAnalyticsId || "",
+    google_site_verification: settings.googleSiteVerification || "",
   };
 
   return (

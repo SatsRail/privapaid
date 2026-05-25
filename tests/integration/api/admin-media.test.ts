@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { mockSatsrailClient } from "../../helpers/mocks/satsrail";
 
 // Mocks — MUST be before route imports
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) }));
 vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })) }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
@@ -28,17 +26,16 @@ vi.mock("@/lib/photo-dek", () => ({
   wrapDekFromBase64url: mockWrapDekFromBase64url,
 }));
 
-const { mockGridFsDelete } = vi.hoisted(() => ({ mockGridFsDelete: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/lib/gridfs", () => ({
-  getEncryptedPhotosBucket: vi.fn().mockResolvedValue({ delete: mockGridFsDelete }),
-}));
-
-import { GET as listMedia, POST as createMedia } from "@/app/api/admin/media/route";
+import { GET as listMedia, POST as createMediaRoute } from "@/app/api/admin/media/route";
 import { GET as getMedia, PATCH as updateMedia, DELETE as deleteMedia } from "@/app/api/admin/media/[id]/route";
 import { getMerchantKey } from "@/lib/merchant-key";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
+
+let refSeed = 5000;
+function nextRef(): number {
+  refSeed += 1;
+  return refSeed;
+}
 
 function jsonRequest(url: string, method: string, body?: Record<string, unknown>): NextRequest {
   const init: { method: string; headers: Record<string, string>; body?: string } = { method, headers: { "Content-Type": "application/json" } };
@@ -63,33 +60,37 @@ describe("Admin Media API", () => {
   });
 
   async function seedChannel(): Promise<string> {
-    const channel = await Channel.create({
-      ref: 1,
-      slug: "test-channel",
-      name: "Test Channel",
-      media_count: 0,
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `test-channel-${nextRef()}`,
+        name: "Test Channel",
+        mediaCount: 0,
+      },
     });
-    return String(channel._id);
+    return channel.id;
   }
 
   async function seedMedia(chId: string, overrides: Record<string, unknown> = {}): Promise<string> {
-    const media = await Media.create({
-      ref: 100,
-      channel_id: chId,
-      name: "Test Video",
-      source_url: "https://example.com/video.mp4",
-      media_type: "video",
-      position: 1,
-      ...overrides,
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: chId,
+        name: "Test Video",
+        sourceUrl: "https://example.com/video.mp4",
+        mediaType: "video",
+        position: 1,
+        ...overrides,
+      },
     });
-    return String(media._id);
+    return media.id;
   }
 
   describe("GET /api/admin/media", () => {
     it("returns media by channel", async () => {
       const chId = await seedChannel();
       await seedMedia(chId);
-      await seedMedia(chId, { ref: 101, name: "Second Video", position: 2 });
+      await seedMedia(chId, { name: "Second Video", position: 2 });
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media?channel_id=${chId}`, "GET");
       const res = await listMedia(req);
@@ -121,16 +122,16 @@ describe("Admin Media API", () => {
         source_url: "https://example.com/new.mp4",
         media_type: "video",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       const body = await res.json();
 
       expect(res.status).toBe(201);
       expect(body.data.name).toBe("New Video");
       expect(body.data.source_url).toBe("https://example.com/new.mp4");
 
-      // Verify channel media_count incremented
-      const channel = await Channel.findById(chId);
-      expect(channel!.media_count).toBe(1);
+      // Verify channel mediaCount incremented
+      const channel = await prisma.channel.findUnique({ where: { id: chId } });
+      expect(channel!.mediaCount).toBe(1);
     });
 
     it("returns 400 for invalid data (missing name)", async () => {
@@ -139,18 +140,18 @@ describe("Admin Media API", () => {
         channel_id: chId,
         source_url: "https://example.com/new.mp4",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       expect(res.status).toBe(400);
     });
 
     it("returns 404 for non-existent channel", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: fakeId,
         name: "New Video",
         source_url: "https://example.com/new.mp4",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       const body = await res.json();
 
       expect(res.status).toBe(404);
@@ -166,15 +167,15 @@ describe("Admin Media API", () => {
         media_type: "photo",
         dek: "raw-dek-base64url",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       const body = await res.json();
 
       expect(res.status).toBe(201);
       expect(mockWrapDekFromBase64url).toHaveBeenCalledWith("raw-dek-base64url");
 
       // The persisted doc should carry the wrapped DEK exactly as wrapDek returned.
-      const persisted = await Media.findById(body.data._id);
-      expect(persisted?.encrypted_dek).toBe("kek-wrapped-dek-blob");
+      const persisted = await prisma.media.findUnique({ where: { id: body.data.id ?? body.data._id } });
+      expect(persisted?.encryptedDek).toBe("kek-wrapped-dek-blob");
     });
 
     it("photo creation succeeds even when KEK wrapping throws (non-fatal)", async () => {
@@ -190,12 +191,12 @@ describe("Admin Media API", () => {
         media_type: "photo",
         dek: "raw-dek-base64url",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       const body = await res.json();
 
       expect(res.status).toBe(201);
-      const persisted = await Media.findById(body.data._id);
-      expect(persisted?.encrypted_dek).toBeUndefined();
+      const persisted = await prisma.media.findUnique({ where: { id: body.data.id ?? body.data._id } });
+      expect(persisted?.encryptedDek).toBeFalsy();
     });
 
     it("does not call the DEK wrapper for non-photo media", async () => {
@@ -206,7 +207,7 @@ describe("Admin Media API", () => {
         source_url: "https://example.com/v.mp4",
         media_type: "video",
       });
-      const res = await createMedia(req);
+      const res = await createMediaRoute(req);
       expect(res.status).toBe(201);
       expect(mockWrapDekFromBase64url).not.toHaveBeenCalled();
     });
@@ -227,7 +228,7 @@ describe("Admin Media API", () => {
     });
 
     it("returns 404 for non-existent media", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${fakeId}`, "GET");
       const res = await getMedia(req, { params: Promise.resolve({ id: fakeId }) });
       const body = await res.json();
@@ -255,7 +256,7 @@ describe("Admin Media API", () => {
     });
 
     it("returns 404 for non-existent media", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${fakeId}`, "PATCH", {
         name: "Nope",
       });
@@ -268,11 +269,11 @@ describe("Admin Media API", () => {
   });
 
   describe("DELETE /api/admin/media/[id]", () => {
-    it("hard-deletes media from MongoDB and decrements channel media_count", async () => {
+    it("hard-deletes media and decrements channel mediaCount", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await Channel.findByIdAndUpdate(chId, { media_count: 1 });
+      await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 1 } });
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "DELETE");
       const res = await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
@@ -281,16 +282,16 @@ describe("Admin Media API", () => {
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
 
-      // Row is gone from Mongo
-      const media = await Media.findById(mediaId);
+      // Row is gone
+      const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
-      const channel = await Channel.findById(chId);
-      expect(channel!.media_count).toBe(0);
+      const channel = await prisma.channel.findUnique({ where: { id: chId } });
+      expect(channel!.mediaCount).toBe(0);
     });
 
     it("returns 404 for non-existent media", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${fakeId}`, "DELETE");
       const res = await deleteMedia(req, { params: Promise.resolve({ id: fakeId }) });
       const body = await res.json();
@@ -301,15 +302,17 @@ describe("Admin Media API", () => {
 
     it("cleans up legacy soft-deleted media without double-decrementing channel count", async () => {
       const chId = await seedChannel();
-      const mediaId = await seedMedia(chId, { deleted_at: new Date() });
+      const mediaId = await seedMedia(chId, { deletedAt: new Date() });
 
       // Channel count was already decremented when this was soft-deleted previously
-      await Channel.findByIdAndUpdate(chId, { media_count: 5 });
+      await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 5 } });
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_leftover",
-        encrypted_source_url: "blob",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_leftover",
+          encryptedSourceUrl: "blob",
+        },
       });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
@@ -322,49 +325,57 @@ describe("Admin Media API", () => {
       expect(body.success).toBe(true);
 
       // Row hard-deleted
-      const media = await Media.findById(mediaId);
+      const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
       // SatsRail archive ran for the leftover product
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_leftover");
 
-      const remaining = await MediaProduct.find({ media_id: mediaId });
+      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
       expect(remaining).toHaveLength(0);
 
       // Channel count NOT decremented again (was already decremented at soft-delete time)
-      const channel = await Channel.findById(chId);
-      expect(channel!.media_count).toBe(5);
+      const channel = await prisma.channel.findUnique({ where: { id: chId } });
+      expect(channel!.mediaCount).toBe(5);
     });
 
     it("removes media from channel product encrypted_media", async () => {
-      const { default: ChannelProduct } = await import("@/models/ChannelProduct");
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      const cp = await ChannelProduct.create({
-        channel_id: chId,
-        satsrail_product_id: "prod_abc",
-        encrypted_media: [{ media_id: new mongoose.Types.ObjectId(mediaId), encrypted_source_url: "blob" }],
+      const cp = await prisma.channelProduct.create({
+        data: {
+          channelId: chId,
+          satsrailProductId: "prod_abc",
+          encryptedMedia: {
+            create: [{ mediaId, encryptedSourceUrl: "blob" }],
+          },
+        },
       });
 
-      await Channel.findByIdAndUpdate(chId, { media_count: 1 });
+      await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 1 } });
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "DELETE");
       const res = await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
       expect(res.status).toBe(200);
 
-      const updated = await ChannelProduct.findById(cp._id);
-      expect(updated!.encrypted_media).toHaveLength(0);
+      const updated = await prisma.channelProduct.findUnique({
+        where: { id: cp.id },
+        include: { encryptedMedia: true },
+      });
+      expect(updated!.encryptedMedia).toHaveLength(0);
     });
 
     it("archives associated MediaProduct on SatsRail and removes the local record", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_individual_1",
-        encrypted_source_url: "blob",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_individual_1",
+          encryptedSourceUrl: "blob",
+        },
       });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
@@ -376,28 +387,28 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledTimes(1);
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_individual_1");
 
-      const remaining = await MediaProduct.find({ media_id: mediaId });
+      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
       expect(remaining).toHaveLength(0);
     });
 
     it("archives every MediaProduct when multiple products are tied to media", async () => {
       const chId = await seedChannel();
-      const mediaIdA = await seedMedia(chId, { ref: 100 });
+      const mediaIdA = await seedMedia(chId);
+      const mediaIdB = await seedMedia(chId, { position: 2 });
 
-      // Two MediaProducts on the same media — schema allows the array to grow
-      // even if media_id is unique-indexed only one row is permitted, so use a
-      // different media row and verify the loop iterates.
-      const mediaIdB = await seedMedia(chId, { ref: 101, position: 2 });
-
-      await MediaProduct.create({
-        media_id: mediaIdA,
-        satsrail_product_id: "prod_A",
-        encrypted_source_url: "blobA",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: mediaIdA,
+          satsrailProductId: "prod_A",
+          encryptedSourceUrl: "blobA",
+        },
       });
-      await MediaProduct.create({
-        media_id: mediaIdB,
-        satsrail_product_id: "prod_B",
-        encrypted_source_url: "blobB",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: mediaIdB,
+          satsrailProductId: "prod_B",
+          encryptedSourceUrl: "blobB",
+        },
       });
 
       mockSatsrailClient.deleteProduct.mockResolvedValue(undefined);
@@ -411,7 +422,7 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).toHaveBeenCalledWith("sk_test_key", "prod_A");
 
       // prod_B should still exist
-      const remaining = await MediaProduct.findOne({ satsrail_product_id: "prod_B" });
+      const remaining = await prisma.mediaProduct.findFirst({ where: { satsrailProductId: "prod_B" } });
       expect(remaining).not.toBeNull();
     });
 
@@ -419,13 +430,15 @@ describe("Admin Media API", () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_failing",
-        encrypted_source_url: "blob",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_failing",
+          encryptedSourceUrl: "blob",
+        },
       });
 
-      await Channel.findByIdAndUpdate(chId, { media_count: 1 });
+      await prisma.channel.update({ where: { id: chId }, data: { mediaCount: 1 } });
 
       mockSatsrailClient.deleteProduct.mockRejectedValue(new Error("SatsRail down"));
 
@@ -434,24 +447,26 @@ describe("Admin Media API", () => {
       expect(res.status).toBe(200);
 
       // Local hard-delete proceeded
-      const media = await Media.findById(mediaId);
+      const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
-      const remaining = await MediaProduct.find({ media_id: mediaId });
+      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
       expect(remaining).toHaveLength(0);
 
-      const channel = await Channel.findById(chId);
-      expect(channel!.media_count).toBe(0);
+      const channel = await prisma.channel.findUnique({ where: { id: chId } });
+      expect(channel!.mediaCount).toBe(0);
     });
 
     it("skips SatsRail call when merchant key is unavailable but still hard-deletes", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
-      await MediaProduct.create({
-        media_id: mediaId,
-        satsrail_product_id: "prod_no_key",
-        encrypted_source_url: "blob",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId,
+          satsrailProductId: "prod_no_key",
+          encryptedSourceUrl: "blob",
+        },
       });
 
       vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
@@ -462,10 +477,10 @@ describe("Admin Media API", () => {
 
       expect(mockSatsrailClient.deleteProduct).not.toHaveBeenCalled();
 
-      const media = await Media.findById(mediaId);
+      const media = await prisma.media.findUnique({ where: { id: mediaId } });
       expect(media).toBeNull();
 
-      const remaining = await MediaProduct.find({ media_id: mediaId });
+      const remaining = await prisma.mediaProduct.findMany({ where: { mediaId } });
       expect(remaining).toHaveLength(0);
     });
 
@@ -480,99 +495,101 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).not.toHaveBeenCalled();
     });
 
-    it("removes the encrypted GridFS file when deleting photo media", async () => {
+    it("removes the encrypted photo blob row when deleting photo media", async () => {
       const chId = await seedChannel();
-      const gridFsId = new mongoose.Types.ObjectId();
-      const photoMedia = await Media.create({
-        ref: 999,
-        channel_id: chId,
-        name: "Photo",
-        description: "",
-        source_url: gridFsId.toString(),
-        media_type: "photo",
-        position: 1,
-        comments_count: 0,
-        flags_count: 0,
+      const blob = await prisma.encryptedPhotoBlob.create({
+        data: { bytes: Buffer.from("photo-bytes"), mimeType: "image/jpeg" },
+      });
+      const photoMedia = await prisma.media.create({
+        data: {
+          ref: nextRef(),
+          channelId: chId,
+          name: "Photo",
+          description: "",
+          sourceUrl: blob.id,
+          mediaType: "photo",
+          position: 1,
+        },
       });
 
       const req = jsonRequest(
-        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        `http://localhost:3000/api/admin/media/${photoMedia.id}`,
         "DELETE"
       );
       const res = await deleteMedia(req, {
-        params: Promise.resolve({ id: photoMedia._id.toString() }),
+        params: Promise.resolve({ id: photoMedia.id }),
       });
       expect(res.status).toBe(200);
 
-      // GridFS cleanup happened with the right ObjectId
-      expect(mockGridFsDelete).toHaveBeenCalledTimes(1);
-      const arg = mockGridFsDelete.mock.calls[0][0];
-      expect(arg.toString()).toBe(gridFsId.toString());
+      // EncryptedPhotoBlob cleanup happened
+      const remaining = await prisma.encryptedPhotoBlob.findUnique({ where: { id: blob.id } });
+      expect(remaining).toBeNull();
     });
 
-    it("non-photo media delete does NOT touch the encrypted GridFS bucket", async () => {
+    it("non-photo media delete does NOT touch encrypted photo blobs", async () => {
       const chId = await seedChannel();
+      const blob = await prisma.encryptedPhotoBlob.create({
+        data: { bytes: Buffer.from("photo-bytes"), mimeType: "image/jpeg" },
+      });
       const mediaId = await seedMedia(chId);
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "DELETE");
       await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
 
-      expect(mockGridFsDelete).not.toHaveBeenCalled();
+      // The unrelated blob still exists
+      const remaining = await prisma.encryptedPhotoBlob.findUnique({ where: { id: blob.id } });
+      expect(remaining).not.toBeNull();
     });
 
-    it("photo media delete tolerates GridFS errors (logs, does not fail the request)", async () => {
+    it("photo media delete tolerates missing blob row (logs, does not fail the request)", async () => {
       const chId = await seedChannel();
-      const gridFsId = new mongoose.Types.ObjectId();
-      const photoMedia = await Media.create({
-        ref: 1000,
-        channel_id: chId,
-        name: "PhotoBroken",
-        description: "",
-        source_url: gridFsId.toString(),
-        media_type: "photo",
-        position: 1,
-        comments_count: 0,
-        flags_count: 0,
+      const photoMedia = await prisma.media.create({
+        data: {
+          ref: nextRef(),
+          channelId: chId,
+          name: "PhotoBroken",
+          description: "",
+          sourceUrl: "missing-blob-id",
+          mediaType: "photo",
+          position: 1,
+        },
       });
 
-      mockGridFsDelete.mockRejectedValueOnce(new Error("gridfs unavailable"));
-
       const req = jsonRequest(
-        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        `http://localhost:3000/api/admin/media/${photoMedia.id}`,
         "DELETE"
       );
       const res = await deleteMedia(req, {
-        params: Promise.resolve({ id: photoMedia._id.toString() }),
+        params: Promise.resolve({ id: photoMedia.id }),
       });
       // The DELETE still succeeds — orphan bytes are a soft failure
       expect(res.status).toBe(200);
-      const stillThere = await Media.findById(photoMedia._id);
+      const stillThere = await prisma.media.findUnique({ where: { id: photoMedia.id } });
       expect(stillThere).toBeNull();
     });
 
-    it("photo media with non-ObjectId source_url is skipped without error", async () => {
+    it("photo media with non-blob-id sourceUrl is skipped without error", async () => {
       const chId = await seedChannel();
-      const photoMedia = await Media.create({
-        ref: 1001,
-        channel_id: chId,
-        name: "PhotoLegacy",
-        description: "",
-        source_url: "legacy-non-objectid-string",
-        media_type: "photo",
-        position: 1,
-        comments_count: 0,
-        flags_count: 0,
+      const photoMedia = await prisma.media.create({
+        data: {
+          ref: nextRef(),
+          channelId: chId,
+          name: "PhotoLegacy",
+          description: "",
+          sourceUrl: "legacy-non-blob-id-string",
+          mediaType: "photo",
+          position: 1,
+        },
       });
 
       const req = jsonRequest(
-        `http://localhost:3000/api/admin/media/${photoMedia._id}`,
+        `http://localhost:3000/api/admin/media/${photoMedia.id}`,
         "DELETE"
       );
       const res = await deleteMedia(req, {
-        params: Promise.resolve({ id: photoMedia._id.toString() }),
+        params: Promise.resolve({ id: photoMedia.id }),
       });
       expect(res.status).toBe(200);
-      expect(mockGridFsDelete).not.toHaveBeenCalled();
     });
   });
 });

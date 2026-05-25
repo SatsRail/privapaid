@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -10,11 +9,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock audit
@@ -115,11 +109,11 @@ describe("Admin Channels list/create routes", () => {
       await createChannel({
         name: "Filtered",
         slug: "filtered",
-        category_id: category._id,
+        categoryId: category.id,
       });
       await createChannel({ name: "Other", slug: "other" });
 
-      const req = buildGetRequest(`?category_id=${category._id.toString()}`);
+      const req = buildGetRequest(`?category_id=${category.id}`);
       const res = await GET(req);
       const body = await res.json();
 

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -12,23 +11,16 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
 
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
-
 // Mock audit
 vi.mock("@/lib/audit", () => ({
   audit: vi.fn(),
 }));
 
-// Mock customer auth — the session.id must match the DB customer _id
-// Use vi.hoisted to create the ObjectId before vi.mock factories are evaluated
-const { customerId } = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Types } = require("mongoose");
-  return { customerId: new Types.ObjectId() };
-});
+// Mock customer auth — the session.id must match the DB customer id.
+// We delay binding by using a ref that tests fill in.
+const { customerIdRef } = vi.hoisted(() => ({
+  customerIdRef: { id: "" as string },
+}));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({
     id: "admin-1",
@@ -40,15 +32,16 @@ vi.mock("@/lib/auth-helpers", () => ({
     email: "admin@test.com",
     role: "owner",
   }),
-  requireCustomerApi: vi.fn().mockResolvedValue({
-    id: customerId.toString(),
+  requireCustomerApi: vi.fn().mockImplementation(async () => ({
+    id: customerIdRef.id,
     name: "testuser",
-  }),
+  })),
 }));
 
 import { NextRequest, NextResponse } from "next/server";
 import { GET, POST, DELETE } from "@/app/api/customer/favorites/route";
 import { requireCustomerApi } from "@/lib/auth-helpers";
+import { prisma } from "@/lib/prisma";
 import { createCustomer, createChannel } from "../../helpers/factories";
 
 function buildRequest(method: string, body?: unknown): NextRequest {
@@ -75,7 +68,8 @@ describe("Customer Favorites routes", () => {
   });
 
   it("GET returns empty favorites initially", async () => {
-    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const customer = await createCustomer({ nickname: "favuser" });
+    customerIdRef.id = customer.id;
 
     buildRequest("GET");
     const res = await GET();
@@ -86,10 +80,11 @@ describe("Customer Favorites routes", () => {
   });
 
   it("POST adds a favorite", async () => {
-    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const customer = await createCustomer({ nickname: "favuser" });
+    customerIdRef.id = customer.id;
     const channel = await createChannel({ name: "Fav Channel", slug: "fav-channel" });
 
-    const req = buildRequest("POST", { channel_id: channel._id.toString() });
+    const req = buildRequest("POST", { channel_id: channel.id });
     const res = await POST(req);
     const body = await res.json();
 
@@ -102,14 +97,14 @@ describe("Customer Favorites routes", () => {
     expect(getBody.favorite_channel_ids).toHaveLength(1);
   });
 
-  it("POST is idempotent (addToSet)", async () => {
-    await createCustomer({ _id: customerId, nickname: "favuser" });
+  it("POST is idempotent (addToSet semantics)", async () => {
+    const customer = await createCustomer({ nickname: "favuser" });
+    customerIdRef.id = customer.id;
     const channel = await createChannel({ name: "Dup Fav", slug: "dup-fav" });
-    const channelId = channel._id.toString();
 
     // Add twice
-    await POST(buildRequest("POST", { channel_id: channelId }));
-    await POST(buildRequest("POST", { channel_id: channelId }));
+    await POST(buildRequest("POST", { channel_id: channel.id }));
+    await POST(buildRequest("POST", { channel_id: channel.id }));
 
     const getRes = await GET();
     const getBody = await getRes.json();
@@ -117,7 +112,7 @@ describe("Customer Favorites routes", () => {
   });
 
   it("GET returns empty array when customer record is missing", async () => {
-    // No customer in DB — session id points to nothing
+    customerIdRef.id = "ckmissingfakefakefakefake"; // no customer with this id
     const res = await GET();
     const body = await res.json();
     expect(res.status).toBe(200);
@@ -142,7 +137,8 @@ describe("Customer Favorites routes", () => {
   });
 
   it("POST returns 400 when body is invalid", async () => {
-    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const customer = await createCustomer({ nickname: "favuser" });
+    customerIdRef.id = customer.id;
     const req = buildRequest("POST", {});
     const res = await POST(req);
     expect(res.status).toBe(400);
@@ -158,7 +154,8 @@ describe("Customer Favorites routes", () => {
   });
 
   it("DELETE returns 400 when body is invalid", async () => {
-    await createCustomer({ _id: customerId, nickname: "favuser" });
+    const customer = await createCustomer({ nickname: "favuser" });
+    customerIdRef.id = customer.id;
     const req = buildRequest("DELETE", {});
     const res = await DELETE(req);
     expect(res.status).toBe(400);
@@ -166,14 +163,14 @@ describe("Customer Favorites routes", () => {
 
   it("DELETE removes a favorite", async () => {
     const channel = await createChannel({ name: "Remove Fav", slug: "remove-fav" });
-    const channelId = channel._id.toString();
-    await createCustomer({
-      _id: customerId,
-      nickname: "favuser",
-      favorite_channel_ids: [channel._id],
+    const customer = await createCustomer({ nickname: "favuser" });
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { favoriteChannels: { connect: { id: channel.id } } },
     });
+    customerIdRef.id = customer.id;
 
-    const req = buildRequest("DELETE", { channel_id: channelId });
+    const req = buildRequest("DELETE", { channel_id: channel.id });
     const res = await DELETE(req);
     const body = await res.json();
 

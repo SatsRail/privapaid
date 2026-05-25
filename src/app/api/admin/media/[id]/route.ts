@@ -1,48 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
-import { getEncryptedPhotosBucket } from "@/lib/gridfs";
-import { ObjectId } from "mongodb";
+import type { Prisma } from "@prisma/client";
 
 async function reEncryptBlobs(
-  mediaDocId: string,
+  mediaId: string,
   channelId: string,
-  mediaObjectId: string,
   newSourceUrl: string
 ): Promise<void> {
   try {
     const sk = await getMerchantKey();
     if (!sk) return;
 
-    const mediaProducts = await MediaProduct.find({ media_id: mediaDocId });
+    const mediaProducts = await prisma.mediaProduct.findMany({
+      where: { mediaId },
+    });
     for (const mp of mediaProducts) {
-      const { key } = await satsrail.getProductKey(sk, mp.satsrail_product_id);
-      const encrypted = encryptSourceUrl(newSourceUrl, key, mp.satsrail_product_id);
-      await MediaProduct.updateOne({ _id: mp._id }, { encrypted_source_url: encrypted });
+      const { key } = await satsrail.getProductKey(sk, mp.satsrailProductId);
+      const encrypted = encryptSourceUrl(newSourceUrl, key, mp.satsrailProductId);
+      await prisma.mediaProduct.update({
+        where: { id: mp.id },
+        data: { encryptedSourceUrl: encrypted },
+      });
     }
 
-    const channelProducts = await ChannelProduct.find({
-      channel_id: channelId,
-      "encrypted_media.media_id": mediaObjectId,
+    const channelProducts = await prisma.channelProduct.findMany({
+      where: {
+        channelId,
+        encryptedMedia: { some: { mediaId } },
+      },
+      include: { encryptedMedia: { where: { mediaId } } },
     });
     for (const cp of channelProducts) {
-      const { key } = await satsrail.getProductKey(sk, cp.satsrail_product_id);
-      const encrypted = encryptSourceUrl(newSourceUrl, key, cp.satsrail_product_id);
-      await ChannelProduct.updateOne(
-        { _id: cp._id, "encrypted_media.media_id": mediaObjectId },
-        { $set: { "encrypted_media.$.encrypted_source_url": encrypted } }
-      );
+      const { key } = await satsrail.getProductKey(sk, cp.satsrailProductId);
+      const encrypted = encryptSourceUrl(newSourceUrl, key, cp.satsrailProductId);
+      for (const entry of cp.encryptedMedia) {
+        await prisma.channelProductMedia.update({
+          where: { id: entry.id },
+          data: { encryptedSourceUrl: encrypted },
+        });
+      }
     }
   } catch (err) {
-    console.error("Failed to re-encrypt after source_url change:", err);
+    console.error("Failed to re-encrypt after sourceUrl change:", err);
   }
 }
 
@@ -52,21 +57,21 @@ export async function GET(
 ) {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
   const { id } = await params;
-  const media = await Media.findById(id).lean();
+  const media = await prisma.media.findUnique({ where: { id } });
   if (!media) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const products = await MediaProduct.find({ media_id: id })
-    .select("satsrail_product_id created_at")
-    .lean();
+  const products = await prisma.mediaProduct.findMany({
+    where: { mediaId: id },
+    select: { satsrailProductId: true, createdAt: true },
+  });
 
   return NextResponse.json({
     data: {
       ...media,
-      product_ids: products.map((p) => p.satsrail_product_id),
+      product_ids: products.map((p) => p.satsrailProductId),
       media_products: products,
     },
   });
@@ -81,31 +86,33 @@ export async function PATCH(
   const validated = await validateBody(req, schemas.mediaUpdate);
   if (isValidationError(validated)) return validated;
 
-  await connectDB();
   const { id } = await params;
 
-  const updates: Record<string, unknown> = {};
-  const fields = [
-    "name", "description", "source_url", "media_type", "thumbnail_url", "thumbnail_id", "preview_image_ids", "position",
-  ] as const;
-  for (const field of fields) {
-    if (validated[field] !== undefined) updates[field] = validated[field];
-  }
+  const updates: Prisma.MediaUpdateInput = {};
+  if (validated.name !== undefined) updates.name = validated.name;
+  if (validated.description !== undefined) updates.description = validated.description;
+  if (validated.source_url !== undefined) updates.sourceUrl = validated.source_url;
+  if (validated.media_type !== undefined) updates.mediaType = validated.media_type;
+  if (validated.thumbnail_url !== undefined) updates.thumbnailUrl = validated.thumbnail_url;
+  if (validated.position !== undefined) updates.position = validated.position;
 
   const oldMedia = validated.source_url !== undefined
-    ? await Media.findById(id).select("source_url").lean()
+    ? await prisma.media.findUnique({
+        where: { id },
+        select: { sourceUrl: true },
+      })
     : null;
 
-  const media = await Media.findByIdAndUpdate(id, updates, {
-    returnDocument: "after",
-  }).lean();
-  if (!media) {
+  let media;
+  try {
+    media = await prisma.media.update({ where: { id }, data: updates });
+  } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Re-encrypt blobs if source_url changed
-  if (oldMedia && validated.source_url && validated.source_url !== oldMedia.source_url) {
-    await reEncryptBlobs(id, String(media.channel_id), String(media._id), validated.source_url);
+  // Re-encrypt blobs if sourceUrl changed
+  if (oldMedia && validated.source_url && validated.source_url !== oldMedia.sourceUrl) {
+    await reEncryptBlobs(media.id, media.channelId, validated.source_url);
   }
 
   return NextResponse.json({ data: media });
@@ -117,21 +124,21 @@ export async function DELETE(
 ) {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
   const { id } = await params;
 
-  const media = await Media.findById(id);
+  const media = await prisma.media.findUnique({ where: { id } });
   if (!media) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const wasAlreadySoftDeleted = media.deleted_at !== null;
+  const wasAlreadySoftDeleted = media.deletedAt !== null;
 
   // Archive corresponding SatsRail products for individual MediaProducts.
   // ChannelProducts are NOT archived — they cover the whole channel; we only
-  // pull this media's entry from their encrypted_media array (below).
-  const mediaProducts = await MediaProduct.find({ media_id: media._id })
-    .select("satsrail_product_id")
-    .lean();
+  // pull this media's entry from their encryptedMedia rows (below).
+  const mediaProducts = await prisma.mediaProduct.findMany({
+    where: { mediaId: media.id },
+    select: { satsrailProductId: true },
+  });
   const archivedProductIds: string[] = [];
   const archiveErrors: { productId: string; error: string }[] = [];
 
@@ -140,33 +147,35 @@ export async function DELETE(
     if (!sk) {
       console.warn(
         "media.delete: no merchant key — skipping SatsRail archive for products:",
-        mediaProducts.map((mp) => mp.satsrail_product_id)
+        mediaProducts.map((mp) => mp.satsrailProductId)
       );
     } else {
       for (const mp of mediaProducts) {
         try {
-          await satsrail.deleteProduct(sk, mp.satsrail_product_id);
-          archivedProductIds.push(mp.satsrail_product_id);
+          await satsrail.deleteProduct(sk, mp.satsrailProductId);
+          archivedProductIds.push(mp.satsrailProductId);
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown error";
           console.error(
-            `media.delete: failed to archive SatsRail product ${mp.satsrail_product_id}:`,
+            `media.delete: failed to archive SatsRail product ${mp.satsrailProductId}:`,
             message
           );
-          archiveErrors.push({ productId: mp.satsrail_product_id, error: message });
+          archiveErrors.push({ productId: mp.satsrailProductId, error: message });
         }
       }
     }
 
-    await MediaProduct.deleteMany({ media_id: media._id });
+    await prisma.mediaProduct.deleteMany({ where: { mediaId: media.id } });
   }
 
-  // Remove this media from channel product encrypted_media arrays.
+  // Remove this media from any ChannelProduct's encryptedMedia entries.
   try {
-    await ChannelProduct.updateMany(
-      { channel_id: media.channel_id },
-      { $pull: { encrypted_media: { media_id: media._id } } }
-    );
+    await prisma.channelProductMedia.deleteMany({
+      where: {
+        mediaId: media.id,
+        channelProduct: { channelId: media.channelId },
+      },
+    });
   } catch (err) {
     console.error("Failed to clean up channel product blobs:", err);
   }
@@ -174,24 +183,21 @@ export async function DELETE(
   // Decrement channel media count — but only if it wasn't already soft-deleted
   // (legacy state where decrement already happened).
   if (!wasAlreadySoftDeleted) {
-    const { default: Channel } = await import("@/models/Channel");
-    await Channel.findByIdAndUpdate(media.channel_id, {
-      $inc: { media_count: -1 },
+    await prisma.channel.update({
+      where: { id: media.channelId },
+      data: { mediaCount: { decrement: 1 } },
     });
   }
 
-  // For photo media, clean up the encrypted GridFS file so we don't leak
-  // storage. The bytes are useless without a DEK envelope (which we just
-  // deleted along with MediaProduct), but they still occupy space.
-  if (media.media_type === "photo" && media.source_url) {
+  // For photo media, clean up the EncryptedPhotoBlob so we don't leak storage.
+  // The bytes are useless without a DEK envelope (which we just deleted along
+  // with MediaProduct), but they still occupy space.
+  if (media.mediaType === "photo" && media.sourceUrl) {
     try {
-      if (ObjectId.isValid(media.source_url)) {
-        const bucket = await getEncryptedPhotosBucket();
-        await bucket.delete(new ObjectId(media.source_url));
-      }
+      await prisma.encryptedPhotoBlob.delete({ where: { id: media.sourceUrl } });
     } catch (err) {
       console.error(
-        `media.delete: failed to remove encrypted photo bytes ${media.source_url}:`,
+        `media.delete: failed to remove encrypted photo blob ${media.sourceUrl}:`,
         err
       );
       // Continue — orphaned bytes are a soft failure, not a blocking one
@@ -200,7 +206,7 @@ export async function DELETE(
 
   // Hard-delete the media row. SatsRail keeps the transaction history; the
   // audit log below records the deletion event independently of the row.
-  await Media.deleteOne({ _id: media._id });
+  await prisma.media.delete({ where: { id: media.id } });
 
   audit({
     actorId: auth.id,
@@ -211,7 +217,7 @@ export async function DELETE(
     targetId: id,
     details: {
       name: media.name,
-      channel_id: String(media.channel_id),
+      channel_id: media.channelId,
       archived_product_ids: archivedProductIds,
       archive_errors: archiveErrors.length > 0 ? archiveErrors : undefined,
       was_already_soft_deleted: wasAlreadySoftDeleted,

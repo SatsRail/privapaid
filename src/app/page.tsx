@@ -1,11 +1,8 @@
 import { redirect } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { isSetupComplete } from "@/lib/setup";
 import { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
-import Channel from "@/models/Channel";
-import Category from "@/models/Category";
-import Media from "@/models/Media";
 import ViewerShell from "@/components/ViewerShell";
 import HomeContent from "@/components/HomeContent";
 import { buildWebSiteSchema, buildOrganizationSchema } from "@/lib/jsonld";
@@ -31,60 +28,84 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function HomePage() {
-  await connectDB();
-
   const setupComplete = await isSetupComplete();
   if (!setupComplete) redirect("/setup");
 
   const instanceConfig = await getInstanceConfig();
   const { locale } = instanceConfig;
 
-  const categories = await Category.find({ active: true })
-    .sort({ position: 1 })
-    .lean();
+  const categories = await prisma.category.findMany({
+    where: { active: true },
+    orderBy: { position: "asc" },
+  });
 
-  const channelFilter: Record<string, unknown> = { active: true };
-  if (!instanceConfig.nsfw) {
-    channelFilter.nsfw = false;
-  }
-
-  const channels = await Channel.find(channelFilter)
-    .sort({ created_at: -1 })
-    .limit(100)
-    .lean();
+  const channels = await prisma.channel.findMany({
+    where: {
+      active: true,
+      ...(instanceConfig.nsfw ? {} : { nsfw: false }),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      profileImageUrl: true,
+      profileImageBytes: true,
+      categoryId: true,
+    },
+  });
 
   // Fetch media for active channels
-  const channelIds = channels.map((ch) => ch._id);
-  const mediaItems = await Media.find({ channel_id: { $in: channelIds } })
-    .sort({ created_at: -1 })
-    .limit(100)
-    .lean();
+  const channelIds = channels.map((ch) => ch.id);
+  const mediaItems = await prisma.media.findMany({
+    where: { channelId: { in: channelIds } },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      mediaType: true,
+      thumbnailUrl: true,
+      thumbnailBytes: true,
+      previewImageUrls: true,
+      commentsCount: true,
+      channelId: true,
+    },
+  });
 
   // Serialize for client component
   const serializedCategories = categories.map((cat) => ({
-    _id: cat._id.toString(),
+    _id: cat.id,
     name: cat.name,
   }));
 
   const serializedChannels = channels.map((ch) => ({
-    _id: ch._id.toString(),
+    _id: ch.id,
     slug: ch.slug,
     name: ch.name,
-    profile_image_url: ch.profile_image_url,
-    profile_image_id: ch.profile_image_id,
-    category_id: ch.category_id?.toString(),
+    // Pre-resolved avatar URL — see ViewerShell for the same pattern.
+    // MediaCard joins this through `channelAvatarUrl`.
+    profile_image_url: ch.profileImageBytes
+      ? `/api/images/channel/${ch.id}`
+      : ch.profileImageUrl,
+    profile_image_id: undefined,
+    category_id: ch.categoryId ?? undefined,
   }));
 
   const serializedMedia = mediaItems.map((m) => ({
-    _id: m._id.toString(),
+    _id: m.id,
     name: m.name,
     description: m.description,
-    media_type: m.media_type,
-    thumbnail_url: m.thumbnail_url,
-    thumbnail_id: m.thumbnail_id,
-    preview_image_ids: m.preview_image_ids || [],
-    comments_count: m.comments_count,
-    channel_id: m.channel_id.toString(),
+    media_type: m.mediaType,
+    thumbnail_url: m.thumbnailBytes
+      ? `/api/images/media-thumbnail/${m.id}`
+      : m.thumbnailUrl,
+    thumbnail_id: undefined,
+    preview_image_ids: [],
+    comments_count: m.commentsCount,
+    channel_id: m.channelId,
   }));
 
   const webSiteSchema = buildWebSiteSchema(instanceConfig);

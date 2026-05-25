@@ -1,46 +1,40 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { requireCustomerApi } from "@/lib/auth-helpers";
-import Comment from "@/models/Comment";
 
 export async function GET() {
   const customer = await requireCustomerApi();
   if (customer instanceof NextResponse) return customer;
 
-  await connectDB();
-
-  const comments = await Comment.find({ customer_id: customer.id })
-    .sort({ created_at: -1 })
-    .limit(100)
-    .populate({
-      path: "media_id",
-      select: "name channel_id",
-      populate: { path: "channel_id", select: "name slug" },
-    })
-    .lean();
-
-  const data = comments.map((c) => {
-    const media = c.media_id as unknown as {
-      _id: string;
-      name: string;
-      channel_id: { _id: string; name: string; slug: string } | null;
-    } | null;
-
-    return {
-      _id: String(c._id),
-      body: c.body,
-      nickname: c.nickname,
-      created_at: c.created_at,
-      media: media
-        ? {
-            _id: String(media._id),
-            name: media.name,
-            channel_slug: media.channel_id?.slug || null,
-            channel_name: media.channel_id?.name || null,
-          }
-        : null,
-    };
+  const comments = await prisma.comment.findMany({
+    where: { customerId: customer.id },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: {
+      media: {
+        select: {
+          id: true,
+          name: true,
+          channel: { select: { id: true, name: true, slug: true } },
+        },
+      },
+    },
   });
+
+  const data = comments.map((c) => ({
+    _id: c.id,
+    body: c.body,
+    nickname: c.nickname,
+    created_at: c.createdAt,
+    media: c.media
+      ? {
+          _id: c.media.id,
+          name: c.media.name,
+          channel_slug: c.media.channel?.slug ?? null,
+          channel_name: c.media.channel?.name ?? null,
+        }
+      : null,
+  }));
 
   return NextResponse.json({ data });
 }

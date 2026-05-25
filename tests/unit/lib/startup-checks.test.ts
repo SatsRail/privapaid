@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "@/../tests/helpers/mongodb";
-import Settings from "@/models/Settings";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createSettings } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 import { encryptSecretKey } from "@/lib/encryption";
 import { checkEncryptionKeyMatchesDb } from "@/lib/startup-checks";
-import * as mongodb from "@/lib/mongodb";
 
 describe("startup-checks", () => {
   const originalKey = process.env.SK_ENCRYPTION_KEY;
@@ -28,35 +27,28 @@ describe("startup-checks", () => {
     vi.unstubAllEnvs();
   });
 
-  it("no-ops when no Settings document exists", async () => {
+  it("no-ops when no Settings row exists", async () => {
     await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
   });
 
   it("no-ops when Settings has no encrypted key", async () => {
-    await Settings.create({ instance_name: "Test" });
+    await createSettings({ instanceName: "Test" });
     await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
   });
 
   it("succeeds when the encrypted key decrypts with current SK_ENCRYPTION_KEY", async () => {
     const encrypted = encryptSecretKey("sk_live_real");
-    await Settings.create({
-      instance_name: "Test",
-      satsrail_api_key_encrypted: encrypted,
-    });
+    await createSettings({ instanceName: "Test", satsrailApiKeyEncrypted: encrypted });
     await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
   });
 
   it("warns and does NOT exit in non-production when the key mismatches", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const encrypted = encryptSecretKey("sk_live_real");
-    await Settings.create({
-      instance_name: "Test",
-      satsrail_api_key_encrypted: encrypted,
-    });
+    await createSettings({ instanceName: "Test", satsrailApiKeyEncrypted: encrypted });
 
     // Rotate the key — the existing ciphertext can no longer be decrypted.
-    process.env.SK_ENCRYPTION_KEY =
-      "f".repeat(64);
+    process.env.SK_ENCRYPTION_KEY = "f".repeat(64);
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation(() => {
@@ -71,70 +63,32 @@ describe("startup-checks", () => {
     expect(msg).toContain("SK_ENCRYPTION_KEY does not decrypt");
   });
 
-  it("warns and bails out when MongoDB is unreachable at startup", async () => {
-    // Force the "mongoose not connected" branch by stubbing readyState != 1,
-    // then make connectDB() reject. The probe should swallow the error and
-    // log a warning instead of crashing — boot should not be blocked by a
-    // momentarily unreachable database.
-    const original = mongoose.connection.readyState;
-    Object.defineProperty(mongoose.connection, "readyState", {
-      configurable: true,
-      get: () => 0, // 0 = disconnected
-    });
-    const connectSpy = vi
-      .spyOn(mongodb, "connectDB")
-      .mockRejectedValue(new Error("ECONNREFUSED 127.0.0.1:27017"));
+  it("warns and bails out when Postgres is unreachable at startup", async () => {
+    const findFirstSpy = vi
+      .spyOn(prisma.settings, "findFirst")
+      .mockRejectedValue(new Error("ECONNREFUSED 127.0.0.1:5432"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    try {
-      await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
-      expect(connectSpy).toHaveBeenCalled();
-      expect(warn).toHaveBeenCalled();
-      expect(warn.mock.calls.flat().join(" ")).toContain(
-        "MongoDB unreachable, skipping encryption-key probe"
-      );
-    } finally {
-      Object.defineProperty(mongoose.connection, "readyState", {
-        configurable: true,
-        value: original,
-        writable: true,
-      });
-    }
+    await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
+    expect(findFirstSpy).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(" ")).toContain(
+      "Postgres unreachable, skipping encryption-key probe"
+    );
   });
 
-  it("logs a non-Error rejection from connectDB without crashing", async () => {
-    // Same branch as above but exercising the `err instanceof Error ? ... : err`
-    // ternary's else side — connectDB rejects with a plain string.
-    const original = mongoose.connection.readyState;
-    Object.defineProperty(mongoose.connection, "readyState", {
-      configurable: true,
-      get: () => 0,
-    });
-    vi.spyOn(mongodb, "connectDB").mockRejectedValue("kaboom");
+  it("logs a non-Error rejection from findFirst without crashing", async () => {
+    vi.spyOn(prisma.settings, "findFirst").mockRejectedValue("kaboom");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    try {
-      await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
-      // The non-Error branch passes the raw value through.
-      expect(warn.mock.calls.flat()).toContain("kaboom");
-    } finally {
-      Object.defineProperty(mongoose.connection, "readyState", {
-        configurable: true,
-        value: original,
-        writable: true,
-      });
-    }
+    await expect(checkEncryptionKeyMatchesDb()).resolves.toBeUndefined();
+    expect(warn.mock.calls.flat()).toContain("kaboom");
   });
 
   it("logs a non-Error decrypt failure in non-production", async () => {
-    // Cover the `err instanceof Error ? err.message : err` else side in the
-    // decrypt-failure path. Stub decryptSecretKey to throw a plain string.
     vi.stubEnv("NODE_ENV", "development");
     const encrypted = encryptSecretKey("sk_live_real");
-    await Settings.create({
-      instance_name: "Test",
-      satsrail_api_key_encrypted: encrypted,
-    });
+    await createSettings({ instanceName: "Test", satsrailApiKeyEncrypted: encrypted });
 
     const encryption = await import("@/lib/encryption");
     vi.spyOn(encryption, "decryptSecretKey").mockImplementation(() => {
@@ -150,10 +104,7 @@ describe("startup-checks", () => {
   it("exits in production when the key mismatches", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const encrypted = encryptSecretKey("sk_live_real");
-    await Settings.create({
-      instance_name: "Test",
-      satsrail_api_key_encrypted: encrypted,
-    });
+    await createSettings({ instanceName: "Test", satsrailApiKeyEncrypted: encrypted });
 
     process.env.SK_ENCRYPTION_KEY = "f".repeat(64);
 

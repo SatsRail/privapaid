@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
-import Channel from "@/models/Channel";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { satsrail } from "@/lib/satsrail";
@@ -21,7 +18,6 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await connectDB();
   const { id: mediaId } = await params;
   const body = await req.json();
 
@@ -31,7 +27,7 @@ export async function POST(
     currency,
     access_duration_seconds,
     image_url,
-    dek, // optional — required when media_type === "photo" (envelope encryption)
+    dek, // optional — required when mediaType === "photo" (envelope encryption)
   } = body;
   if (!name || !price_cents) {
     return NextResponse.json(
@@ -41,27 +37,29 @@ export async function POST(
   }
 
   // 1. Fetch media, channel, and merchant key
-  const media = await Media.findById(mediaId);
+  const media = await prisma.media.findUnique({ where: { id: mediaId } });
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
   // Photo media uses envelope encryption: the plaintext we wrap with the
-  // product key is the per-photo DEK, not the source_url. The client must
+  // product key is the per-photo DEK, not the sourceUrl. The client must
   // supply the DEK from the upload response — we never persist it server-side.
-  if (media.media_type === "photo" && !dek) {
+  if (media.mediaType === "photo" && !dek) {
     return NextResponse.json(
       { error: "dek is required for photo media" },
       { status: 422 }
     );
   }
 
-  const channel = await Channel.findById(media.channel_id);
+  const channel = await prisma.channel.findUnique({
+    where: { id: media.channelId },
+  });
   if (!channel) {
     return NextResponse.json({ error: "Channel not found" }, { status: 422 });
   }
 
-  if (!channel.satsrail_product_type_id) {
+  if (!channel.satsrailProductTypeId) {
     return NextResponse.json(
       { error: "Channel has no SatsRail product type. Re-create the channel or configure it manually." },
       { status: 422 }
@@ -84,7 +82,7 @@ export async function POST(
       currency,
       access_duration_seconds,
       image_url,
-      product_type_id: channel.satsrail_product_type_id,
+      product_type_id: channel.satsrailProductTypeId,
       external_ref: `md_${media.ref}`,
     });
 
@@ -93,25 +91,27 @@ export async function POST(
 
     // 4. Encrypt the content payload
     //    - For photo media: wrap the per-photo DEK (envelope encryption).
-    //      `media.source_url` holds the GridFS pointer to the ciphertext.
-    //    - For everything else: encrypt the source_url itself.
-    const plaintext = media.media_type === "photo" ? (dek as string) : media.source_url;
+    //      `media.sourceUrl` holds the EncryptedPhotoBlob.id.
+    //    - For everything else: encrypt the sourceUrl itself.
+    const plaintext = media.mediaType === "photo" ? (dek as string) : media.sourceUrl;
     const encryptedSourceUrl = encryptSourceUrl(plaintext, key, product.id);
 
     // 5. Create MediaProduct with key fingerprint and cached metadata
-    const mediaProduct = await MediaProduct.create({
-      media_id: mediaId,
-      satsrail_product_id: product.id,
-      encrypted_source_url: encryptedSourceUrl,
-      key_fingerprint,
-      product_name: product.name,
-      product_price_cents: product.price_cents,
-      product_currency: product.currency,
-      product_access_duration_seconds: product.access_duration_seconds,
-      product_status: product.status,
-      product_slug: product.slug,
-      product_external_ref: product.external_ref ?? `md_${media.ref}`,
-      synced_at: new Date(),
+    const mediaProduct = await prisma.mediaProduct.create({
+      data: {
+        mediaId,
+        satsrailProductId: product.id,
+        encryptedSourceUrl,
+        keyFingerprint: key_fingerprint,
+        productName: product.name,
+        productPriceCents: product.price_cents,
+        productCurrency: product.currency,
+        productAccessDurationSeconds: product.access_duration_seconds,
+        productStatus: product.status,
+        productSlug: product.slug,
+        productExternalRef: product.external_ref ?? `md_${media.ref}`,
+        syncedAt: new Date(),
+      },
     });
 
     return NextResponse.json(

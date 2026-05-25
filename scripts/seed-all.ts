@@ -8,7 +8,7 @@
  *   1. seed-categories.ts (creates PrivaPaid categories)
  *   2. seed-admin.ts (creates superadmin — requires ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD env vars)
  *
- * Requires MONGODB_URI in .env.local or environment.
+ * Requires DATABASE_URL in .env.local or environment.
  * Admin seed requires ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD env vars.
  */
 

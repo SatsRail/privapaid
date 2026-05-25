@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -11,9 +10,8 @@ export async function GET(
 ) {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
   const { id } = await params;
-  const category = await Category.findById(id).lean();
+  const category = await prisma.category.findUnique({ where: { id } });
   if (!category) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -29,19 +27,23 @@ export async function PATCH(
   const result = await validateBody(req, schemas.categoryUpdate);
   if (isValidationError(result)) return result;
 
-  await connectDB();
   const { id } = await params;
 
-  const updates: Record<string, unknown> = {};
+  const updates: {
+    name?: string;
+    slug?: string;
+    position?: number;
+    active?: boolean;
+  } = {};
   if (result.name !== undefined) updates.name = result.name;
   if (result.slug !== undefined) updates.slug = result.slug;
   if (result.position !== undefined) updates.position = result.position;
   if (result.active !== undefined) updates.active = result.active;
 
   if (updates.slug) {
-    const existing = await Category.findOne({
-      slug: updates.slug,
-      _id: { $ne: id },
+    const existing = await prisma.category.findFirst({
+      where: { slug: updates.slug, NOT: { id } },
+      select: { id: true },
     });
     if (existing) {
       return NextResponse.json(
@@ -51,11 +53,10 @@ export async function PATCH(
     }
   }
 
-  const category = await Category.findByIdAndUpdate(id, updates, {
-    returnDocument: "after",
-  }).lean();
-
-  if (!category) {
+  let category;
+  try {
+    category = await prisma.category.update({ where: { id }, data: updates });
+  } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -78,14 +79,14 @@ export async function DELETE(
 ) {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
   const { id } = await params;
-  const category = await Category.findByIdAndUpdate(
-    id,
-    { active: false },
-    { returnDocument: "after" }
-  ).lean();
-  if (!category) {
+  let category;
+  try {
+    category = await prisma.category.update({
+      where: { id },
+      data: { active: false },
+    });
+  } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

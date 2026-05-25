@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
+import { prisma } from "@/lib/prisma";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
@@ -9,11 +8,10 @@ export const dynamic = "force-dynamic";
 
 export default async function ChannelsPage() {
   const { locale } = await getInstanceConfig();
-  await connectDB();
-  const channels = await Channel.find()
-    .sort({ created_at: -1 })
-    .populate("category_id", "name")
-    .lean();
+  const channels = await prisma.channel.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { category: { select: { name: true } } },
+  });
 
   return (
     <div>
@@ -42,20 +40,20 @@ export default async function ChannelsPage() {
           </thead>
           <tbody className="divide-y divide-[var(--theme-border)]">
             {channels.map((ch) => {
-              const cat = ch.category_id as { name?: string } | null;
+              const cat = ch.category;
               return (
-                <tr key={String(ch._id)} className="hover:bg-[var(--theme-bg-secondary)]">
+                <tr key={ch.id} className="hover:bg-[var(--theme-bg-secondary)]">
                   <td className="px-4 py-3 font-mono text-xs text-[var(--theme-text-secondary)]">
                     {ch.ref != null ? `ch_${ch.ref}` : "—"}
                   </td>
                   <td className="px-4 py-3 font-medium">
-                    <Link href={`/admin/channels/${ch._id}`} className="hover:text-[var(--theme-primary)]">
+                    <Link href={`/admin/channels/${ch.id}`} className="hover:text-[var(--theme-primary)]">
                       {ch.name}
                     </Link>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--theme-text-secondary)]">{ch.slug}</td>
                   <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{cat?.name || "—"}</td>
-                  <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{ch.media_count}</td>
+                  <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{ch.mediaCount}</td>
                   <td className="px-4 py-3">
                     <Badge color={ch.active ? "green" : "red"}>
                       {ch.active ? t(locale, "admin.channels.active") : t(locale, "admin.channels.inactive")}
@@ -63,7 +61,7 @@ export default async function ChannelsPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
-                      href={`/admin/channels/${ch._id}/edit`}
+                      href={`/admin/channels/${ch.id}/edit`}
                       className="text-[var(--theme-primary)] hover:underline"
                     >
                       {t(locale, "admin.channels.edit")}

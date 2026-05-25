@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { connectDB } from "@/lib/mongodb";
-import Customer from "@/models/Customer";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { rateLimit } from "@/lib/rate-limit";
 import { checkBreachedPassword } from "@/lib/breached-password";
@@ -32,11 +32,12 @@ export async function POST(req: Request) {
       );
     }
 
-    await connectDB();
-
-    const existing = await Customer.findOne({ nickname })
-      .collation({ locale: "en", strength: 2 })
-      .lean();
+    // Customer.nickname is citext + unique, so the case-insensitive check
+    // happens at the index level.
+    const existing = await prisma.customer.findUnique({
+      where: { nickname },
+      select: { id: true },
+    });
     if (existing) {
       return NextResponse.json(
         { error: "Nickname already taken" },
@@ -44,25 +45,25 @@ export async function POST(req: Request) {
       );
     }
 
-    const password_hash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 12);
 
     try {
-      const customer = await Customer.create({
-        nickname,
-        password_hash,
+      const customer = await prisma.customer.create({
+        data: {
+          nickname,
+          passwordHash,
+        },
       });
 
       return NextResponse.json(
-        { id: customer._id, nickname: customer.nickname },
+        { id: customer.id, nickname: customer.nickname },
         { status: 201 }
       );
     } catch (createErr: unknown) {
-      // Handle race condition: unique index violation
+      // Handle race condition: unique constraint violation (P2002)
       if (
-        createErr &&
-        typeof createErr === "object" &&
-        "code" in createErr &&
-        (createErr as { code: number }).code === 11000
+        createErr instanceof Prisma.PrismaClientKnownRequestError &&
+        createErr.code === "P2002"
       ) {
         return NextResponse.json(
           { error: "Nickname already taken" },

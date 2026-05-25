@@ -10,6 +10,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Generate Prisma client (needs prisma/schema.prisma on disk; already copied
+# via COPY . . above). The postinstall hook covers fresh npm ci, but in this
+# stage node_modules came from `deps` cache so we run it explicitly.
+RUN npx prisma generate
+
 # Build arguments become env vars at build time (required by Next.js at build)
 # These are baked into the client bundle — only public-safe values here
 ARG NEXT_PUBLIC_INSTANCE_NAME=""
@@ -40,6 +45,13 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=build --chown=nextjs:nodejs /app/public ./public
+
+# Ship the Prisma schema + migrations so `prisma migrate deploy` can run at
+# startup, plus the prisma CLI for the entrypoint to invoke.
+COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
 
 # Copy entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./

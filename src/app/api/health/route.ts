@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const result: Record<string, string> = { status: "ok" };
 
-  // Check MongoDB
+  // Check Postgres
   try {
-    const mongoose = await connectDB();
-    const state = mongoose.connection.readyState;
-    result.mongo = state === 1 ? "connected" : `state_${state}`;
+    await prisma.$queryRaw`SELECT 1`;
+    result.db = "connected";
   } catch {
     result.status = "degraded";
-    result.mongo = "disconnected";
+    result.db = "disconnected";
   }
 
   // Check SatsRail API reachability

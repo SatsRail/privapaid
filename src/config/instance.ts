@@ -1,5 +1,4 @@
-import { connectDB } from "@/lib/mongodb";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 export interface ThemeConfig {
   primary: string;
   bg: string;
@@ -67,40 +66,41 @@ export default config;
 
 export { DEFAULT_THEME };
 
-// Async version that reads from MongoDB on every request (no caching).
+// Async version that reads from Postgres on every request (no caching).
 // All pages use force-dynamic, so fresh reads are expected.
 export async function getInstanceConfig(): Promise<InstanceConfig> {
   try {
-    await connectDB();
-    const settings = await Settings.findOne({ setup_completed: true }).lean();
+    const settings = await prisma.settings.findFirst({
+      where: { setupCompleted: true },
+    });
     if (settings) {
       return {
-        name: settings.instance_name || config.name,
-        domain: settings.instance_domain || config.domain,
-        nsfw: settings.nsfw_enabled ?? config.nsfw,
-        adultDisclaimer: settings.adult_disclaimer || "",
-        aboutText: settings.about_text || "",
-        locale: settings.merchant_locale || "en",
-        currency: settings.merchant_currency || "USD",
+        name: settings.instanceName || config.name,
+        domain: settings.instanceDomain || config.domain,
+        nsfw: settings.nsfwEnabled ?? config.nsfw,
+        adultDisclaimer: settings.adultDisclaimer || "",
+        aboutText: settings.aboutText || "",
+        locale: settings.merchantLocale || "en",
+        currency: settings.merchantCurrency || "USD",
         theme: {
-          primary: settings.theme_primary || DEFAULT_THEME.primary,
-          bg: settings.theme_bg || DEFAULT_THEME.bg,
-          bgSecondary: settings.theme_bg_secondary || DEFAULT_THEME.bgSecondary,
-          text: settings.theme_text || DEFAULT_THEME.text,
-          textSecondary: settings.theme_text_secondary || DEFAULT_THEME.textSecondary,
-          heading: settings.theme_heading || DEFAULT_THEME.heading,
-          border: settings.theme_border || DEFAULT_THEME.border,
-          font: settings.theme_font || DEFAULT_THEME.font,
-          logo: settings.logo_image_id
-            ? `/api/images/${settings.logo_image_id}`
-            : settings.logo_url || DEFAULT_THEME.logo,
+          primary: settings.themePrimary || DEFAULT_THEME.primary,
+          bg: settings.themeBg || DEFAULT_THEME.bg,
+          bgSecondary: settings.themeBgSecondary || DEFAULT_THEME.bgSecondary,
+          text: settings.themeText || DEFAULT_THEME.text,
+          textSecondary: settings.themeTextSecondary || DEFAULT_THEME.textSecondary,
+          heading: settings.themeHeading || DEFAULT_THEME.heading,
+          border: settings.themeBorder || DEFAULT_THEME.border,
+          font: settings.themeFont || DEFAULT_THEME.font,
+          logo: settings.logoBytes
+            ? `/api/images/logo`
+            : settings.logoUrl || DEFAULT_THEME.logo,
         },
         satsrail: {
-          apiUrl: settings.satsrail_api_url || config.satsrail.apiUrl,
+          apiUrl: settings.satsrailApiUrl || config.satsrail.apiUrl,
         },
-        googleAnalyticsId: settings.google_analytics_id || config.googleAnalyticsId,
-        googleSiteVerification: settings.google_site_verification || config.googleSiteVerification,
-        sentryDsn: settings.sentry_dsn || config.sentryDsn,
+        googleAnalyticsId: settings.googleAnalyticsId || config.googleAnalyticsId,
+        googleSiteVerification: settings.googleSiteVerification || config.googleSiteVerification,
+        sentryDsn: settings.sentryDsn || config.sentryDsn,
       };
     }
   } catch {
@@ -111,5 +111,6 @@ export async function getInstanceConfig(): Promise<InstanceConfig> {
 }
 
 // No-op: caching was removed but callers still reference this.
- 
-export function clearConfigCache(): void { /* intentional no-op */ }
+export function clearConfigCache(): void {
+  /* intentional no-op */
+}

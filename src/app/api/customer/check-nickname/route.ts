@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Customer from "@/models/Customer";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   const nickname = req.nextUrl.searchParams.get("nickname");
@@ -9,11 +8,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false });
   }
 
-  await connectDB();
-
-  const existing = await Customer.findOne({ nickname })
-    .collation({ locale: "en", strength: 2 })
-    .lean();
+  // Customer.nickname is a citext column with a unique index — the
+  // case-insensitive match happens at the DB level (no app-side collation).
+  const existing = await prisma.customer.findUnique({
+    where: { nickname },
+    select: { id: true },
+  });
 
   return NextResponse.json({ available: !existing });
 }

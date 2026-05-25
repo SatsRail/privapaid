@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
@@ -20,29 +16,36 @@ export async function POST(req: Request) {
 
     const { media_id, product_id } = result;
 
-    await connectDB();
-
     // Find the media and its channel
-    const media = await Media.findById(media_id);
+    const media = await prisma.media.findUnique({
+      where: { id: media_id },
+      select: { id: true, channelId: true },
+    });
     if (!media) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
 
-    const channel = await Channel.findById(media.channel_id);
+    const channel = await prisma.channel.findUnique({
+      where: { id: media.channelId },
+      select: { active: true },
+    });
     if (!channel || !channel.active) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
 
     // Verify the product belongs to this media (media-level or channel-level)
-    const mediaProduct = await MediaProduct.findOne({
-      media_id: media._id,
-      satsrail_product_id: product_id,
+    const mediaProduct = await prisma.mediaProduct.findFirst({
+      where: { mediaId: media.id, satsrailProductId: product_id },
+      select: { id: true },
     });
     if (!mediaProduct) {
-      const channelProduct = await ChannelProduct.findOne({
-        channel_id: media.channel_id,
-        satsrail_product_id: product_id,
-        "encrypted_media.media_id": media._id,
+      const channelProduct = await prisma.channelProduct.findFirst({
+        where: {
+          channelId: media.channelId,
+          satsrailProductId: product_id,
+          encryptedMedia: { some: { mediaId: media.id } },
+        },
+        select: { id: true },
       });
       if (!channelProduct) {
         return NextResponse.json(

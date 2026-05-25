@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -10,11 +9,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock audit
@@ -75,7 +69,7 @@ describe("Admin Categories [id] routes", () => {
   describe("GET /api/admin/categories/:id", () => {
     it("returns category by ID", async () => {
       const category = await createCategory({ name: "Music", slug: "music" });
-      const [req, ctx] = buildRequest("GET", category._id.toString());
+      const [req, ctx] = buildRequest("GET", category.id);
       const res = await GET(req, ctx);
       const body = await res.json();
 
@@ -85,7 +79,7 @@ describe("Admin Categories [id] routes", () => {
     });
 
     it("returns 404 for missing ID", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("GET", fakeId);
       const res = await GET(req, ctx);
 
@@ -98,7 +92,7 @@ describe("Admin Categories [id] routes", () => {
   describe("PATCH /api/admin/categories/:id", () => {
     it("updates category name", async () => {
       const category = await createCategory({ name: "Old Name", slug: "old-name" });
-      const [req, ctx] = buildRequest("PATCH", category._id.toString(), { name: "New Name" });
+      const [req, ctx] = buildRequest("PATCH", category.id, { name: "New Name" });
       const res = await PATCH(req, ctx);
       const body = await res.json();
 
@@ -109,7 +103,7 @@ describe("Admin Categories [id] routes", () => {
     it("rejects duplicate slug", async () => {
       await createCategory({ name: "Existing", slug: "existing-slug" });
       const target = await createCategory({ name: "Target", slug: "target-slug" });
-      const [req, ctx] = buildRequest("PATCH", target._id.toString(), {
+      const [req, ctx] = buildRequest("PATCH", target.id, {
         slug: "existing-slug",
       });
       const res = await PATCH(req, ctx);
@@ -120,7 +114,7 @@ describe("Admin Categories [id] routes", () => {
     });
 
     it("returns 404 for missing category", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("PATCH", fakeId, { name: "Nope" });
       const res = await PATCH(req, ctx);
 
@@ -131,7 +125,7 @@ describe("Admin Categories [id] routes", () => {
   describe("DELETE /api/admin/categories/:id", () => {
     it("soft-deletes category (sets active: false)", async () => {
       const category = await createCategory({ name: "ToDelete", slug: "to-delete", active: true });
-      const [req, ctx] = buildRequest("DELETE", category._id.toString());
+      const [req, ctx] = buildRequest("DELETE", category.id);
       const res = await DELETE(req, ctx);
       const body = await res.json();
 
@@ -140,7 +134,7 @@ describe("Admin Categories [id] routes", () => {
     });
 
     it("returns 404 for missing category", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("DELETE", fakeId);
       const res = await DELETE(req, ctx);
 
@@ -151,7 +145,7 @@ describe("Admin Categories [id] routes", () => {
   describe("PATCH branch coverage", () => {
     it("updates slug, position, and active in one call", async () => {
       const category = await createCategory({ name: "Multi", slug: "multi", position: 1, active: true });
-      const [req, ctx] = buildRequest("PATCH", category._id.toString(), {
+      const [req, ctx] = buildRequest("PATCH", category.id, {
         slug: "multi-updated",
         position: 9,
         active: false,
@@ -166,7 +160,7 @@ describe("Admin Categories [id] routes", () => {
 
     it("returns 400 when payload fails validation", async () => {
       const category = await createCategory({ name: "Vfail", slug: "vfail" });
-      const [req, ctx] = buildRequest("PATCH", category._id.toString(), {
+      const [req, ctx] = buildRequest("PATCH", category.id, {
         slug: "INVALID UPPER",
       });
       const res = await PATCH(req, ctx);
@@ -189,7 +183,7 @@ describe("Admin Categories [id] routes", () => {
       vi.mocked(requireAdminApi).mockResolvedValueOnce(
         NextResponse.json({ error: "Forbidden" }, { status: 403 })
       );
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("GET", fakeId);
       const res = await GET(req, ctx);
       expect(res.status).toBe(403);
@@ -199,7 +193,7 @@ describe("Admin Categories [id] routes", () => {
       vi.mocked(requireAdminApi).mockResolvedValueOnce(
         NextResponse.json({ error: "Forbidden" }, { status: 403 })
       );
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("PATCH", fakeId, { name: "X" });
       const res = await PATCH(req, ctx);
       expect(res.status).toBe(403);
@@ -209,7 +203,7 @@ describe("Admin Categories [id] routes", () => {
       vi.mocked(requireAdminApi).mockResolvedValueOnce(
         NextResponse.json({ error: "Forbidden" }, { status: 403 })
       );
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       const [req, ctx] = buildRequest("DELETE", fakeId);
       const res = await DELETE(req, ctx);
       expect(res.status).toBe(403);

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -10,11 +9,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock audit
@@ -73,8 +67,8 @@ describe("GET /api/search", () => {
   });
 
   it("finds channels by name", async () => {
-    await createChannel({ name: "Cooking Show", slug: "cooking-show", active: true, nsfw: false });
-    await createChannel({ name: "Gaming Live", slug: "gaming-live", active: true, nsfw: false });
+    await createChannel({ name: "Cooking Show", slug: "cooking-show", active: true });
+    await createChannel({ name: "Gaming Live", slug: "gaming-live", active: true });
 
     const req = buildSearchRequest("Cooking");
     const res = await GET(req);
@@ -91,15 +85,14 @@ describe("GET /api/search", () => {
       name: "Tech Channel",
       slug: "tech-channel",
       active: true,
-      nsfw: false,
     });
-    await createMedia(channel._id.toString(), {
+    await createMedia(channel.id, {
       name: "JavaScript Tutorial",
-      media_type: "video",
+      mediaType: "video",
     });
-    await createMedia(channel._id.toString(), {
+    await createMedia(channel.id, {
       name: "Python Basics",
-      media_type: "video",
+      mediaType: "video",
     });
 
     const req = buildSearchRequest("JavaScript");
@@ -113,8 +106,7 @@ describe("GET /api/search", () => {
   });
 
   it("respects NSFW filter", async () => {
-    // config.nsfw is false — NSFW channels should be hidden
-    await createChannel({ name: "Safe Channel", slug: "safe-channel", active: true, nsfw: false });
+    await createChannel({ name: "Safe Channel", slug: "safe-channel", active: true });
     await createChannel({ name: "NSFW Channel", slug: "nsfw-channel", active: true, nsfw: true });
 
     const req = buildSearchRequest("Channel");
@@ -128,9 +120,8 @@ describe("GET /api/search", () => {
   });
 
   it("includes NSFW channels when config.nsfw is true", async () => {
-    // Flip config — both branches of `!config.nsfw ? ...` need coverage.
     mockConfig.nsfw = true;
-    await createChannel({ name: "Safe Channel", slug: "safe-channel", active: true, nsfw: false });
+    await createChannel({ name: "Safe Channel", slug: "safe-channel", active: true });
     await createChannel({ name: "NSFW Channel", slug: "nsfw-channel", active: true, nsfw: true });
 
     const req = buildSearchRequest("Channel");
@@ -143,18 +134,15 @@ describe("GET /api/search", () => {
   });
 
   it("drops media whose channel is hidden by the NSFW filter", async () => {
-    // config.nsfw is false — media on an NSFW channel must be excluded
-    // even when the media name matches. Exercises the
-    // `if (!channelSlug) continue` skip branch (line 77).
     const hidden = await createChannel({
       name: "Adult Channel",
       slug: "adult-channel",
       active: true,
       nsfw: true,
     });
-    await createMedia(hidden._id.toString(), {
+    await createMedia(hidden.id, {
       name: "Spicy Tutorial",
-      media_type: "video",
+      mediaType: "video",
     });
 
     const req = buildSearchRequest("Spicy");

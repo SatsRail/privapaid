@@ -14,36 +14,28 @@
  * we log a warning and continue so local workflows aren't blocked.
  */
 
-import mongoose from "mongoose";
-import { connectDB } from "@/lib/mongodb";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 import { decryptSecretKey } from "@/lib/encryption";
 
 export async function checkEncryptionKeyMatchesDb(): Promise<void> {
   // Only meaningful if there's an existing encrypted key to trial-decrypt.
   // On a brand-new install (no setup completed) there's nothing to check.
-  // Reuse an existing mongoose connection if tests (or another runtime) have
-  // already opened one — connectDB() reads MONGODB_URI fresh and would not
-  // see test-time memory-server URIs that were dialed directly.
-  if (mongoose.connection.readyState !== 1) {
-    try {
-      await connectDB();
-    } catch (err) {
-      // If Mongo isn't reachable at startup, leave that for the existing
-      // connection-error handling to surface. Don't block boot on it.
-      console.warn(
-        "startup-checks: MongoDB unreachable, skipping encryption-key probe",
-        err instanceof Error ? err.message : err
-      );
-      return;
-    }
+  let settings: { satsrailApiKeyEncrypted: string | null } | null;
+  try {
+    settings = await prisma.settings.findFirst({
+      select: { satsrailApiKeyEncrypted: true },
+    });
+  } catch (err) {
+    // If Postgres isn't reachable at startup, leave that for the existing
+    // connection-error handling to surface. Don't block boot on it.
+    console.warn(
+      "startup-checks: Postgres unreachable, skipping encryption-key probe",
+      err instanceof Error ? err.message : err
+    );
+    return;
   }
 
-  const settings = await Settings.findOne()
-    .select("satsrail_api_key_encrypted")
-    .lean();
-
-  const ciphertext = settings?.satsrail_api_key_encrypted;
+  const ciphertext = settings?.satsrailApiKeyEncrypted;
   if (!ciphertext) return;
 
   try {

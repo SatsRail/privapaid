@@ -1,19 +1,18 @@
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
+import { prisma } from "@/lib/prisma";
 import config from "@/config/instance";
 import ChannelForm from "../ChannelForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewChannelPage() {
-  await connectDB();
-  const categories = await Category.find({ active: true })
-    .sort({ position: 1 })
-    .select("name")
-    .lean();
+  const categories = await prisma.category.findMany({
+    where: { active: true },
+    orderBy: { position: "asc" },
+    select: { id: true, name: true },
+  });
 
   const cats = categories.map((c) => ({
-    _id: String(c._id),
+    _id: c.id,
     name: c.name,
   }));
 

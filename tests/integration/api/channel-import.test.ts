@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { randomBytes } from "crypto";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia } from "../../helpers/factories";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 
 function generateProductKey(): string {
   return randomBytes(32).toString("base64url");
@@ -16,11 +13,6 @@ function generateProductKey(): string {
 const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock satsrail client
@@ -131,7 +123,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = "ckmissingfakefakefakefake";
     const [req, ctx] = channelImportRequest(fakeId, {
       version: "1.0",
       media: [{ name: "X", source_url: "https://x.com" }],
@@ -149,7 +141,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       name: `Video ${i}`,
       source_url: `https://example.com/v${i}.mp4`,
     }));
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media,
     });
@@ -165,7 +157,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     });
     const channel = await createChannel({ slug: "import-ch", name: "Import Channel" });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         { name: "Video 1", source_url: "https://example.com/v1.mp4", media_type: "video" },
@@ -179,14 +171,14 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(mediaR.created).toBe(2);
     expect(mediaR.updated).toBe(0);
 
-    const media = await Media.find({ channel_id: channel._id }).sort({ position: 1 }).lean();
+    const media = await prisma.media.findMany({ where: { channelId: channel.id }, orderBy: { position: "asc" } });
     expect(media).toHaveLength(2);
     expect(media[0].name).toBe("Video 1");
     expect(media[1].name).toBe("Audio 1");
 
-    // media_count should be incremented
-    const updatedChannel = await Channel.findById(channel._id).lean();
-    expect(updatedChannel!.media_count).toBe(2);
+    // mediaCount should be incremented
+    const updatedChannel = await prisma.channel.findUnique({ where: { id: channel.id } });
+    expect(updatedChannel!.mediaCount).toBe(2);
   });
 
   it("updates existing media by ref", async () => {
@@ -194,13 +186,13 @@ describe("POST /api/admin/channels/[id]/import", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ slug: "ref-ch", name: "Ref Channel" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "Old Name",
       ref: 42,
-      source_url: "https://example.com/old.mp4",
+      sourceUrl: "https://example.com/old.mp4",
     });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -218,9 +210,9 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(mediaR.updated).toBe(1);
     expect(mediaR.created).toBe(0);
 
-    const media = await Media.findOne({ ref: 42 }).lean();
+    const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    expect(media!.source_url).toBe("https://example.com/new.mp4");
+    expect(media!.sourceUrl).toBe("https://example.com/new.mp4");
   });
 
   it("updates existing media by name when ref is not provided", async () => {
@@ -228,13 +220,13 @@ describe("POST /api/admin/channels/[id]/import", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ slug: "name-ch", name: "Name Channel" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "My Video",
-      source_url: "https://example.com/old.mp4",
+      sourceUrl: "https://example.com/old.mp4",
       description: "old description",
     });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -249,7 +241,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
     expect((body.results.media as { updated: number }).updated).toBe(1);
 
-    const media = await Media.findOne({ name: "My Video" }).lean();
+    const media = await prisma.media.findFirst({ where: { name: "My Video" } });
     expect(media!.description).toBe("new description");
   });
 
@@ -262,13 +254,13 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const channel = await createChannel({
       slug: "paid-ch",
       name: "Paid Channel",
-      satsrail_product_type_id: "pt_existing",
+      satsrailProductTypeId: "pt_existing",
     });
 
     mockCreateProduct.mockResolvedValue({ id: "prod_abc" });
     mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_123" });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -290,11 +282,11 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(mediaR.created).toBe(1);
     expect(mediaR.errors).toHaveLength(0);
 
-    const mediaProducts = await MediaProduct.find().lean();
+    const mediaProducts = await prisma.mediaProduct.findMany();
     expect(mediaProducts).toHaveLength(1);
-    expect(mediaProducts[0].satsrail_product_id).toBe("prod_abc");
-    expect(mediaProducts[0].encrypted_source_url).toBeDefined();
-    expect(mediaProducts[0].key_fingerprint).toBe("fp_123");
+    expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
+    expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
+    expect(mediaProducts[0].keyFingerprint).toBe("fp_123");
   });
 
   it("honors JSON product.external_ref when creating a SatsRail product", async () => {
@@ -306,13 +298,13 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const channel = await createChannel({
       slug: "ext-ref-ch",
       name: "Ext Ref",
-      satsrail_product_type_id: "pt_x",
+      satsrailProductTypeId: "pt_x",
     });
 
     mockCreateProduct.mockResolvedValue({ id: "prod_ext" });
     mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_ext" });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -333,8 +325,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       "sk_live_test_key",
       expect.objectContaining({ external_ref: "md_special_42" })
     );
-    const mp = await MediaProduct.findOne().lean();
-    expect(mp!.product_external_ref).toBe("md_special_42");
+    const mp = await prisma.mediaProduct.findFirst();
+    expect(mp!.productExternalRef).toBe("md_special_42");
   });
 
   it("creates product type for channel without one when importing media with products", async () => {
@@ -346,14 +338,14 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const channel = await createChannel({
       slug: "no-pt",
       name: "No Product Type",
-      satsrail_product_type_id: null,
+      satsrailProductTypeId: null,
     });
 
     mockCreateProductType.mockResolvedValue({ id: "pt_new" });
     mockCreateProduct.mockResolvedValue({ id: "prod_new" });
     mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_new" });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -369,8 +361,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(body.success).toBe(true);
     expect(mockCreateProductType).toHaveBeenCalledOnce();
 
-    const updatedChannel = await Channel.findById(channel._id).lean();
-    expect(updatedChannel!.satsrail_product_type_id).toBe("pt_new");
+    const updatedChannel = await prisma.channel.findUnique({ where: { id: channel.id } });
+    expect(updatedChannel!.satsrailProductTypeId).toBe("pt_new");
   });
 
   it("is idempotent on repeated import", async () => {
@@ -388,20 +380,20 @@ describe("POST /api/admin/channels/[id]/import", () => {
     };
 
     // First import: should create
-    const [req1, ctx1] = channelImportRequest(String(channel._id), payload);
+    const [req1, ctx1] = channelImportRequest(channel.id, payload);
     const res1 = await POST(req1, ctx1);
     const body1 = await readSSEResult(res1);
     expect((body1.results.media as { created: number }).created).toBe(2);
 
     // Second import: should update
-    const [req2, ctx2] = channelImportRequest(String(channel._id), payload);
+    const [req2, ctx2] = channelImportRequest(channel.id, payload);
     const res2 = await POST(req2, ctx2);
     const body2 = await readSSEResult(res2);
     expect((body2.results.media as { updated: number }).updated).toBe(2);
     expect((body2.results.media as { created: number }).created).toBe(0);
 
     // Total media count should still be 2
-    const mediaCount = await Media.countDocuments({ channel_id: channel._id });
+    const mediaCount = await prisma.media.count({ where: { channelId: channel.id } });
     expect(mediaCount).toBe(2);
   });
 
@@ -414,27 +406,29 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const channel = await createChannel({
       slug: "reencrypt-ch",
       name: "Re-encrypt Channel",
-      satsrail_product_type_id: "pt_re",
+      satsrailProductTypeId: "pt_re",
     });
 
-    const media = await createMedia(String(channel._id), {
+    const media = await createMedia(channel.id, {
       name: "Video",
       ref: 99,
-      source_url: "https://example.com/old.mp4",
+      sourceUrl: "https://example.com/old.mp4",
     });
 
     // Create existing MediaProduct
-    await MediaProduct.create({
-      media_id: String(media._id),
-      satsrail_product_id: "prod_re",
-      encrypted_source_url: "old_encrypted_blob",
-      key_fingerprint: "old_fp",
+    await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_re",
+        encryptedSourceUrl: "old_encrypted_blob",
+        keyFingerprint: "old_fp",
+      },
     });
 
     mockUpdateProduct.mockResolvedValue({});
     mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "new_fp" });
 
-    const [req, ctx] = channelImportRequest(String(channel._id), {
+    const [req, ctx] = channelImportRequest(channel.id, {
       version: "1.0",
       media: [
         {
@@ -451,9 +445,9 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect((body.results.media as { updated: number }).updated).toBe(1);
 
     // MediaProduct should be updated with new encrypted URL
-    const mp = await MediaProduct.findOne({ media_id: String(media._id) }).lean();
-    expect(mp!.encrypted_source_url).not.toBe("old_encrypted_blob");
-    expect(mp!.key_fingerprint).toBe("new_fp");
+    const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+    expect(mp!.encryptedSourceUrl).not.toBe("old_encrypted_blob");
+    expect(mp!.keyFingerprint).toBe("new_fp");
   });
 
   describe("media types", () => {
@@ -464,11 +458,11 @@ describe("POST /api/admin/channels/[id]/import", () => {
     it("imports video with thumbnail and product", async () => {
       mockAuth.mockResolvedValue(authSession);
       const productKey = generateProductKey();
-      const channel = await createChannel({ slug: "mt-video", name: "Video Channel", satsrail_product_type_id: "pt_v" });
+      const channel = await createChannel({ slug: "mt-video", name: "Video Channel", satsrailProductTypeId: "pt_v" });
       mockCreateProduct.mockResolvedValue({ id: "prod_v" });
       mockGetProductKey.mockResolvedValue({ key: productKey, key_fingerprint: "fp_v" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 1,
@@ -484,21 +478,21 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect(body.success).toBe(true);
-      const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
-      expect(media!.media_type).toBe("video");
-      expect(media!.thumbnail_url).toBe("https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg");
+      const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
+      expect(media!.mediaType).toBe("video");
+      expect(media!.thumbnailUrl).toBe("https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg");
       expect(media!.position).toBe(1);
 
-      const mp = await MediaProduct.findOne({ media_id: String(media!._id) }).lean();
+      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media!.id } });
       expect(mp).toBeTruthy();
-      expect(mp!.satsrail_product_id).toBe("prod_v");
+      expect(mp!.satsrailProductId).toBe("prod_v");
     });
 
     it("imports audio with thumbnail", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-audio", name: "Audio Channel" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 1,
@@ -513,16 +507,16 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect(body.success).toBe(true);
-      const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
-      expect(media!.media_type).toBe("audio");
-      expect(media!.thumbnail_url).toBe("https://picsum.photos/seed/audio/640/360");
+      const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
+      expect(media!.mediaType).toBe("audio");
+      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/audio/640/360");
     });
 
     it("imports podcast with thumbnail", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-podcast", name: "Podcast Channel" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 1,
@@ -537,16 +531,16 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect(body.success).toBe(true);
-      const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
-      expect(media!.media_type).toBe("podcast");
-      expect(media!.thumbnail_url).toBe("https://picsum.photos/seed/podcast/640/360");
+      const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
+      expect(media!.mediaType).toBe("podcast");
+      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/podcast/640/360");
     });
 
     it("imports article with thumbnail", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-article", name: "Article Channel" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 1,
@@ -561,16 +555,16 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect(body.success).toBe(true);
-      const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
-      expect(media!.media_type).toBe("article");
-      expect(media!.thumbnail_url).toBe("https://picsum.photos/seed/article/640/360");
+      const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
+      expect(media!.mediaType).toBe("article");
+      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/article/640/360");
     });
 
     it("rejects photo media in JSON imports (must use /api/admin/photos)", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-photo-reject", name: "Photos Channel" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 1,
@@ -584,8 +578,6 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const res = await POST(req, ctx);
       const body = await readSSEResult(res);
 
-      // The import completes successfully but the photo row is NOT created;
-      // the entity is recorded as an error in the per-entity results.
       const mediaR = body.results.media as { created: number; errors?: Array<{ error: string }> };
       expect(mediaR.created).toBe(0);
       expect(mediaR.errors?.length ?? 0).toBeGreaterThan(0);
@@ -593,7 +585,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(errorTexts).toMatch(/photo/i);
       expect(errorTexts).toMatch(/admin\/photos|encrypt/i);
 
-      const media = await Media.findOne({ ref: 1, channel_id: channel._id }).lean();
+      const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media).toBeNull();
     });
 
@@ -601,7 +593,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-all", name: "All Types Channel" });
 
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [
           { ref: 1, name: "Video Item", source_url: "https://example.com/v.mp4", media_type: "video", thumbnail_url: "https://example.com/v.jpg" },
@@ -617,29 +609,32 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const mediaR = body.results.media as { created: number };
       expect(mediaR.created).toBe(4);
 
-      const allMedia = await Media.find({ channel_id: channel._id }).sort({ ref: 1 }).lean();
+      const allMedia = await prisma.media.findMany({ where: { channelId: channel.id }, orderBy: { ref: "asc" } });
       expect(allMedia).toHaveLength(4);
-      expect(allMedia.map((m) => m.media_type)).toEqual(["video", "audio", "podcast", "article"]);
-      expect(allMedia.every((m) => m.thumbnail_url)).toBe(true);
+      expect(allMedia.map((m) => m.mediaType)).toEqual(["video", "audio", "podcast", "article"]);
+      expect(allMedia.every((m) => m.thumbnailUrl)).toBe(true);
     });
 
-    it("updates thumbnail_url on re-import", async () => {
+    it("updates thumbnailUrl on re-import", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-thumb-update", name: "Thumb Update Channel" });
 
       // Create media via factory with known ref
-      await createMedia(String(channel._id), {
+      await createMedia(channel.id, {
         name: "Thumb Video",
         ref: 200,
-        source_url: "https://example.com/video.mp4",
-        thumbnail_url: "https://example.com/old-thumb.jpg",
+        sourceUrl: "https://example.com/video.mp4",
+      });
+      await prisma.media.updateMany({
+        where: { ref: 200 },
+        data: { thumbnailUrl: "https://example.com/old-thumb.jpg" },
       });
 
-      const before = await Media.findOne({ ref: 200, channel_id: channel._id }).lean();
-      expect(before!.thumbnail_url).toBe("https://example.com/old-thumb.jpg");
+      const before = await prisma.media.findFirst({ where: { ref: 200, channelId: channel.id } });
+      expect(before!.thumbnailUrl).toBe("https://example.com/old-thumb.jpg");
 
       // Re-import with same ref but new thumbnail
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 200,
@@ -653,8 +648,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect((body.results.media as { updated: number }).updated).toBe(1);
-      const after = await Media.findOne({ ref: 200, channel_id: channel._id }).lean();
-      expect(after!.thumbnail_url).toBe("https://example.com/new-thumb.jpg");
+      const after = await prisma.media.findFirst({ where: { ref: 200, channelId: channel.id } });
+      expect(after!.thumbnailUrl).toBe("https://example.com/new-thumb.jpg");
     });
 
     it("preserves ref as stable identifier across re-imports", async () => {
@@ -662,15 +657,15 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const channel = await createChannel({ slug: "mt-ref-stable", name: "Ref Stable Channel" });
 
       // Create media via factory with known ref
-      await createMedia(String(channel._id), {
+      await createMedia(channel.id, {
         name: "Original Name",
         ref: 201,
-        source_url: "https://example.com/v.mp4",
-        media_type: "video",
+        sourceUrl: "https://example.com/v.mp4",
+        mediaType: "video",
       });
 
       // Re-import with same ref but different name and type
-      const [req, ctx] = channelImportRequest(String(channel._id), {
+      const [req, ctx] = channelImportRequest(channel.id, {
         version: "1.0",
         media: [{
           ref: 201,
@@ -686,11 +681,11 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect((body.results.media as { updated: number }).updated).toBe(1);
       expect((body.results.media as { created: number }).created).toBe(0);
 
-      const allMedia = await Media.find({ channel_id: channel._id }).lean();
+      const allMedia = await prisma.media.findMany({ where: { channelId: channel.id } });
       expect(allMedia).toHaveLength(1);
       expect(allMedia[0].name).toBe("Updated Name");
-      expect(allMedia[0].media_type).toBe("audio");
-      expect(allMedia[0].thumbnail_url).toBe("https://example.com/thumb.jpg");
+      expect(allMedia[0].mediaType).toBe("audio");
+      expect(allMedia[0].thumbnailUrl).toBe("https://example.com/thumb.jpg");
     });
   });
 });

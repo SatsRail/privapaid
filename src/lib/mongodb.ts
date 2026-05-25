@@ -1,47 +1,10 @@
-import mongoose from "mongoose";
-
-interface MongooseCache {
-  conn: typeof mongoose | null;
-  promise: Promise<typeof mongoose> | null;
-}
-
-declare global {
-   
-  var mongoose: MongooseCache | undefined;
-}
-
-const cached: MongooseCache = global.mongoose ?? { conn: null, promise: null };
-
-if (!global.mongoose) {
-  global.mongoose = cached;
-}
-
-export async function connectDB(): Promise<typeof mongoose> {
-  if (cached.conn) {
-    return cached.conn;
-  }
-
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    throw new Error("Please define the MONGODB_URI environment variable");
-  }
-
-  if (!cached.promise) {
-    cached.promise = mongoose.connect(uri, {
-      bufferCommands: false,
-      maxPoolSize: Number(process.env.MONGO_POOL_SIZE) || 50,
-      serverSelectionTimeoutMS:
-        Number(process.env.MONGO_SELECTION_TIMEOUT_MS) || 5_000,
-      socketTimeoutMS: 45_000,
-    });
-  }
-
-  try {
-    cached.conn = await cached.promise;
-  } catch (e) {
-    cached.promise = null;
-    throw e;
-  }
-
-  return cached.conn;
+/**
+ * @deprecated Kept as a no-op during the MongoDB→Postgres migration.
+ *
+ * Prisma auto-connects on first query. Existing `await connectDB()` calls in
+ * route handlers are now harmless. This file will be deleted in the final
+ * sweep once every callsite has been removed. Do NOT add new calls.
+ */
+export async function connectDB(): Promise<void> {
+  // intentional no-op
 }

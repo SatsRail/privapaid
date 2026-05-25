@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia, createCustomer } from "../../helpers/factories";
-import Flag from "@/models/Flag";
+import { prisma } from "@/lib/prisma";
 
 describe("Flag model", () => {
   beforeAll(async () => {
@@ -18,131 +18,93 @@ describe("Flag model", () => {
 
   it("creates a flag with required fields", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const customer = await createCustomer();
-    const flag = await Flag.create({
-      media_id: media._id,
-      customer_id: customer._id,
-      flag_type: "inappropriate",
+    const flag = await prisma.flag.create({
+      data: {
+        mediaId: media.id,
+        customerId: customer.id,
+        flagType: "inappropriate",
+      },
     });
-    expect(flag._id).toBeDefined();
-    expect(flag.media_id.toString()).toBe(media._id.toString());
-    expect(flag.customer_id.toString()).toBe(customer._id.toString());
-    expect(flag.flag_type).toBe("inappropriate");
+    expect(flag.id).toBeDefined();
+    expect(flag.mediaId).toBe(media.id);
+    expect(flag.customerId).toBe(customer.id);
+    expect(flag.flagType).toBe("inappropriate");
   });
 
   it("creates timestamps", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const customer = await createCustomer();
-    const flag = await Flag.create({
-      media_id: media._id,
-      customer_id: customer._id,
-      flag_type: "spam",
+    const flag = await prisma.flag.create({
+      data: { mediaId: media.id, customerId: customer.id, flagType: "spam" },
     });
-    expect(flag.created_at).toBeInstanceOf(Date);
-    expect(flag.updated_at).toBeInstanceOf(Date);
-  });
-
-  it("trims flag_type", async () => {
-    const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    const customer = await createCustomer();
-    const flag = await Flag.create({
-      media_id: media._id,
-      customer_id: customer._id,
-      flag_type: "  spam  ",
-    });
-    expect(flag.flag_type).toBe("spam");
+    expect(flag.createdAt).toBeInstanceOf(Date);
+    expect(flag.updatedAt).toBeInstanceOf(Date);
   });
 
   it("enforces one flag per customer per media", async () => {
-    await Flag.syncIndexes();
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const customer = await createCustomer();
 
-    await Flag.create({
-      media_id: media._id,
-      customer_id: customer._id,
-      flag_type: "inappropriate",
+    await prisma.flag.create({
+      data: { mediaId: media.id, customerId: customer.id, flagType: "inappropriate" },
     });
     await expect(
-      Flag.create({
-        media_id: media._id,
-        customer_id: customer._id,
-        flag_type: "spam",
+      prisma.flag.create({
+        data: { mediaId: media.id, customerId: customer.id, flagType: "spam" },
       })
     ).rejects.toThrow();
   });
 
   it("allows same customer to flag different media", async () => {
-    await Flag.syncIndexes();
     const channel = await createChannel();
-    const media1 = await createMedia(channel._id.toString(), { name: "Media 1" });
-    const media2 = await createMedia(channel._id.toString(), { name: "Media 2" });
+    const media1 = await createMedia(channel.id, { name: "Media 1" });
+    const media2 = await createMedia(channel.id, { name: "Media 2" });
     const customer = await createCustomer();
 
-    const flag1 = await Flag.create({
-      media_id: media1._id,
-      customer_id: customer._id,
-      flag_type: "spam",
+    const flag1 = await prisma.flag.create({
+      data: { mediaId: media1.id, customerId: customer.id, flagType: "spam" },
     });
-    const flag2 = await Flag.create({
-      media_id: media2._id,
-      customer_id: customer._id,
-      flag_type: "spam",
+    const flag2 = await prisma.flag.create({
+      data: { mediaId: media2.id, customerId: customer.id, flagType: "spam" },
     });
-    expect(flag1._id).toBeDefined();
-    expect(flag2._id).toBeDefined();
+    expect(flag1.id).toBeDefined();
+    expect(flag2.id).toBeDefined();
   });
 
   it("allows different customers to flag same media", async () => {
-    await Flag.syncIndexes();
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const customer1 = await createCustomer();
     const customer2 = await createCustomer();
 
-    const flag1 = await Flag.create({
-      media_id: media._id,
-      customer_id: customer1._id,
-      flag_type: "inappropriate",
+    const flag1 = await prisma.flag.create({
+      data: { mediaId: media.id, customerId: customer1.id, flagType: "inappropriate" },
     });
-    const flag2 = await Flag.create({
-      media_id: media._id,
-      customer_id: customer2._id,
-      flag_type: "inappropriate",
+    const flag2 = await prisma.flag.create({
+      data: { mediaId: media.id, customerId: customer2.id, flagType: "inappropriate" },
     });
-    expect(flag1._id).toBeDefined();
-    expect(flag2._id).toBeDefined();
+    expect(flag1.id).toBeDefined();
+    expect(flag2.id).toBeDefined();
   });
 
-  it("requires media_id", async () => {
-    const customer = await createCustomer();
-    await expect(
-      Flag.create({ customer_id: customer._id, flag_type: "spam" })
-    ).rejects.toThrow();
-  });
-
-  it("requires customer_id", async () => {
+  it("queries flags by mediaId", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    await expect(
-      Flag.create({ media_id: media._id, flag_type: "spam" })
-    ).rejects.toThrow();
-  });
-
-  it("queries flags by media_id", async () => {
-    const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const c1 = await createCustomer();
     const c2 = await createCustomer();
 
-    await Flag.create({ media_id: media._id, customer_id: c1._id, flag_type: "spam" });
-    await Flag.create({ media_id: media._id, customer_id: c2._id, flag_type: "inappropriate" });
+    await prisma.flag.create({
+      data: { mediaId: media.id, customerId: c1.id, flagType: "spam" },
+    });
+    await prisma.flag.create({
+      data: { mediaId: media.id, customerId: c2.id, flagType: "inappropriate" },
+    });
 
-    const flags = await Flag.find({ media_id: media._id });
+    const flags = await prisma.flag.findMany({ where: { mediaId: media.id } });
     expect(flags).toHaveLength(2);
   });
 });

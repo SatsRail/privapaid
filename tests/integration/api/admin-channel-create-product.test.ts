@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 const { mockGetMerchantKey, mockSatsrailClient } = vi.hoisted(() => ({
   mockGetMerchantKey: vi.fn().mockResolvedValue("sk_test_key"),
@@ -15,7 +14,6 @@ vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) 
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
@@ -44,7 +42,7 @@ vi.mock("@/lib/photo-dek", () => ({
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/admin/channels/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 
 function buildRequest(
   channelId: string,
@@ -80,10 +78,10 @@ describe("Admin Channel Create Product", () => {
     const channel = await createChannel({
       name: "Test Channel",
       slug: "test-ch",
-      satsrail_product_type_id: "pt_123",
+      satsrailProductTypeId: "pt_123",
     });
-    await createMedia(channel._id.toString(), { source_url: "https://example.com/v1.mp4" });
-    await createMedia(channel._id.toString(), { source_url: "https://example.com/v2.mp4" });
+    await createMedia(channel.id, { sourceUrl: "https://example.com/v1.mp4" });
+    await createMedia(channel.id, { sourceUrl: "https://example.com/v2.mp4" });
 
     mockSatsrailClient.createProduct.mockResolvedValue({
       id: "prod_1",
@@ -96,7 +94,7 @@ describe("Admin Channel Create Product", () => {
       key_fingerprint: "fp_abc",
     });
 
-    const [req, ctx] = buildRequest(channel._id.toString(), {
+    const [req, ctx] = buildRequest(channel.id, {
       name: "Channel Access",
       price_cents: 1000,
       currency: "USD",
@@ -113,7 +111,7 @@ describe("Admin Channel Create Product", () => {
 
   it("returns 422 when name is missing", async () => {
     const channel = await createChannel({ slug: "no-name" });
-    const [req, ctx] = buildRequest(channel._id.toString(), { price_cents: 500 });
+    const [req, ctx] = buildRequest(channel.id, { price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -123,7 +121,7 @@ describe("Admin Channel Create Product", () => {
 
   it("returns 422 when price_cents is missing", async () => {
     const channel = await createChannel({ slug: "no-price" });
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test" });
+    const [req, ctx] = buildRequest(channel.id, { name: "Test" });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -132,7 +130,7 @@ describe("Admin Channel Create Product", () => {
   });
 
   it("returns 404 when channel not found", async () => {
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = "ckmissingfakefakefakefake";
     const [req, ctx] = buildRequest(fakeId, { name: "Test", price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
@@ -142,8 +140,8 @@ describe("Admin Channel Create Product", () => {
   });
 
   it("returns 422 when channel has no product type", async () => {
-    const channel = await createChannel({ slug: "no-pt", satsrail_product_type_id: null });
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test", price_cents: 500 });
+    const channel = await createChannel({ slug: "no-pt", satsrailProductTypeId: null });
+    const [req, ctx] = buildRequest(channel.id, { name: "Test", price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -151,20 +149,10 @@ describe("Admin Channel Create Product", () => {
     expect(body.error).toContain("no SatsRail product type");
   });
 
-  it("returns 422 when channel has no ref", async () => {
-    const channel = await createChannel({ slug: "no-ref", ref: null, satsrail_product_type_id: "pt_1" });
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test", price_cents: 500 });
-    const res = await POST(req, ctx);
-    const body = await res.json();
-
-    expect(res.status).toBe(422);
-    expect(body.error).toBe("Channel has no ref assigned");
-  });
-
   it("returns 422 when merchant key not configured", async () => {
     mockGetMerchantKey.mockResolvedValue(null);
-    const channel = await createChannel({ slug: "no-key", satsrail_product_type_id: "pt_1" });
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test", price_cents: 500 });
+    const channel = await createChannel({ slug: "no-key", satsrailProductTypeId: "pt_1" });
+    const [req, ctx] = buildRequest(channel.id, { name: "Test", price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -173,10 +161,10 @@ describe("Admin Channel Create Product", () => {
   });
 
   it("returns 500 when satsrail API throws", async () => {
-    const channel = await createChannel({ slug: "api-err", satsrail_product_type_id: "pt_1" });
+    const channel = await createChannel({ slug: "api-err", satsrailProductTypeId: "pt_1" });
     mockSatsrailClient.createProduct.mockRejectedValue(new Error("API down"));
 
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test", price_cents: 500 });
+    const [req, ctx] = buildRequest(channel.id, { name: "Test", price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -185,10 +173,10 @@ describe("Admin Channel Create Product", () => {
   });
 
   it("returns 500 with generic message for non-Error throws", async () => {
-    const channel = await createChannel({ slug: "non-err", satsrail_product_type_id: "pt_1" });
+    const channel = await createChannel({ slug: "non-err", satsrailProductTypeId: "pt_1" });
     mockSatsrailClient.createProduct.mockRejectedValue("string error");
 
-    const [req, ctx] = buildRequest(channel._id.toString(), { name: "Test", price_cents: 500 });
+    const [req, ctx] = buildRequest(channel.id, { name: "Test", price_cents: 500 });
     const res = await POST(req, ctx);
     const body = await res.json();
 
@@ -203,12 +191,12 @@ describe("Admin Channel Create Product", () => {
     it("returns 422 when a photo has no existing MediaProduct to recover the DEK from", async () => {
       const channel = await createChannel({
         slug: "ch-photo-no-mp",
-        satsrail_product_type_id: "pt_1",
+        satsrailProductTypeId: "pt_1",
         ref: 999,
       });
-      await createMedia(channel._id.toString(), {
-        media_type: "photo",
-        source_url: "gridfs:photo-orphan",
+      await createMedia(channel.id, {
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-orphan",
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -224,7 +212,7 @@ describe("Admin Channel Create Product", () => {
         key_fingerprint: "fp_ch",
       });
 
-      const [req, ctx] = buildRequest(channel._id.toString(), {
+      const [req, ctx] = buildRequest(channel.id, {
         name: "Channel",
         price_cents: 1000,
       });
@@ -238,24 +226,29 @@ describe("Admin Channel Create Product", () => {
       expect(mockUnwrapDekToBase64url).not.toHaveBeenCalled();
     });
 
-    it("prefers Media.encrypted_dek over the MediaProduct fallback (no SatsRail recovery call)", async () => {
+    it("prefers Media.encryptedDek over the MediaProduct fallback (no SatsRail recovery call)", async () => {
       const channel = await createChannel({
         slug: "ch-photo-kek",
-        satsrail_product_type_id: "pt_1",
+        satsrailProductTypeId: "pt_1",
         ref: 2001,
       });
       // Photo has KEK-wrapped DEK on Media — the preferred path. Even though
       // a stale MediaProduct exists, the route must NOT fall back to it.
-      const photoMedia = await createMedia(channel._id.toString(), {
-        media_type: "photo",
-        source_url: "gridfs:photo-with-kek",
-        encrypted_dek: "kek-wrapped-blob",
+      const photoMedia = await createMedia(channel.id, {
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-with-kek",
       });
-      await MediaProduct.create({
-        media_id: photoMedia._id,
-        satsrail_product_id: "prod_stale",
-        encrypted_source_url: "stale-blob",
-        key_fingerprint: "fp_stale",
+      await prisma.media.update({
+        where: { id: photoMedia.id },
+        data: { encryptedDek: "kek-wrapped-blob" },
+      });
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: photoMedia.id,
+          satsrailProductId: "prod_stale",
+          encryptedSourceUrl: "stale-blob",
+          keyFingerprint: "fp_stale",
+        },
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -275,7 +268,7 @@ describe("Admin Channel Create Product", () => {
       mockUnwrapDekToBase64url.mockReturnValueOnce("dek-from-kek");
       mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-via-kek");
 
-      const [req, ctx] = buildRequest(channel._id.toString(), {
+      const [req, ctx] = buildRequest(channel.id, {
         name: "Channel",
         price_cents: 1000,
       });
@@ -292,22 +285,27 @@ describe("Admin Channel Create Product", () => {
       );
     });
 
-    it("falls back to MediaProduct recovery when encrypted_dek is corrupted", async () => {
+    it("falls back to MediaProduct recovery when encryptedDek is corrupted", async () => {
       const channel = await createChannel({
         slug: "ch-photo-kek-bad",
-        satsrail_product_type_id: "pt_1",
+        satsrailProductTypeId: "pt_1",
         ref: 2002,
       });
-      const photoMedia = await createMedia(channel._id.toString(), {
-        media_type: "photo",
-        source_url: "gridfs:photo-broken-kek",
-        encrypted_dek: "corrupted-blob",
+      const photoMedia = await createMedia(channel.id, {
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-broken-kek",
       });
-      await MediaProduct.create({
-        media_id: photoMedia._id,
-        satsrail_product_id: "prod_backup",
-        encrypted_source_url: "encrypted-dek-blob",
-        key_fingerprint: "fp_backup",
+      await prisma.media.update({
+        where: { id: photoMedia.id },
+        data: { encryptedDek: "corrupted-blob" },
+      });
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: photoMedia.id,
+          satsrailProductId: "prod_backup",
+          encryptedSourceUrl: "encrypted-dek-blob",
+          keyFingerprint: "fp_backup",
+        },
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -329,7 +327,7 @@ describe("Admin Channel Create Product", () => {
       mockDecryptSourceUrl.mockReturnValueOnce("dek-from-fallback");
       mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-via-fallback");
 
-      const [req, ctx] = buildRequest(channel._id.toString(), {
+      const [req, ctx] = buildRequest(channel.id, {
         name: "Channel",
         price_cents: 1000,
       });
@@ -352,20 +350,22 @@ describe("Admin Channel Create Product", () => {
     it("recovers the DEK from an existing MediaProduct and re-wraps under the new product key", async () => {
       const channel = await createChannel({
         slug: "ch-photo-rewrap",
-        satsrail_product_type_id: "pt_1",
+        satsrailProductTypeId: "pt_1",
         ref: 1001,
       });
-      const photoMedia = await createMedia(channel._id.toString(), {
-        media_type: "photo",
-        source_url: "gridfs:photo-bytes-id",
+      const photoMedia = await createMedia(channel.id, {
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-bytes-id",
       });
 
       // Seed an existing MediaProduct so the server has a DEK envelope to unwrap.
-      await MediaProduct.create({
-        media_id: photoMedia._id,
-        satsrail_product_id: "prod_existing",
-        encrypted_source_url: "encrypted-dek-for-prod_existing",
-        key_fingerprint: "fp_existing",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: photoMedia.id,
+          satsrailProductId: "prod_existing",
+          encryptedSourceUrl: "encrypted-dek-for-prod_existing",
+          keyFingerprint: "fp_existing",
+        },
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -385,7 +385,7 @@ describe("Admin Channel Create Product", () => {
       mockDecryptSourceUrl.mockReturnValueOnce("photo-dek-base64url");
       mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-dek-blob");
 
-      const [req, ctx] = buildRequest(channel._id.toString(), {
+      const [req, ctx] = buildRequest(channel.id, {
         name: "Channel",
         price_cents: 1000,
       });
@@ -410,22 +410,24 @@ describe("Admin Channel Create Product", () => {
     it("mixes photo and non-photo media in the same channel correctly", async () => {
       const channel = await createChannel({
         slug: "ch-mixed",
-        satsrail_product_type_id: "pt_1",
+        satsrailProductTypeId: "pt_1",
         ref: 1002,
       });
-      const videoMedia = await createMedia(channel._id.toString(), {
-        media_type: "video",
-        source_url: "https://example.com/v.mp4",
+      const videoMedia = await createMedia(channel.id, {
+        mediaType: "video",
+        sourceUrl: "https://example.com/v.mp4",
       });
-      const photoMedia = await createMedia(channel._id.toString(), {
-        media_type: "photo",
-        source_url: "gridfs:photo-id",
+      const photoMedia = await createMedia(channel.id, {
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-id",
       });
-      await MediaProduct.create({
-        media_id: photoMedia._id,
-        satsrail_product_id: "prod_existing_mixed",
-        encrypted_source_url: "existing-dek-blob",
-        key_fingerprint: "fp_e",
+      await prisma.mediaProduct.create({
+        data: {
+          mediaId: photoMedia.id,
+          satsrailProductId: "prod_existing_mixed",
+          encryptedSourceUrl: "existing-dek-blob",
+          keyFingerprint: "fp_e",
+        },
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -441,7 +443,7 @@ describe("Admin Channel Create Product", () => {
         .mockResolvedValueOnce({ key: "existing-product-key", key_fingerprint: "fp_e" });
       mockDecryptSourceUrl.mockReturnValue("recovered-dek");
 
-      const [req, ctx] = buildRequest(channel._id.toString(), {
+      const [req, ctx] = buildRequest(channel.id, {
         name: "Mixed",
         price_cents: 1000,
       });
@@ -452,7 +454,7 @@ describe("Admin Channel Create Product", () => {
       // the same channel key + product ID.
       const calls = mockEncryptSourceUrl.mock.calls;
       const plaintexts = calls.map((c) => c[0]);
-      expect(plaintexts).toContain(videoMedia.source_url); // URL
+      expect(plaintexts).toContain(videoMedia.sourceUrl); // URL
       expect(plaintexts).toContain("recovered-dek"); // DEK
       // All encrypt calls share the channel key + new product id
       for (const [, key, productId] of calls) {

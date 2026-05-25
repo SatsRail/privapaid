@@ -3,9 +3,11 @@
 const mockAuditLogCreate = vi.hoisted(() => vi.fn());
 const mockHeadersGet = vi.hoisted(() => vi.fn());
 
-vi.mock("@/models/AuditLog", () => ({
-  default: {
-    create: mockAuditLogCreate,
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    auditLog: {
+      create: mockAuditLogCreate,
+    },
   },
 }));
 
@@ -43,15 +45,17 @@ describe("audit", () => {
     });
 
     expect(mockAuditLogCreate).toHaveBeenCalledWith({
-      actor_id: "admin_123",
-      actor_email: "admin@test.com",
-      actor_type: "admin",
-      action: "login",
-      target_type: "session",
-      target_id: "sess_456",
-      details: { method: "password" },
-      ip: "1.2.3.4",
-      user_agent: "TestBrowser/1.0",
+      data: {
+        actorId: "admin_123",
+        actorEmail: "admin@test.com",
+        actorType: "admin",
+        action: "login",
+        targetType: "session",
+        targetId: "sess_456",
+        details: { method: "password" },
+        ip: "1.2.3.4",
+        userAgent: "TestBrowser/1.0",
+      },
     });
   });
 
@@ -69,7 +73,7 @@ describe("audit", () => {
     });
 
     expect(mockAuditLogCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ ip: "10.0.0.1" })
+      expect.objectContaining({ data: expect.objectContaining({ ip: "10.0.0.1" }) })
     );
   });
 
@@ -84,15 +88,17 @@ describe("audit", () => {
 
     expect(mockAuditLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        actor_email: "",
-        target_type: "",
-        target_id: "",
-        details: {},
+        data: expect.objectContaining({
+          actorEmail: "",
+          targetType: "",
+          targetId: "",
+          details: {},
+        }),
       })
     );
   });
 
-  it("defaults ip and user_agent to empty strings when headers are missing", async () => {
+  it("defaults ip and userAgent to empty strings when headers are missing", async () => {
     mockAuditLogCreate.mockResolvedValue({});
 
     await audit({
@@ -103,13 +109,15 @@ describe("audit", () => {
 
     expect(mockAuditLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        ip: "",
-        user_agent: "",
+        data: expect.objectContaining({
+          ip: "",
+          userAgent: "",
+        }),
       })
     );
   });
 
-  it("does not throw when AuditLog.create fails (fire-and-forget)", async () => {
+  it("does not throw when prisma.auditLog.create fails (fire-and-forget)", async () => {
     mockAuditLogCreate.mockRejectedValue(new Error("DB down"));
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

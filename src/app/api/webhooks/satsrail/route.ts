@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { connectDB } from "@/lib/mongodb";
-import WebhookEvent from "@/models/WebhookEvent";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import * as Sentry from "@sentry/nextjs";
 
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
@@ -51,40 +51,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  await connectDB();
-
   // Idempotency claim — atomically insert the event_id so two concurrent
   // deliveries can't both proceed past this point. The unique index on
-  // event_id (WebhookEvent.ts) provides the underlying guarantee; the
-  // upsert here is the application-level read/write that consumes it
-  // without a TOCTOU window. The PRE-image (`new: false`) tells us whether
-  // we won the race: null = we just inserted, non-null = a prior request
-  // already claimed it and we should bail out.
+  // WebhookEvent.eventId is the underlying guarantee; a Prisma create
+  // that races a sibling delivery surfaces a P2002 unique-constraint
+  // error, which we treat as "already claimed" and short-circuit.
   if (event.id && typeof event.id === "string") {
-    let prior: { _id: unknown } | null = null;
     try {
-      prior = await WebhookEvent.findOneAndUpdate(
-        { event_id: String(event.id) },
-        {
-          $setOnInsert: {
-            event_id: String(event.id),
-            event_type: event.type,
-          },
+      await prisma.webhookEvent.create({
+        data: {
+          eventId: String(event.id),
+          eventType: event.type,
         },
-        { upsert: true, returnDocument: "before", lean: true }
-      );
+      });
     } catch (err) {
-      // E11000 races at the unique index level also mean "already claimed."
-      // findOneAndUpdate with upsert: true should not normally throw this,
-      // but driver versions differ — treat it the same as a duplicate.
-      const code = (err as { code?: number } | null)?.code;
-      if (code === 11000) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
         return NextResponse.json({ received: true, duplicate: true });
       }
       throw err;
-    }
-    if (prior) {
-      return NextResponse.json({ received: true, duplicate: true });
     }
   }
 

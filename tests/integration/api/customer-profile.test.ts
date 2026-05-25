@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 const { mockRequireCustomerApi } = vi.hoisted(() => ({
   mockRequireCustomerApi: vi.fn(),
@@ -12,7 +11,6 @@ vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) 
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
@@ -49,7 +47,7 @@ describe("Customer Profile API", () => {
   describe("GET /api/customer/profile", () => {
     it("returns current customer profile", async () => {
       const customer = await createCustomer({ nickname: "testuser" });
-      mockRequireCustomerApi.mockResolvedValue({ id: customer._id.toString(), name: "testuser" });
+      mockRequireCustomerApi.mockResolvedValue({ id: customer.id, name: "testuser" });
 
       const res = await GET();
       const body = await res.json();
@@ -60,7 +58,7 @@ describe("Customer Profile API", () => {
     });
 
     it("returns 404 when customer not found", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       mockRequireCustomerApi.mockResolvedValue({ id: fakeId, name: "ghost" });
 
       const res = await GET();
@@ -74,7 +72,7 @@ describe("Customer Profile API", () => {
   describe("PATCH /api/customer/profile", () => {
     it("updates profile_image_id", async () => {
       const customer = await createCustomer({ nickname: "patcher" });
-      mockRequireCustomerApi.mockResolvedValue({ id: customer._id.toString(), name: "patcher" });
+      mockRequireCustomerApi.mockResolvedValue({ id: customer.id, name: "patcher" });
 
       const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {
         profile_image_id: "img_abc123",
@@ -88,7 +86,7 @@ describe("Customer Profile API", () => {
     });
 
     it("returns 404 when customer not found during update", async () => {
-      const fakeId = new mongoose.Types.ObjectId().toString();
+      const fakeId = "ckmissingfakefakefakefake";
       mockRequireCustomerApi.mockResolvedValue({ id: fakeId, name: "ghost" });
 
       const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {
@@ -103,7 +101,7 @@ describe("Customer Profile API", () => {
 
     it("handles empty update body", async () => {
       const customer = await createCustomer({ nickname: "empty_update" });
-      mockRequireCustomerApi.mockResolvedValue({ id: customer._id.toString(), name: "empty_update" });
+      mockRequireCustomerApi.mockResolvedValue({ id: customer.id, name: "empty_update" });
 
       const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {});
       const res = await PATCH(req);
@@ -126,7 +124,7 @@ describe("Customer Profile API", () => {
 
     it("PATCH returns 400 when validation fails", async () => {
       const customer = await createCustomer({ nickname: "valfail" });
-      mockRequireCustomerApi.mockResolvedValue({ id: customer._id.toString(), name: "valfail" });
+      mockRequireCustomerApi.mockResolvedValue({ id: customer.id, name: "valfail" });
 
       const req = jsonRequest("http://localhost:3000/api/customer/profile", "PATCH", {
         profile_image_id: 123, // not a string

@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
+import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import Link from "next/link";
@@ -13,9 +12,8 @@ export default async function ChannelEarningsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await connectDB();
 
-  const channel = await Channel.findById(id).lean();
+  const channel = await prisma.channel.findUnique({ where: { id } });
   if (!channel) notFound();
 
   const sk = await getMerchantKey();

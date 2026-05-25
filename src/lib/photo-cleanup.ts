@@ -1,6 +1,4 @@
-import { ObjectId } from "mongodb";
-import { getEncryptedPhotosBucket } from "@/lib/gridfs";
-import Media from "@/models/Media";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Default grace period before an unreferenced encrypted-photo blob is eligible
@@ -28,20 +26,20 @@ export interface CleanupResult {
   orphaned: number;
   deleted: number;
   skippedYoung: number;
-  errors: Array<{ gridFsId: string; error: string }>;
+  errors: Array<{ blobId: string; error: string }>;
 }
 
 /**
- * Scan the `encrypted_photos` GridFS bucket and remove any ciphertext file that
- * has no `Media` row pointing at it (photo media stores the GridFS file id in
- * `source_url`). Skips files younger than `graceMs` so an in-progress upload
- * isn't deleted out from under the admin before they finish creating the Media
- * row + first product wrap.
+ * Scan the EncryptedPhotoBlob table and remove any ciphertext row that has no
+ * `Media` row pointing at it (photo media stores the blob id in `sourceUrl`).
+ * Skips rows younger than `graceMs` so an in-progress upload isn't deleted out
+ * from under the admin before they finish creating the Media row + first
+ * product wrap.
  *
  * Why this matters: the upload endpoint persists ciphertext before the admin
  * has committed to creating a Media row. If the admin abandons the flow, the
- * bytes stay in GridFS forever. They're unrecoverable without the DEK (which
- * was never persisted), so they're not a security risk — just dead storage.
+ * bytes stay forever. They're unrecoverable without the DEK (which was never
+ * persisted), so they're not a security risk — just dead storage.
  */
 export async function cleanupOrphanEncryptedPhotos(
   options: CleanupOptions = {}
@@ -58,43 +56,48 @@ export async function cleanupOrphanEncryptedPhotos(
     errors: [],
   };
 
-  const bucket = await getEncryptedPhotosBucket();
-
-  // Stream the file index — for typical instances this is small (one entry per
-  // surviving photo), so cursoring keeps memory bounded if it ever grows.
-  const cursor = bucket.find({});
-  for await (const file of cursor) {
-    result.scanned++;
-    const fileId = file._id as ObjectId;
-    const fileIdStr = fileId.toString();
-
-    // A Media row holds the GridFS id as its source_url for photo media.
-    // findOne returns null if no row references this file.
-    const referenced = await Media.exists({
-      media_type: "photo",
-      source_url: fileIdStr,
+  // Stream rows page-by-page to bound memory if the table ever grows.
+  const PAGE = 500;
+  let cursor: string | undefined = undefined;
+  while (true) {
+    const batch = await prisma.encryptedPhotoBlob.findMany({
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      orderBy: { id: "asc" },
+      select: { id: true, createdAt: true },
     });
-    if (referenced) {
-      result.referenced++;
-      continue;
-    }
+    if (batch.length === 0) break;
+    cursor = batch[batch.length - 1].id;
 
-    result.orphaned++;
+    for (const blob of batch) {
+      result.scanned++;
 
-    const uploadedAt = file.uploadDate ? new Date(file.uploadDate).getTime() : 0;
-    if (uploadedAt && now - uploadedAt < graceMs) {
-      result.skippedYoung++;
-      continue;
-    }
+      const referenced = await prisma.media.findFirst({
+        where: { mediaType: "photo", sourceUrl: blob.id },
+        select: { id: true },
+      });
+      if (referenced) {
+        result.referenced++;
+        continue;
+      }
 
-    if (dryRun) continue;
+      result.orphaned++;
 
-    try {
-      await bucket.delete(fileId);
-      result.deleted++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "unknown error";
-      result.errors.push({ gridFsId: fileIdStr, error: message });
+      const uploadedAt = blob.createdAt.getTime();
+      if (uploadedAt && now - uploadedAt < graceMs) {
+        result.skippedYoung++;
+        continue;
+      }
+
+      if (dryRun) continue;
+
+      try {
+        await prisma.encryptedPhotoBlob.delete({ where: { id: blob.id } });
+        result.deleted++;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "unknown error";
+        result.errors.push({ blobId: blob.id, error: message });
+      }
     }
   }
 

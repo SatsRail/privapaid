@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 
 export async function GET(
@@ -14,41 +11,43 @@ export async function GET(
 
   const { id } = await params;
 
-  await connectDB();
-  const channel = await Channel.findOne({ _id: id, deleted_at: null }).lean();
+  const channel = await prisma.channel.findFirst({
+    where: { id, deletedAt: null },
+  });
   if (!channel) {
     return NextResponse.json({ error: "Channel not found" }, { status: 404 });
   }
 
-  const media = await Media.find({ channel_id: id, deleted_at: null })
-    .sort({ position: 1 })
-    .lean();
+  const media = await prisma.media.findMany({
+    where: { channelId: id, deletedAt: null },
+    orderBy: { position: "asc" },
+  });
 
-  const mediaIds = media.map((m) => m._id);
-  const mediaProducts = await MediaProduct.find({ media_id: { $in: mediaIds } }).lean();
-  const productByMediaId = new Map(
-    mediaProducts.map((mp) => [String(mp.media_id), mp])
-  );
+  const mediaIds = media.map((m) => m.id);
+  const mediaProducts = mediaIds.length > 0
+    ? await prisma.mediaProduct.findMany({ where: { mediaId: { in: mediaIds } } })
+    : [];
+  const productByMediaId = new Map(mediaProducts.map((mp) => [mp.mediaId, mp]));
 
   const exportMedia = media.map((m) => {
-    const mp = productByMediaId.get(String(m._id));
+    const mp = productByMediaId.get(m.id);
     const item: Record<string, unknown> = {
       ref: m.ref,
       name: m.name,
       description: m.description || "",
-      source_url: m.source_url,
-      media_type: m.media_type,
-      thumbnail_url: m.thumbnail_url || "",
+      source_url: m.sourceUrl,
+      media_type: m.mediaType,
+      thumbnail_url: m.thumbnailUrl || "",
       position: m.position,
     };
 
     if (mp) {
       item.product = {
-        name: mp.product_name || m.name,
-        price_cents: mp.product_price_cents || 0,
-        ...(mp.product_currency ? { currency: mp.product_currency } : {}),
-        ...(mp.product_access_duration_seconds
-          ? { access_duration_seconds: mp.product_access_duration_seconds }
+        name: mp.productName || m.name,
+        price_cents: mp.productPriceCents || 0,
+        ...(mp.productCurrency ? { currency: mp.productCurrency } : {}),
+        ...(mp.productAccessDurationSeconds
+          ? { access_duration_seconds: mp.productAccessDurationSeconds }
           : {}),
       };
     }

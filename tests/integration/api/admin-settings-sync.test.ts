@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { NextResponse } from "next/server";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
@@ -26,9 +25,6 @@ vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) 
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireOwnerApi: mockRequireOwnerApi,
@@ -47,9 +43,8 @@ vi.mock("next/cache", () => ({
 }));
 
 import { POST } from "@/app/api/admin/settings/sync/route";
-import Settings from "@/models/Settings";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
+import { createSettings, createChannel, createMedia } from "../../helpers/factories";
 
 describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   beforeAll(async () => {
@@ -94,10 +89,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   });
 
   it("syncs merchant data and returns results", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
 
     const res = await POST();
     const body = await res.json();
@@ -109,11 +101,11 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     expect(body.products_synced).toBe(0);
   });
 
-  it("skips logo_url when custom logo_image_id exists", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-      logo_image_id: new mongoose.Types.ObjectId().toString(),
+  it("skips logo_url when custom logoBytes exists", async () => {
+    await createSettings({ instanceName: "Test Instance" });
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { logoBytes: Buffer.from("fake-bytes"), logoMimeType: "image/png" },
     });
 
     const res = await POST();
@@ -124,21 +116,23 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   });
 
   it("syncs product data to MediaProduct and ChannelProduct caches", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
+    await createSettings({ instanceName: "Test Instance" });
+    const channel = await createChannel();
+    const media = await createMedia(channel.id);
+
+    const mp = await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_1",
+        encryptedSourceUrl: "enc_url",
+      },
     });
 
-    const mp = await MediaProduct.create({
-      media_id: new mongoose.Types.ObjectId(),
-      satsrail_product_id: "prod_1",
-      encrypted_source_url: "enc_url",
-    });
-
-    const cp = await ChannelProduct.create({
-      channel_id: new mongoose.Types.ObjectId(),
-      satsrail_product_id: "prod_2",
-      encrypted_media: [],
+    const cp = await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_2",
+      },
     });
 
     mockSatsrail.listProducts.mockResolvedValueOnce({
@@ -171,21 +165,18 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     expect(body.products_synced).toBe(2);
 
     // Verify MediaProduct was updated
-    const updatedMp = await MediaProduct.findById(mp._id).lean();
-    expect(updatedMp!.product_name).toBe("Product One");
-    expect(updatedMp!.product_price_cents).toBe(1000);
+    const updatedMp = await prisma.mediaProduct.findUnique({ where: { id: mp.id } });
+    expect(updatedMp!.productName).toBe("Product One");
+    expect(updatedMp!.productPriceCents).toBe(1000);
 
     // Verify ChannelProduct was updated
-    const updatedCp = await ChannelProduct.findById(cp._id).lean();
-    expect(updatedCp!.product_name).toBe("Product Two");
-    expect(updatedCp!.product_currency).toBe("EUR");
+    const updatedCp = await prisma.channelProduct.findUnique({ where: { id: cp.id } });
+    expect(updatedCp!.productName).toBe("Product Two");
+    expect(updatedCp!.productCurrency).toBe("EUR");
   });
 
   it("handles product sync error gracefully (non-fatal)", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
 
     mockSatsrail.listProducts.mockRejectedValueOnce(new Error("API error"));
 
@@ -200,10 +191,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   it("returns 500 with invalid key message for 401 errors", async () => {
     mockSatsrail.getMerchant.mockRejectedValueOnce(new Error("Request failed: 401"));
 
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
 
     const res = await POST();
     const body = await res.json();
@@ -215,10 +203,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   it("returns 500 with generic message for other errors", async () => {
     mockSatsrail.getMerchant.mockRejectedValueOnce(new Error("Connection timeout"));
 
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
 
     const res = await POST();
     const body = await res.json();
@@ -228,10 +213,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   });
 
   it("handles empty merchant name and currency", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
 
     mockSatsrail.getMerchant.mockResolvedValueOnce({
       name: null,
@@ -249,16 +231,17 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
   });
 
   it("does not update products that are not in the SatsRail response", async () => {
-    await Settings.create({
-      instance_name: "Test Instance",
-      setup_completed: true,
-    });
+    await createSettings({ instanceName: "Test Instance" });
+    const channel = await createChannel();
+    const media = await createMedia(channel.id);
 
-    await MediaProduct.create({
-      media_id: new mongoose.Types.ObjectId(),
-      satsrail_product_id: "prod_orphan",
-      encrypted_source_url: "enc",
-      product_name: "Old Name",
+    await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_orphan",
+        encryptedSourceUrl: "enc",
+        productName: "Old Name",
+      },
     });
 
     mockSatsrail.listProducts.mockResolvedValueOnce({

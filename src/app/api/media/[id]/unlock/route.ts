@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import {
   getProductsForMedia,
   verifyMacaroonAccess,
   findExpiredAccessForProducts,
 } from "@/lib/access-gate";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
 import * as Sentry from "@sentry/nextjs";
 
 interface RouteContext {
@@ -16,17 +14,18 @@ interface RouteContext {
 export async function GET(_req: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
-
-    await connectDB();
-
-    const media = await Media.findById(id).select("channel_id").lean();
+    const media = await prisma.media.findUnique({
+      where: { id },
+      select: { id: true, channelId: true },
+    });
     if (!media) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
 
-    const channel = await Channel.findById(media.channel_id)
-      .select("active")
-      .lean();
+    const channel = await prisma.channel.findUnique({
+      where: { id: media.channelId },
+      select: { active: true },
+    });
     if (!channel || !channel.active) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
@@ -36,8 +35,8 @@ export async function GET(_req: Request, context: RouteContext) {
     // (The page-render purchase UI uses the default to hide archived
     // buy buttons.)
     const products = await getProductsForMedia(
-      String(media._id),
-      String(media.channel_id),
+      media.id,
+      media.channelId,
       { includeArchived: true }
     );
 
@@ -71,7 +70,12 @@ export async function GET(_req: Request, context: RouteContext) {
     const product = products.find((p) => p.productId === access.productId)!;
 
     // Increment view count (fire-and-forget — don't block the response)
-    Media.updateOne({ _id: id }, { $inc: { views_count: 1 } }).catch(() => {});
+    prisma.media
+      .update({
+        where: { id },
+        data: { viewsCount: { increment: 1 } },
+      })
+      .catch(() => {});
 
     return NextResponse.json({
       key: access.key,

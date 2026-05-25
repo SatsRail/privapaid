@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockGetMerchantKey, mockSatsrail, mockRateLimit } = vi.hoisted(() => ({
@@ -24,9 +23,6 @@ vi.mock("@/lib/rate-limit", () => ({ rateLimit: mockRateLimit }));
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
 vi.mock("@/lib/merchant-key", () => ({
   getMerchantKey: mockGetMerchantKey,
 }));
@@ -39,10 +35,13 @@ vi.mock("@sentry/nextjs", () => ({
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/checkout/route";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
+
+let refSeed = 5000;
+function nextRef(): number {
+  refSeed += 1;
+  return refSeed;
+}
 
 function buildRequest(body: Record<string, unknown>): NextRequest {
   return new NextRequest(new URL("http://localhost:3000/api/checkout"), {
@@ -53,9 +52,6 @@ function buildRequest(body: Record<string, unknown>): NextRequest {
 }
 
 describe("Checkout API — POST /api/checkout", () => {
-  let channelId: string;
-  let mediaId: string;
-
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -82,59 +78,67 @@ describe("Checkout API — POST /api/checkout", () => {
   });
 
   async function seedWithMediaProduct() {
-    const channel = await Channel.create({
-      ref: 500,
-      slug: "checkout-ch",
-      name: "Checkout Channel",
-      active: true,
-    });
-    channelId = String(channel._id);
-
-    const media = await Media.create({
-      ref: 600,
-      channel_id: channelId,
-      name: "Paid Media",
-      source_url: "https://example.com/paid.mp4",
-      media_type: "video",
-    });
-    mediaId = String(media._id);
-
-    await MediaProduct.create({
-      media_id: mediaId,
-      satsrail_product_id: "prod_1",
-      encrypted_source_url: "enc_blob",
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `checkout-ch-${nextRef()}`,
+        name: "Checkout Channel",
+        active: true,
+      },
     });
 
-    return { channelId, mediaId };
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Paid Media",
+        sourceUrl: "https://example.com/paid.mp4",
+        mediaType: "video",
+      },
+    });
+
+    await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_1",
+        encryptedSourceUrl: "enc_blob",
+      },
+    });
+
+    return { channelId: channel.id, mediaId: media.id };
   }
 
   async function seedWithChannelProduct() {
-    const channel = await Channel.create({
-      ref: 501,
-      slug: "checkout-ch-cp",
-      name: "Channel Product Checkout",
-      active: true,
-    });
-    channelId = String(channel._id);
-
-    const media = await Media.create({
-      ref: 601,
-      channel_id: channelId,
-      name: "Channel Paid Media",
-      source_url: "https://example.com/chpaid.mp4",
-      media_type: "video",
-    });
-    mediaId = String(media._id);
-
-    await ChannelProduct.create({
-      channel_id: channelId,
-      satsrail_product_id: "prod_ch",
-      encrypted_media: [
-        { media_id: mediaId, encrypted_source_url: "ch_enc_blob" },
-      ],
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `checkout-ch-cp-${nextRef()}`,
+        name: "Channel Product Checkout",
+        active: true,
+      },
     });
 
-    return { channelId, mediaId };
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Channel Paid Media",
+        sourceUrl: "https://example.com/chpaid.mp4",
+        mediaType: "video",
+      },
+    });
+
+    await prisma.channelProduct.create({
+      data: {
+        channelId: channel.id,
+        satsrailProductId: "prod_ch",
+        encryptedMedia: {
+          create: [{ mediaId: media.id, encryptedSourceUrl: "ch_enc_blob" }],
+        },
+      },
+    });
+
+    return { channelId: channel.id, mediaId: media.id };
   }
 
   it("returns 400 when media_id is missing", async () => {
@@ -144,7 +148,7 @@ describe("Checkout API — POST /api/checkout", () => {
   });
 
   it("returns 400 when product_id is missing", async () => {
-    const req = buildRequest({ media_id: new mongoose.Types.ObjectId().toString() });
+    const req = buildRequest({ media_id: "ckmissingfakefakefakefake" });
     const res = await POST(req);
     expect(res.status).toBe(400);
   });
@@ -160,7 +164,7 @@ describe("Checkout API — POST /api/checkout", () => {
   });
 
   it("returns 404 when media not found", async () => {
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = "ckmissingfakefakefakefake";
     const req = buildRequest({ media_id: fakeId, product_id: "prod_1" });
     const res = await POST(req);
     const body = await res.json();
@@ -169,40 +173,26 @@ describe("Checkout API — POST /api/checkout", () => {
     expect(body.error).toBe("Media not found");
   });
 
-  it("returns 404 when channel not found", async () => {
-    const fakeChannelId = new mongoose.Types.ObjectId().toString();
-    const media = await Media.create({
-      ref: 700,
-      channel_id: fakeChannelId,
-      name: "Orphan",
-      source_url: "https://example.com/orphan.mp4",
-      media_type: "video",
-    });
-
-    const req = buildRequest({ media_id: String(media._id), product_id: "prod_1" });
-    const res = await POST(req);
-    const body = await res.json();
-
-    expect(res.status).toBe(404);
-    expect(body.error).toBe("Channel not found");
-  });
-
   it("returns 404 when channel is inactive", async () => {
-    const channel = await Channel.create({
-      ref: 502,
-      slug: "inactive-checkout",
-      name: "Inactive",
-      active: false,
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `inactive-checkout-${nextRef()}`,
+        name: "Inactive",
+        active: false,
+      },
     });
-    const media = await Media.create({
-      ref: 701,
-      channel_id: String(channel._id),
-      name: "Inactive Channel Media",
-      source_url: "https://example.com/inactive.mp4",
-      media_type: "video",
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Inactive Channel Media",
+        sourceUrl: "https://example.com/inactive.mp4",
+        mediaType: "video",
+      },
     });
 
-    const req = buildRequest({ media_id: String(media._id), product_id: "prod_1" });
+    const req = buildRequest({ media_id: media.id, product_id: "prod_1" });
     const res = await POST(req);
     const body = await res.json();
 

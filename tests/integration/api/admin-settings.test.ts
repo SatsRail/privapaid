@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -10,11 +9,6 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock next/headers
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock audit
@@ -54,7 +48,7 @@ vi.mock("@/config/instance", () => ({
 import { NextRequest, NextResponse } from "next/server";
 import { GET, PUT } from "@/app/api/admin/settings/route";
 import { requireOwnerApi } from "@/lib/auth-helpers";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 import { createSettings } from "../../helpers/factories";
 
 function buildPutRequest(body: unknown): NextRequest {
@@ -80,11 +74,7 @@ describe("Admin Settings routes", () => {
 
   describe("GET /api/admin/settings", () => {
     it("returns settings", async () => {
-      await createSettings({
-        instance_name: "My Instance",
-        nsfw_enabled: false,
-        theme_primary: "#3b82f6",
-      });
+      await createSettings({ instanceName: "My Instance" });
 
       const res = await GET();
       const body = await res.json();
@@ -105,7 +95,7 @@ describe("Admin Settings routes", () => {
 
   describe("PUT /api/admin/settings", () => {
     it("updates settings", async () => {
-      await createSettings({ instance_name: "Old Name" });
+      await createSettings({ instanceName: "Old Name" });
 
       const req = buildPutRequest({ instance_name: "New Name" });
       const res = await PUT(req);
@@ -125,7 +115,7 @@ describe("Admin Settings routes", () => {
     });
 
     it("returns 400 when payload has no recognized fields", async () => {
-      await createSettings({ instance_name: "x" });
+      await createSettings({ instanceName: "x" });
       const req = buildPutRequest({});
       const res = await PUT(req);
       expect(res.status).toBe(400);
@@ -133,18 +123,18 @@ describe("Admin Settings routes", () => {
     });
 
     it("returns 400 when payload fails schema validation", async () => {
-      await createSettings({ instance_name: "x" });
+      await createSettings({ instanceName: "x" });
       const req = buildPutRequest({ theme_primary: "not-a-color" });
       const res = await PUT(req);
       expect(res.status).toBe(400);
     });
 
-    it("returns 500 when Settings.findOneAndUpdate throws", async () => {
-      await createSettings({ instance_name: "x" });
+    it("returns 500 when Prisma settings.update throws", async () => {
+      await createSettings({ instanceName: "x" });
       const spy = vi
-        .spyOn(Settings, "findOneAndUpdate")
+        .spyOn(prisma.settings, "update")
         .mockImplementationOnce(() => {
-          throw new Error("mongo offline");
+          throw new Error("db offline");
         });
 
       const req = buildPutRequest({ instance_name: "Anything" });

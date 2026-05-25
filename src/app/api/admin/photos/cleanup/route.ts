@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwnerApi } from "@/lib/auth-helpers";
-import { connectDB } from "@/lib/mongodb";
 import { audit } from "@/lib/audit";
 import {
   cleanupOrphanEncryptedPhotos,
@@ -10,8 +9,8 @@ import {
 /**
  * POST /api/admin/photos/cleanup
  *
- * Owner-only. Scans the `encrypted_photos` GridFS bucket and deletes any
- * ciphertext file with no Media row pointing at it. Same primitive as the
+ * Owner-only. Scans the `EncryptedPhotoBlob` table and deletes any ciphertext
+ * row with no Media row pointing at it. Same primitive as the
  * `scripts/cleanup-orphan-photos.ts` cron — exposed here for ad-hoc runs from
  * the admin dashboard.
  *
@@ -26,8 +25,6 @@ import {
 export async function POST(req: NextRequest) {
   const auth = await requireOwnerApi();
   if (auth instanceof NextResponse) return auth;
-
-  await connectDB();
 
   let body: { graceSeconds?: unknown; dryRun?: unknown } = {};
   try {
@@ -51,8 +48,8 @@ export async function POST(req: NextRequest) {
         actorEmail: auth.email,
         actorType: "admin",
         action: "photos.cleanup",
-        targetType: "gridfs",
-        targetId: "encrypted_photos",
+        targetType: "encrypted_photo_blob",
+        targetId: "all",
         details: {
           graceSeconds: graceMs / 1000,
           scanned: result.scanned,

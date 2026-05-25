@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 
@@ -11,17 +10,14 @@ export async function PATCH(req: NextRequest) {
   const result = await validateBody(req, schemas.reorder);
   if (isValidationError(result)) return result;
 
-  await connectDB();
-
-  const ops = result.items.map(
-    (item: { id: string; position: number }) => ({
-      updateOne: {
-        filter: { _id: item.id },
-        update: { position: item.position },
-      },
-    })
+  await prisma.$transaction(
+    result.items.map((item: { id: string; position: number }) =>
+      prisma.media.update({
+        where: { id: item.id },
+        data: { position: item.position },
+      })
+    )
   );
 
-  await Media.bulkWrite(ops);
   return NextResponse.json({ success: true });
 }

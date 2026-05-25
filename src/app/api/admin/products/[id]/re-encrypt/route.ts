@@ -2,19 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwnerApi } from "@/lib/auth-helpers";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { unwrapDekToBase64url } from "@/lib/photo-dek";
 
 /**
  * POST /api/admin/products/[id]/re-encrypt
  *
- * Re-encrypts every MediaProduct and ChannelProduct entry that wraps this
- * product's key after a key rotation. Plaintext is sourced from the local
- * DB (Media.source_url for non-photo; Media.encrypted_dek unwrapped via
+ * Re-encrypts every MediaProduct and ChannelProductMedia entry that wraps
+ * this product's key after a key rotation. Plaintext is sourced from the
+ * local DB (Media.sourceUrl for non-photo; Media.encryptedDek unwrapped via
  * PHOTO_KEK for photos), not by decrypting the old ciphertext with
  * SatsRail's old_key. That pre-rotation key has proven unreliable in
  * practice: the portal can clear it independently, and any temporary
@@ -25,12 +22,12 @@ import { unwrapDekToBase64url } from "@/lib/photo-dek";
  * Flow:
  *   1. Fetch new key from SatsRail (only one round-trip).
  *   2. For each MediaProduct: lookup Media, derive plaintext, re-encrypt.
- *   3. For each ChannelProduct entry: same.
+ *   3. For each ChannelProductMedia entry: same.
  *   4. On clean run: clear old_key via SatsRail.
  *
  * Failure modes (still surfaced as `errors`):
  *   - Media not found (was deleted before rotation completed).
- *   - Photo media missing `encrypted_dek` (legacy upload, no KEK copy).
+ *   - Photo media missing `encryptedDek` (legacy upload, no KEK copy).
  *   - PHOTO_KEK not configured and we have photos to rotate.
  */
 export async function POST(
@@ -62,28 +59,27 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 502 });
   }
 
-  await connectDB();
-  const mediaProducts = await MediaProduct.find({
-    satsrail_product_id: productId,
+  const mediaProducts = await prisma.mediaProduct.findMany({
+    where: { satsrailProductId: productId },
   });
-  const channelProducts = await ChannelProduct.find({
-    satsrail_product_id: productId,
+  const channelProducts = await prisma.channelProduct.findMany({
+    where: { satsrailProductId: productId },
+    include: { encryptedMedia: true },
   });
 
   // Plan work items so the progress total is honest before we start.
   type WorkItem =
-    | { kind: "media_product"; mp: typeof mediaProducts[number] }
+    | { kind: "media_product"; mp: (typeof mediaProducts)[number] }
     | {
         kind: "channel_entry";
-        cp: typeof channelProducts[number];
-        entryIndex: number;
+        entry: (typeof channelProducts)[number]["encryptedMedia"][number];
       };
 
   const work: WorkItem[] = [];
   for (const mp of mediaProducts) work.push({ kind: "media_product", mp });
   for (const cp of channelProducts) {
-    for (let i = 0; i < cp.encrypted_media.length; i++) {
-      work.push({ kind: "channel_entry", cp, entryIndex: i });
+    for (const entry of cp.encryptedMedia) {
+      work.push({ kind: "channel_entry", entry });
     }
   }
   const total = work.length;
@@ -97,35 +93,32 @@ export async function POST(
     return NextResponse.json({ done: true, total: 0, errors: 0 });
   }
 
-  // Pre-load every Media we might need in one query so the inner loop
-  // doesn't N+1.
+  // Pre-load every Media we might need in one query so the inner loop doesn't N+1.
   const mediaIds = new Set<string>();
-  for (const mp of mediaProducts) mediaIds.add(String(mp.media_id));
+  for (const mp of mediaProducts) mediaIds.add(mp.mediaId);
   for (const cp of channelProducts) {
-    for (const entry of cp.encrypted_media) mediaIds.add(String(entry.media_id));
+    for (const entry of cp.encryptedMedia) mediaIds.add(entry.mediaId);
   }
-  const mediaDocs = await Media.find({ _id: { $in: Array.from(mediaIds) } })
-    .lean();
+  const mediaDocs = await prisma.media.findMany({
+    where: { id: { in: Array.from(mediaIds) } },
+  });
   const mediaById = new Map<string, (typeof mediaDocs)[number]>();
-  for (const m of mediaDocs) mediaById.set(String(m._id), m);
-
-  // Track which ChannelProducts we mutated so we save once at the end.
-  const touchedChannelProducts = new Set<typeof channelProducts[number]>();
+  for (const m of mediaDocs) mediaById.set(m.id, m);
 
   function plaintextForMedia(mediaId: string): string {
     const media = mediaById.get(mediaId);
     if (!media) {
       throw new Error(`Media ${mediaId} not found — was it deleted?`);
     }
-    if (media.media_type === "photo") {
-      if (!media.encrypted_dek) {
+    if (media.mediaType === "photo") {
+      if (!media.encryptedDek) {
         throw new Error(
-          `Photo media ${mediaId} has no encrypted_dek — re-upload required`
+          `Photo media ${mediaId} has no encryptedDek — re-upload required`
         );
       }
-      return unwrapDekToBase64url(media.encrypted_dek);
+      return unwrapDekToBase64url(media.encryptedDek);
     }
-    return media.source_url;
+    return media.sourceUrl;
   }
 
   const encoder = new TextEncoder();
@@ -138,22 +131,19 @@ export async function POST(
         current++;
         try {
           if (item.kind === "media_product") {
-            const plaintext = plaintextForMedia(String(item.mp.media_id));
-            item.mp.encrypted_source_url = encryptSourceUrl(
-              plaintext,
-              newKey,
-              productId
-            );
-            await item.mp.save();
+            const plaintext = plaintextForMedia(item.mp.mediaId);
+            const encrypted = encryptSourceUrl(plaintext, newKey, productId);
+            await prisma.mediaProduct.update({
+              where: { id: item.mp.id },
+              data: { encryptedSourceUrl: encrypted },
+            });
           } else {
-            const entry = item.cp.encrypted_media[item.entryIndex];
-            const plaintext = plaintextForMedia(String(entry.media_id));
-            entry.encrypted_source_url = encryptSourceUrl(
-              plaintext,
-              newKey,
-              productId
-            );
-            touchedChannelProducts.add(item.cp);
+            const plaintext = plaintextForMedia(item.entry.mediaId);
+            const encrypted = encryptSourceUrl(plaintext, newKey, productId);
+            await prisma.channelProductMedia.update({
+              where: { id: item.entry.id },
+              data: { encryptedSourceUrl: encrypted },
+            });
           }
         } catch (err) {
           errors++;
@@ -166,17 +156,6 @@ export async function POST(
         controller.enqueue(
           encoder.encode(JSON.stringify({ current, total, errors }) + "\n")
         );
-      }
-
-      // Save ChannelProduct mutations now that all entries are updated.
-      for (const cp of touchedChannelProducts) {
-        try {
-          cp.markModified("encrypted_media");
-          await cp.save();
-        } catch (err) {
-          errors++;
-          console.error(`Failed to save channel product ${cp._id}:`, err);
-        }
       }
 
       // Only clear old_key if everything succeeded — partial success means

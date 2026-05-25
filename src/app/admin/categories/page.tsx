@@ -1,7 +1,5 @@
 import Link from "next/link";
-import { connectDB } from "@/lib/mongodb";
-import Category from "@/models/Category";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
 import AdultContentSettings from "./AdultContentSettings";
@@ -10,15 +8,17 @@ import CategoryList from "./CategoryList";
 export const dynamic = "force-dynamic";
 
 export default async function CategoriesPage() {
-  await connectDB();
-  const categories = await Category.find().sort({ position: 1 }).lean();
-  const settings = await Settings.findOne({ setup_completed: true })
-    .select("nsfw_enabled adult_disclaimer")
-    .lean();
+  const categories = await prisma.category.findMany({
+    orderBy: { position: "asc" },
+  });
+  const settings = await prisma.settings.findFirst({
+    where: { setupCompleted: true },
+    select: { nsfwEnabled: true, adultDisclaimer: true },
+  });
   const { locale } = await getInstanceConfig();
 
   const serializedCategories = categories.map((cat) => ({
-    _id: String(cat._id),
+    _id: cat.id,
     name: cat.name,
     slug: cat.slug,
     position: cat.position,
@@ -28,8 +28,8 @@ export default async function CategoriesPage() {
   return (
     <div>
       <AdultContentSettings
-        initialNsfw={settings?.nsfw_enabled ?? false}
-        initialDisclaimer={settings?.adult_disclaimer ?? ""}
+        initialNsfw={settings?.nsfwEnabled ?? false}
+        initialDisclaimer={settings?.adultDisclaimer ?? ""}
       />
 
       <div className="mb-6 flex items-center justify-between">

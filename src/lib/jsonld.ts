@@ -1,5 +1,5 @@
 import type { InstanceConfig } from "@/config/instance";
-import type { MediaType } from "@/models/Media";
+import type { MediaType } from "@prisma/client";
 
 interface JsonLdBase {
   "@context": "https://schema.org";
@@ -44,15 +44,16 @@ export function buildChannelSchema(
     name: string;
     slug: string;
     bio?: string;
-    profile_image_url?: string;
-    profile_image_id?: string;
+    profileImageUrl?: string;
+    id?: string;
+    hasProfileImage?: boolean;
   },
   config: InstanceConfig
 ): JsonLdBase {
   const siteUrl = `https://${config.domain}`;
-  const imageUrl = channel.profile_image_id
-    ? `${siteUrl}/api/images/${channel.profile_image_id}`
-    : channel.profile_image_url || undefined;
+  const imageUrl = channel.hasProfileImage && channel.id
+    ? `${siteUrl}/api/images/channel/${channel.id}`
+    : channel.profileImageUrl || undefined;
 
   return {
     "@context": "https://schema.org",
@@ -71,34 +72,34 @@ export function buildChannelSchema(
 
 export function buildMediaSchema(
   media: {
-    _id: string;
+    id: string;
     name: string;
     description?: string;
-    media_type: MediaType;
-    thumbnail_url?: string;
-    thumbnail_id?: string;
-    created_at?: Date | string;
-    updated_at?: Date | string;
+    mediaType: MediaType;
+    thumbnailUrl?: string;
+    hasThumbnail?: boolean;
+    createdAt?: Date | string;
+    updatedAt?: Date | string;
   },
   channel: { name: string; slug: string },
   config: InstanceConfig
 ): JsonLdBase {
   const siteUrl = `https://${config.domain}`;
-  const url = `${siteUrl}/c/${channel.slug}/${media._id}`;
-  const imageUrl = media.thumbnail_id
-    ? `${siteUrl}/api/images/${media.thumbnail_id}`
-    : media.thumbnail_url || undefined;
+  const url = `${siteUrl}/c/${channel.slug}/${media.id}`;
+  const imageUrl = media.hasThumbnail
+    ? `${siteUrl}/api/images/media-thumbnail/${media.id}`
+    : media.thumbnailUrl || undefined;
 
   const shared = {
     name: media.name,
     url,
     ...(media.description && { description: media.description }),
     ...(imageUrl && { thumbnailUrl: imageUrl }),
-    ...(media.created_at && { datePublished: new Date(media.created_at).toISOString() }),
-    ...(media.updated_at && { dateModified: new Date(media.updated_at).toISOString() }),
+    ...(media.createdAt && { datePublished: new Date(media.createdAt).toISOString() }),
+    ...(media.updatedAt && { dateModified: new Date(media.updatedAt).toISOString() }),
   };
 
-  switch (media.media_type) {
+  switch (media.mediaType) {
     case "video":
       return {
         "@context": "https://schema.org",

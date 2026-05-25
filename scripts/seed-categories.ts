@@ -5,17 +5,17 @@
  *   npx tsx scripts/seed-categories.ts
  *
  * Idempotent: skips categories whose slug already exists.
- * Requires MONGODB_URI in .env.local or environment.
+ * Requires DATABASE_URL in .env.local or environment.
  */
 
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import mongoose from "mongoose";
+import { prisma } from "@/lib/prisma";
 
-const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-  console.error("MONGODB_URI not set. Check .env.local");
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("DATABASE_URL not set. Check .env.local");
   process.exit(1);
 }
 
@@ -32,11 +32,7 @@ function toSlug(name: string): string {
 }
 
 async function seed() {
-  await mongoose.connect(MONGODB_URI!);
-  console.log("Connected to MongoDB");
-
-  const db = mongoose.connection.db!;
-  const collection = db.collection("categories");
+  console.log("Connected to Postgres via Prisma");
 
   let inserted = 0;
   let skipped = 0;
@@ -45,29 +41,33 @@ async function seed() {
     const name = CATEGORIES[i];
     const slug = toSlug(name);
 
-    const existing = await collection.findOne({ slug });
+    const existing = await prisma.category.findUnique({ where: { slug } });
     if (existing) {
       console.log(`  skip: "${name}" (slug "${slug}" already exists)`);
       skipped++;
       continue;
     }
 
-    await collection.insertOne({
-      name,
-      slug,
-      position: i,
-      active: true,
-      created_at: new Date(),
+    await prisma.category.create({
+      data: {
+        name,
+        slug,
+        position: i,
+        active: true,
+      },
     });
     console.log(`  added: "${name}" → ${slug}`);
     inserted++;
   }
 
   console.log(`\nDone: ${inserted} inserted, ${skipped} skipped`);
-  await mongoose.disconnect();
 }
 
-seed().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+seed()
+  .catch((err) => {
+    console.error("Seed failed:", err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

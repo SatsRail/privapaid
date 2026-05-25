@@ -1,46 +1,38 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import mongoose from "mongoose";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createSettings } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
-
-// We need to mock Settings.findOne dynamically
-const mockFindOne = vi.fn();
-vi.mock("@/models/Settings", () => ({
-  default: {
-    findOne: () => ({
-      select: () => ({
-        lean: mockFindOne,
-      }),
-    }),
-  },
-}));
-
-// Import encryption to create a real encrypted value for testing
 import { encryptSecretKey } from "@/lib/encryption";
 import { getMerchantKey } from "@/lib/merchant-key";
 
 describe("getMerchantKey", () => {
-  beforeEach(() => {
-    mockFindOne.mockReset();
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
+  afterEach(async () => {
+    await clearCollections();
   });
 
   it("returns null when no settings exist", async () => {
-    mockFindOne.mockResolvedValue(null);
     const key = await getMerchantKey();
     expect(key).toBeNull();
   });
 
   it("returns null when no encrypted key is stored", async () => {
-    mockFindOne.mockResolvedValue({ satsrail_api_key_encrypted: null });
+    await createSettings({ satsrailApiKeyEncrypted: null });
     const key = await getMerchantKey();
     expect(key).toBeNull();
   });
 
   it("returns null when encrypted key is empty string", async () => {
-    mockFindOne.mockResolvedValue({ satsrail_api_key_encrypted: "" });
+    await createSettings();
+    await prisma.settings.update({ where: { id: 1 }, data: { satsrailApiKeyEncrypted: "" } });
     const key = await getMerchantKey();
     expect(key).toBeNull();
   });
@@ -48,7 +40,7 @@ describe("getMerchantKey", () => {
   it("decrypts and returns the merchant key", async () => {
     const originalKey = "sk_live_abc123def456";
     const encrypted = encryptSecretKey(originalKey);
-    mockFindOne.mockResolvedValue({ satsrail_api_key_encrypted: encrypted });
+    await createSettings({ satsrailApiKeyEncrypted: encrypted });
 
     const key = await getMerchantKey();
     expect(key).toBe(originalKey);
@@ -63,7 +55,11 @@ describe("getMerchantKey", () => {
 
     for (const originalKey of keys) {
       const encrypted = encryptSecretKey(originalKey);
-      mockFindOne.mockResolvedValue({ satsrail_api_key_encrypted: encrypted });
+      await prisma.settings.upsert({
+        where: { id: 1 },
+        create: { id: 1, instanceName: "x", satsrailApiKeyEncrypted: encrypted },
+        update: { satsrailApiKeyEncrypted: encrypted },
+      });
       const result = await getMerchantKey();
       expect(result).toBe(originalKey);
     }

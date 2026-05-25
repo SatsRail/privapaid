@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
-
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 const { isSetupCompleteMock } = vi.hoisted(() => ({
   isSetupCompleteMock: vi.fn().mockResolvedValue(false),
@@ -18,7 +13,7 @@ vi.mock("@/lib/encryption", () => ({
 }));
 
 import { POST } from "@/app/api/setup/route";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 
 function buildRequest(body: unknown): Request {
   return new Request("http://localhost:3000/api/setup", {
@@ -83,17 +78,17 @@ describe("POST /api/setup", () => {
     );
     expect(res.status).toBe(201);
 
-    const saved = await Settings.findOne({});
+    const saved = await prisma.settings.findFirst();
     expect(saved).not.toBeNull();
-    expect(saved!.instance_name).toBe("My Stream");
-    expect(saved!.logo_url).toBe("https://example.com/logo.png");
-    expect(saved!.nsfw_enabled).toBe(true);
-    expect(saved!.theme_primary).toBe("#ff00aa");
-    expect(saved!.merchant_id).toBe("m_42");
-    expect(saved!.merchant_name).toBe("Acme");
-    expect(saved!.merchant_currency).toBe("EUR");
-    expect(saved!.merchant_locale).toBe("es");
-    expect(saved!.satsrail_api_key_encrypted).toBe("encrypted_key_payload");
+    expect(saved!.instanceName).toBe("My Stream");
+    expect(saved!.logoUrl).toBe("https://example.com/logo.png");
+    expect(saved!.nsfwEnabled).toBe(true);
+    expect(saved!.themePrimary).toBe("#ff00aa");
+    expect(saved!.merchantId).toBe("m_42");
+    expect(saved!.merchantName).toBe("Acme");
+    expect(saved!.merchantCurrency).toBe("EUR");
+    expect(saved!.merchantLocale).toBe("es");
+    expect(saved!.satsrailApiKeyEncrypted).toBe("encrypted_key_payload");
   });
 
   it("applies defaults when optional fields are omitted", async () => {
@@ -106,13 +101,13 @@ describe("POST /api/setup", () => {
     );
     expect(res.status).toBe(201);
 
-    const saved = await Settings.findOne({});
-    expect(saved!.logo_url).toBe("");
-    expect(saved!.nsfw_enabled).toBe(false);
-    expect(saved!.theme_primary).toBe("#3b82f6");
-    expect(saved!.merchant_name).toBe("");
-    expect(saved!.merchant_currency).toBe("USD");
-    expect(saved!.merchant_locale).toBe("en");
+    const saved = await prisma.settings.findFirst();
+    expect(saved!.logoUrl).toBe("");
+    expect(saved!.nsfwEnabled).toBe(false);
+    expect(saved!.themePrimary).toBe("#3b82f6");
+    expect(saved!.merchantName).toBe("");
+    expect(saved!.merchantCurrency).toBe("USD");
+    expect(saved!.merchantLocale).toBe("en");
   });
 
   it("treats nsfw_enabled as false when not strictly true", async () => {
@@ -125,14 +120,14 @@ describe("POST /api/setup", () => {
       })
     );
     expect(res.status).toBe(201);
-    const saved = await Settings.findOne({});
-    expect(saved!.nsfw_enabled).toBe(false);
+    const saved = await prisma.settings.findFirst();
+    expect(saved!.nsfwEnabled).toBe(false);
   });
 
-  it("returns 500 when Settings.create throws", async () => {
+  it("returns 500 when prisma.settings.create throws", async () => {
     const spy = vi
-      .spyOn(Settings, "create")
-      .mockRejectedValueOnce(new Error("mongo offline") as never);
+      .spyOn(prisma.settings, "create")
+      .mockRejectedValueOnce(new Error("db offline") as never);
 
     const res = await POST(
       buildRequest({

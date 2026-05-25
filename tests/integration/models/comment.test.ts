@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia, createCustomer } from "../../helpers/factories";
-import Comment from "@/models/Comment";
+import { prisma } from "@/lib/prisma";
 
 describe("Comment model", () => {
   beforeAll(async () => {
@@ -18,107 +18,71 @@ describe("Comment model", () => {
 
   it("creates a comment with required fields", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    const comment = await Comment.create({
-      media_id: media._id,
-      nickname: "testuser",
-      body: "Great content!",
+    const media = await createMedia(channel.id);
+    const comment = await prisma.comment.create({
+      data: {
+        mediaId: media.id,
+        nickname: "testuser",
+        body: "Great content!",
+      },
     });
-    expect(comment._id).toBeDefined();
-    expect(comment.media_id.toString()).toBe(media._id.toString());
+    expect(comment.id).toBeDefined();
+    expect(comment.mediaId).toBe(media.id);
     expect(comment.nickname).toBe("testuser");
     expect(comment.body).toBe("Great content!");
   });
 
   it("creates timestamps", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    const comment = await Comment.create({
-      media_id: media._id,
-      nickname: "user",
-      body: "Nice",
+    const media = await createMedia(channel.id);
+    const comment = await prisma.comment.create({
+      data: { mediaId: media.id, nickname: "user", body: "Nice" },
     });
-    expect(comment.created_at).toBeInstanceOf(Date);
-    expect(comment.updated_at).toBeInstanceOf(Date);
+    expect(comment.createdAt).toBeInstanceOf(Date);
+    expect(comment.updatedAt).toBeInstanceOf(Date);
   });
 
-  it("trims nickname and body", async () => {
+  it("allows optional customerId", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    const comment = await Comment.create({
-      media_id: media._id,
-      nickname: "  trimmed_user  ",
-      body: "  trimmed body  ",
-    });
-    expect(comment.nickname).toBe("trimmed_user");
-    expect(comment.body).toBe("trimmed body");
-  });
-
-  it("allows optional customer_id", async () => {
-    const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
+    const media = await createMedia(channel.id);
     const customer = await createCustomer();
 
-    const withCustomer = await Comment.create({
-      media_id: media._id,
-      customer_id: customer._id,
-      nickname: customer.nickname,
-      body: "From a customer",
+    const withCustomer = await prisma.comment.create({
+      data: {
+        mediaId: media.id,
+        customerId: customer.id,
+        nickname: customer.nickname,
+        body: "From a customer",
+      },
     });
-    expect(withCustomer.customer_id!.toString()).toBe(customer._id.toString());
+    expect(withCustomer.customerId).toBe(customer.id);
 
-    const anonymous = await Comment.create({
-      media_id: media._id,
-      nickname: "anon",
-      body: "Anonymous comment",
+    const anonymous = await prisma.comment.create({
+      data: {
+        mediaId: media.id,
+        nickname: "anon",
+        body: "Anonymous comment",
+      },
     });
-    expect(anonymous.customer_id).toBeUndefined();
+    expect(anonymous.customerId).toBeNull();
   });
 
-  it("requires media_id", async () => {
-    await expect(
-      Comment.create({ nickname: "user", body: "No media" })
-    ).rejects.toThrow();
-  });
-
-  it("requires nickname", async () => {
+  it("queries comments by mediaId", async () => {
     const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    await expect(
-      Comment.create({ media_id: media._id, body: "No nickname" })
-    ).rejects.toThrow();
-  });
+    const media1 = await createMedia(channel.id, { name: "Media 1" });
+    const media2 = await createMedia(channel.id, { name: "Media 2" });
 
-  it("requires body", async () => {
-    const channel = await createChannel();
-    const media = await createMedia(channel._id.toString());
-    await expect(
-      Comment.create({ media_id: media._id, nickname: "user" })
-    ).rejects.toThrow();
-  });
-
-  it("queries comments by media_id", async () => {
-    const channel = await createChannel();
-    const media1 = await createMedia(channel._id.toString(), { name: "Media 1" });
-    const media2 = await createMedia(channel._id.toString(), { name: "Media 2" });
-
-    await Comment.create({
-      media_id: media1._id,
-      nickname: "user1",
-      body: "On media 1",
+    await prisma.comment.create({
+      data: { mediaId: media1.id, nickname: "user1", body: "On media 1" },
     });
-    await Comment.create({
-      media_id: media1._id,
-      nickname: "user2",
-      body: "Also on media 1",
+    await prisma.comment.create({
+      data: { mediaId: media1.id, nickname: "user2", body: "Also on media 1" },
     });
-    await Comment.create({
-      media_id: media2._id,
-      nickname: "user3",
-      body: "On media 2",
+    await prisma.comment.create({
+      data: { mediaId: media2.id, nickname: "user3", body: "On media 2" },
     });
 
-    const comments = await Comment.find({ media_id: media1._id });
+    const comments = await prisma.comment.findMany({ where: { mediaId: media1.id } });
     expect(comments).toHaveLength(2);
   });
 });

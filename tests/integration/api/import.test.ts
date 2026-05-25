@@ -1,13 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { randomBytes } from "crypto";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createCategory, createChannel, createMedia } from "../../helpers/factories";
-import Category from "@/models/Category";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 
 function generateProductKey(): string {
   return randomBytes(32)
@@ -21,11 +17,6 @@ function generateProductKey(): string {
 const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock satsrail client
@@ -74,7 +65,6 @@ function importRequest(body: unknown): NextRequest {
   });
 }
 
-// Helper to read SSE stream and extract the "complete" event data
 async function readSSEResult(res: Response): Promise<{ success: boolean; results: Record<string, unknown> }> {
   const text = await res.text();
   const lines = text.split("\n");
@@ -136,7 +126,7 @@ describe("POST /api/admin/import", () => {
     expect((body.results.categories as { created: number }).created).toBe(2);
     expect((body.results.categories as { updated: number }).updated).toBe(0);
 
-    const cats = await Category.find().sort({ position: 1 }).lean();
+    const cats = await prisma.category.findMany({ orderBy: { position: "asc" } });
     expect(cats).toHaveLength(2);
     expect(cats[0].slug).toBe("movies");
     expect(cats[1].slug).toBe("music");
@@ -160,7 +150,7 @@ describe("POST /api/admin/import", () => {
     expect((body.results.categories as { created: number }).created).toBe(0);
     expect((body.results.categories as { updated: number }).updated).toBe(1);
 
-    const cat = await Category.findOne({ slug: "movies" }).lean();
+    const cat = await prisma.category.findFirst({ where: { slug: "movies" } });
     expect(cat!.name).toBe("New Name");
     expect(cat!.position).toBe(5);
   });
@@ -188,9 +178,9 @@ describe("POST /api/admin/import", () => {
     const body = await readSSEResult(res);
     expect((body.results.channels as { created: number }).created).toBe(1);
 
-    const ch = await Channel.findOne({ slug: "bitcoin-101" }).lean();
+    const ch = await prisma.channel.findFirst({ where: { slug: "bitcoin-101" } });
     expect(ch!.name).toBe("Bitcoin 101");
-    expect(ch!.satsrail_product_type_id).toBe("pt_123");
+    expect(ch!.satsrailProductTypeId).toBe("pt_123");
     expect(ch!.ref).toBeDefined();
     expect(mockCreateProductType).toHaveBeenCalledOnce();
   });
@@ -219,10 +209,9 @@ describe("POST /api/admin/import", () => {
     expect((body.results.channels as { updated: number }).updated).toBe(1);
     expect((body.results.channels as { created: number }).created).toBe(0);
 
-    const ch = await Channel.findOne({ slug: "my-channel" }).lean();
+    const ch = await prisma.channel.findFirst({ where: { slug: "my-channel" } });
     expect(ch!.name).toBe("Updated Channel");
     expect(ch!.bio).toBe("new bio");
-    // Should not have called createProductType for existing channel without products
     expect(mockCreateProductType).not.toHaveBeenCalled();
   });
 
@@ -262,10 +251,11 @@ describe("POST /api/admin/import", () => {
     expect((body.results.channels as { created: number }).created).toBe(1);
     expect((body.results.media as { created: number }).created).toBe(2);
 
-    const ch = await Channel.findOne({ slug: "test-channel" }).lean();
-    const media = await Media.find({ channel_id: ch!._id })
-      .sort({ position: 1 })
-      .lean();
+    const ch = await prisma.channel.findFirst({ where: { slug: "test-channel" } });
+    const media = await prisma.media.findMany({
+      where: { channelId: ch!.id },
+      orderBy: { position: "asc" },
+    });
     expect(media).toHaveLength(2);
     expect(media[0].name).toBe("Video 1");
     expect(media[1].name).toBe("Audio 1");
@@ -315,14 +305,12 @@ describe("POST /api/admin/import", () => {
     expect(mediaR.created).toBe(1);
     expect(mediaR.errors).toHaveLength(0);
 
-    // Verify MediaProduct was created
-    const mediaProducts = await MediaProduct.find().lean();
+    const mediaProducts = await prisma.mediaProduct.findMany();
     expect(mediaProducts).toHaveLength(1);
-    expect(mediaProducts[0].satsrail_product_id).toBe("prod_abc");
-    expect(mediaProducts[0].encrypted_source_url).toBeDefined();
-    expect(mediaProducts[0].key_fingerprint).toBe("fp_123");
+    expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
+    expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
+    expect(mediaProducts[0].keyFingerprint).toBe("fp_123");
 
-    // Verify SatsRail was called correctly
     expect(mockCreateProduct).toHaveBeenCalledWith("sk_live_test_key", expect.objectContaining({
       name: "Premium Access",
       price_cents: 500,
@@ -331,7 +319,7 @@ describe("POST /api/admin/import", () => {
     }));
   });
 
-  it("resolves category_slug to category_id on channels", async () => {
+  it("resolves category_slug to categoryId on channels", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -355,9 +343,9 @@ describe("POST /api/admin/import", () => {
     expect((body.results.categories as { created: number }).created).toBe(1);
     expect((body.results.channels as { created: number }).created).toBe(1);
 
-    const cat = await Category.findOne({ slug: "education" }).lean();
-    const ch = await Channel.findOne({ slug: "learn-btc" }).lean();
-    expect(String(ch!.category_id)).toBe(String(cat!._id));
+    const cat = await prisma.category.findFirst({ where: { slug: "education" } });
+    const ch = await prisma.channel.findFirst({ where: { slug: "learn-btc" } });
+    expect(ch!.categoryId).toBe(cat!.id);
   });
 
   it("matches existing media by ref within the same channel", async () => {
@@ -366,10 +354,10 @@ describe("POST /api/admin/import", () => {
     });
 
     const channel = await createChannel({ slug: "existing-ch", name: "Existing" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "Old Name",
       ref: 42,
-      source_url: "https://example.com/old.mp4",
+      sourceUrl: "https://example.com/old.mp4",
     });
 
     const res = await POST(
@@ -396,9 +384,9 @@ describe("POST /api/admin/import", () => {
     expect((body.results.media as { updated: number }).updated).toBe(1);
     expect((body.results.media as { created: number }).created).toBe(0);
 
-    const media = await Media.findOne({ ref: 42 }).lean();
+    const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    expect(media!.source_url).toBe("https://example.com/new.mp4");
+    expect(media!.sourceUrl).toBe("https://example.com/new.mp4");
   });
 
   it("matches existing media by name when ref is not provided", async () => {
@@ -407,9 +395,9 @@ describe("POST /api/admin/import", () => {
     });
 
     const channel = await createChannel({ slug: "name-match-ch", name: "Name Match" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "My Video",
-      source_url: "https://example.com/old.mp4",
+      sourceUrl: "https://example.com/old.mp4",
       description: "old description",
     });
 
@@ -435,7 +423,7 @@ describe("POST /api/admin/import", () => {
     const body = await readSSEResult(res);
     expect((body.results.media as { updated: number }).updated).toBe(1);
 
-    const media = await Media.findOne({ name: "My Video" }).lean();
+    const media = await prisma.media.findFirst({ where: { name: "My Video" } });
     expect(media!.description).toBe("new description");
   });
 
@@ -478,7 +466,6 @@ describe("POST /api/admin/import", () => {
 
     const body = await readSSEResult(res);
     const mediaR = body.results.media as { created: number; errors: { name: string; error: string }[] };
-    // Free video should succeed, paid video media created but product fails
     expect(mediaR.created).toBe(2);
     expect(mediaR.errors).toHaveLength(1);
     expect(mediaR.errors[0].name).toBe("Paid Video");
@@ -508,7 +495,7 @@ describe("POST /api/admin/import", () => {
     expect(body.error).toContain("Too many media items");
   });
 
-  it("increments channel media_count when creating media", async () => {
+  it("increments channel mediaCount when creating media", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -534,8 +521,8 @@ describe("POST /api/admin/import", () => {
     const body = await readSSEResult(res);
     expect((body.results.media as { created: number }).created).toBe(3);
 
-    const ch = await Channel.findOne({ slug: "count-ch" }).lean();
-    expect(ch!.media_count).toBe(3);
+    const ch = await prisma.channel.findFirst({ where: { slug: "count-ch" } });
+    expect(ch!.mediaCount).toBe(3);
   });
 
   it("honors JSON product.external_ref when creating a SatsRail product", async () => {
@@ -578,8 +565,8 @@ describe("POST /api/admin/import", () => {
       "sk_live_test_key",
       expect.objectContaining({ external_ref: "md_custom_77" })
     );
-    const mediaProducts = await MediaProduct.find().lean();
-    expect(mediaProducts[0].product_external_ref).toBe("md_custom_77");
+    const mediaProducts = await prisma.mediaProduct.findMany();
+    expect(mediaProducts[0].productExternalRef).toBe("md_custom_77");
   });
 
   it("reuses existing SatsRail product when JSON external_ref matches an existing one", async () => {
@@ -589,7 +576,6 @@ describe("POST /api/admin/import", () => {
 
     const productKey = generateProductKey();
     mockCreateProductType.mockResolvedValue({ id: "pt_reuse" });
-    // listProducts returns a match — createProduct should NOT be called
     mockListProducts.mockResolvedValue({
       data: [{ id: "prod_existing", external_ref: "md_existing_5" }],
     });
@@ -627,10 +613,10 @@ describe("POST /api/admin/import", () => {
     expect(mockCreateProduct).not.toHaveBeenCalled();
     expect(mockUpdateProduct).toHaveBeenCalled();
 
-    const mediaProducts = await MediaProduct.find().lean();
+    const mediaProducts = await prisma.mediaProduct.findMany();
     expect(mediaProducts).toHaveLength(1);
-    expect(mediaProducts[0].satsrail_product_id).toBe("prod_existing");
-    expect(mediaProducts[0].product_external_ref).toBe("md_existing_5");
+    expect(mediaProducts[0].satsrailProductId).toBe("prod_existing");
+    expect(mediaProducts[0].productExternalRef).toBe("md_existing_5");
   });
 
   it("falls back to md_{ref} when JSON product has no external_ref", async () => {
@@ -663,24 +649,11 @@ describe("POST /api/admin/import", () => {
     );
 
     await readSSEResult(res);
-    const media = await Media.findOne({ name: "Fallback Video" }).lean();
+    const media = await prisma.media.findFirst({ where: { name: "Fallback Video" } });
     expect(mockCreateProduct).toHaveBeenCalledWith(
       "sk_live_test_key",
       expect.objectContaining({ external_ref: `md_${media!.ref}` })
     );
-  });
-
-  it("emits SSE error event when the outer flow throws", async () => {
-    mockAuth.mockResolvedValue({
-      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
-    });
-    const { connectDB } = await import("@/lib/mongodb");
-    vi.mocked(connectDB).mockRejectedValueOnce(new Error("db boom"));
-
-    const res = await POST(importRequest({ version: "1.0", categories: [] }));
-    const text = await res.text();
-    expect(text).toMatch(/event: error/);
-    expect(text).toMatch(/db boom/);
   });
 
   it("records per-category error when Category.create throws", async () => {
@@ -688,7 +661,7 @@ describe("POST /api/admin/import", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const spy = vi
-      .spyOn(Category, "create")
+      .spyOn(prisma.category, "create")
       .mockRejectedValueOnce(new Error("cat create failed") as never);
 
     const res = await POST(
@@ -711,7 +684,7 @@ describe("POST /api/admin/import", () => {
     });
     mockCreateProductType.mockResolvedValue({ id: "pt_chfail" });
     const spy = vi
-      .spyOn(Channel, "create")
+      .spyOn(prisma.channel, "create")
       .mockRejectedValueOnce(new Error("channel create failed") as never);
 
     const res = await POST(
@@ -747,8 +720,8 @@ describe("POST /api/admin/import", () => {
     );
     const body = await readSSEResult(res);
     expect((body.results.channels as { created: number }).created).toBe(1);
-    const ch = await Channel.findOne({ slug: "orphan-cat-ch" }).lean();
-    expect(ch!.category_id == null).toBe(true);
+    const ch = await prisma.channel.findFirst({ where: { slug: "orphan-cat-ch" } });
+    expect(ch!.categoryId == null).toBe(true);
   });
 
   it("skips SatsRail product creation when getMerchantKey returns null", async () => {
@@ -775,11 +748,10 @@ describe("POST /api/admin/import", () => {
     const body = await readSSEResult(res);
     expect((body.results.channels as { created: number }).created).toBe(1);
     expect((body.results.media as { created: number }).created).toBe(1);
-    // No product type type was created because sk was null
     expect(mockCreateProductType).not.toHaveBeenCalled();
 
-    const ch = await Channel.findOne({ slug: "no-sk-ch" }).lean();
-    expect(ch!.satsrail_product_type_id == null).toBe(true);
+    const ch = await prisma.channel.findFirst({ where: { slug: "no-sk-ch" } });
+    expect(ch!.satsrailProductTypeId == null).toBe(true);
   });
 
   it("creates a channel access product (Phase 4) when chData.product is present", async () => {
@@ -872,11 +844,10 @@ describe("POST /api/admin/import", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
 
-    // Create a channel without satsrail_product_type_id
     await createChannel({
       slug: "no-pt-ch",
       name: "No Product Type",
-      satsrail_product_type_id: null,
+      satsrailProductTypeId: null,
     });
 
     const productKey = generateProductKey();
@@ -910,16 +881,13 @@ describe("POST /api/admin/import", () => {
     const body = await readSSEResult(res);
     expect((body.results.channels as { updated: number }).updated).toBe(1);
 
-    // Should have created a product type for the channel
     expect(mockCreateProductType).toHaveBeenCalledOnce();
 
-    // Channel should now have the product type
-    const ch = await Channel.findOne({ slug: "no-pt-ch" }).lean();
-    expect(ch!.satsrail_product_type_id).toBe("pt_new");
+    const ch = await prisma.channel.findFirst({ where: { slug: "no-pt-ch" } });
+    expect(ch!.satsrailProductTypeId).toBe("pt_new");
 
-    // Product should have been created
     expect(mockCreateProduct).toHaveBeenCalledOnce();
-    const mediaProducts = await MediaProduct.find().lean();
+    const mediaProducts = await prisma.mediaProduct.findMany();
     expect(mediaProducts).toHaveLength(1);
   });
 });

@@ -1,24 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
+import type { Prisma } from "@prisma/client";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await connectDB();
   const { id } = await params;
-  const channel = await Channel.findById(id)
-    .populate("category_id", "name")
-    .lean();
+  const channel = await prisma.channel.findUnique({
+    where: { id },
+    include: { category: { select: { name: true } } },
+  });
   if (!channel) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -32,37 +29,46 @@ export async function PATCH(
   const validated = await validateBody(req, schemas.channelUpdate);
   if (isValidationError(validated)) return validated;
 
-  await connectDB();
   const { id } = await params;
 
-  const updates: Record<string, unknown> = {};
-  const fields = [
-    "name", "slug", "bio", "category_id", "nsfw",
-    "profile_image_url", "profile_image_id", "social_links", "active",
-    "is_live", "stream_url",
-  ] as const;
-  for (const field of fields) {
-    if (validated[field] !== undefined) updates[field] = validated[field];
+  const updates: Prisma.ChannelUpdateInput = {};
+  if (validated.name !== undefined) updates.name = validated.name;
+  if (validated.slug !== undefined) updates.slug = validated.slug;
+  if (validated.bio !== undefined) updates.bio = validated.bio;
+  if (validated.category_id !== undefined) {
+    updates.category = validated.category_id
+      ? { connect: { id: validated.category_id } }
+      : { disconnect: true };
   }
+  if (validated.nsfw !== undefined) updates.nsfw = validated.nsfw;
+  if (validated.profile_image_url !== undefined) updates.profileImageUrl = validated.profile_image_url;
+  if (validated.social_links !== undefined) updates.socialLinks = validated.social_links as Prisma.InputJsonValue;
+  if (validated.active !== undefined) updates.active = validated.active;
+  if (validated.is_live !== undefined) updates.isLive = validated.is_live;
+  if (validated.stream_url !== undefined) updates.streamUrl = validated.stream_url;
 
   // Check slug uniqueness
-  if (updates.slug) {
-    const existing = await Channel.findOne({
-      slug: updates.slug,
-      _id: { $ne: id },
+  if (validated.slug) {
+    const existing = await prisma.channel.findFirst({
+      where: { slug: validated.slug, NOT: { id } },
+      select: { id: true },
     });
     if (existing) {
       return NextResponse.json({ error: "Slug already taken" }, { status: 422 });
     }
   }
 
-  const channel = await Channel.findByIdAndUpdate(id, updates, { returnDocument: "after" })
-    .populate("category_id", "name")
-    .lean();
-
-  if (!channel) {
+  let channel;
+  try {
+    channel = await prisma.channel.update({
+      where: { id },
+      data: updates,
+      include: { category: { select: { name: true } } },
+    });
+  } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+
   return NextResponse.json({ data: channel });
 }
 
@@ -79,7 +85,7 @@ export async function PATCH(
  *   6. Delete the Channel row
  *   7. Audit-log with the full list of archived/failed product ids
  *
- * If the merchant key is missing we still complete the local Mongo cleanup but
+ * If the merchant key is missing we still complete the local cleanup but
  * leave the SatsRail products intact (logged + reported in the audit entry).
  */
 export async function DELETE(
@@ -89,32 +95,34 @@ export async function DELETE(
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
 
-  await connectDB();
   const { id } = await params;
 
-  const channel = await Channel.findById(id).lean();
+  const channel = await prisma.channel.findUnique({ where: { id } });
   if (!channel) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const mediaDocs = await Media.find({ channel_id: id })
-    .select("_id name")
-    .lean();
-  const mediaIds = mediaDocs.map((m) => m._id);
+  const mediaDocs = await prisma.media.findMany({
+    where: { channelId: id },
+    select: { id: true, name: true },
+  });
+  const mediaIds = mediaDocs.map((m) => m.id);
 
-  const mediaProducts = await MediaProduct.find({
-    media_id: { $in: mediaIds },
-  })
-    .select("satsrail_product_id")
-    .lean();
+  const mediaProducts = mediaIds.length > 0
+    ? await prisma.mediaProduct.findMany({
+        where: { mediaId: { in: mediaIds } },
+        select: { satsrailProductId: true },
+      })
+    : [];
 
-  const channelProducts = await ChannelProduct.find({ channel_id: id })
-    .select("satsrail_product_id")
-    .lean();
+  const channelProducts = await prisma.channelProduct.findMany({
+    where: { channelId: id },
+    select: { satsrailProductId: true },
+  });
 
   const productIdsToArchive: string[] = [
-    ...mediaProducts.map((mp) => mp.satsrail_product_id),
-    ...channelProducts.map((cp) => cp.satsrail_product_id),
+    ...mediaProducts.map((mp) => mp.satsrailProductId),
+    ...channelProducts.map((cp) => cp.satsrailProductId),
   ];
 
   const archivedProductIds: string[] = [];
@@ -144,14 +152,15 @@ export async function DELETE(
     }
   }
 
-  // Local cleanup — runs regardless of SatsRail success so we never end up with
-  // dangling Mongo rows.
+  // Local cleanup — runs regardless of SatsRail success so we never end up
+  // with dangling rows. ChannelProductMedia is cascade-deleted via the
+  // ChannelProduct → ChannelProductMedia relation.
   if (mediaIds.length > 0) {
-    await MediaProduct.deleteMany({ media_id: { $in: mediaIds } });
+    await prisma.mediaProduct.deleteMany({ where: { mediaId: { in: mediaIds } } });
   }
-  await ChannelProduct.deleteMany({ channel_id: id });
-  await Media.deleteMany({ channel_id: id });
-  await Channel.deleteOne({ _id: id });
+  await prisma.channelProduct.deleteMany({ where: { channelId: id } });
+  await prisma.media.deleteMany({ where: { channelId: id } });
+  await prisma.channel.delete({ where: { id } });
 
   audit({
     actorId: auth.id,

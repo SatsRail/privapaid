@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createSettings } from "../../helpers/factories";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 
 describe("Settings model", () => {
   beforeAll(async () => {
@@ -17,55 +17,54 @@ describe("Settings model", () => {
   });
 
   it("creates settings with required fields", async () => {
-    const settings = await createSettings({ instance_name: "My Instance" });
-    expect(settings.instance_name).toBe("My Instance");
-    expect(settings.setup_completed).toBe(true);
+    const settings = await createSettings({ instanceName: "My Instance" });
+    expect(settings.instanceName).toBe("My Instance");
+    expect(settings.setupCompleted).toBe(true);
   });
 
   it("sets theme defaults", async () => {
     const settings = await createSettings();
-    expect(settings.theme_primary).toBe("#3b82f6");
-    expect(settings.theme_bg).toBe("#0a0a0a");
-    expect(settings.theme_bg_secondary).toBe("#18181b");
-    expect(settings.theme_text).toBe("#ededed");
-    expect(settings.theme_text_secondary).toBe("#a1a1aa");
-    expect(settings.theme_heading).toBe("#fafafa");
-    expect(settings.theme_border).toBe("#27272a");
-    expect(settings.theme_font).toBe("Geist");
+    expect(settings.themePrimary).toBe("#3b82f6");
+    expect(settings.themeBg).toBe("#0a0a0a");
+    expect(settings.themeBgSecondary).toBe("#18181b");
+    expect(settings.themeText).toBe("#ededed");
+    expect(settings.themeTextSecondary).toBe("#a1a1aa");
+    expect(settings.themeHeading).toBe("#fafafa");
+    expect(settings.themeBorder).toBe("#27272a");
+    expect(settings.themeFont).toBe("Geist");
   });
 
   it("sets SatsRail defaults", async () => {
     const settings = await createSettings();
-    expect(settings.satsrail_api_url).toBe("https://satsrail.com/api/v1");
-    expect(settings.satsrail_api_key_encrypted).toBeNull();
-    expect(settings.merchant_id).toBeNull();
-    expect(settings.merchant_currency).toBe("USD");
-    expect(settings.merchant_locale).toBe("en");
+    expect(settings.satsrailApiUrl).toBe("https://satsrail.com/api/v1");
+    expect(settings.satsrailApiKeyEncrypted).toBeNull();
+    expect(settings.merchantId).toBeNull();
+    expect(settings.merchantCurrency).toBe("USD");
+    expect(settings.merchantLocale).toBe("en");
   });
 
   it("sets other defaults", async () => {
     const settings = await createSettings();
-    expect(settings.nsfw_enabled).toBe(false);
-    expect(settings.instance_domain).toBe("localhost:3000");
-    expect(settings.logo_url).toBe("");
-    expect(settings.about_text).toBe("");
-    expect(settings.google_analytics_id).toBe("");
+    expect(settings.nsfwEnabled).toBe(false);
+    expect(settings.instanceDomain).toBe("localhost:3000");
+    expect(settings.logoUrl).toBe("");
+    expect(settings.aboutText).toBe("");
+    expect(settings.googleAnalyticsId).toBe("");
   });
 
   it("updates settings", async () => {
-    const settings = await createSettings();
-    settings.instance_name = "Updated Name";
-    settings.theme_primary = "#ff5500";
-    await settings.save();
-
-    const found = await Settings.findById(settings._id);
-    expect(found!.instance_name).toBe("Updated Name");
-    expect(found!.theme_primary).toBe("#ff5500");
+    await createSettings();
+    const updated = await prisma.settings.update({
+      where: { id: 1 },
+      data: { instanceName: "Updated Name", themePrimary: "#ff5500" },
+    });
+    expect(updated.instanceName).toBe("Updated Name");
+    expect(updated.themePrimary).toBe("#ff5500");
   });
 
   it("creates timestamps", async () => {
     const settings = await createSettings();
-    expect(settings.created_at).toBeInstanceOf(Date);
-    expect(settings.updated_at).toBeInstanceOf(Date);
+    expect(settings.createdAt).toBeInstanceOf(Date);
+    expect(settings.updatedAt).toBeInstanceOf(Date);
   });
 });

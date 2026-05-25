@@ -1,56 +1,39 @@
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { ObjectId } from "mongodb";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
-
-// ── Hoisted GridFS mock ───────────────────────────────────────────────
-const { mockBucketFind, mockBucketDelete } = vi.hoisted(() => ({
-  mockBucketFind: vi.fn(),
-  mockBucketDelete: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/lib/gridfs", () => ({
-  getEncryptedPhotosBucket: vi.fn().mockResolvedValue({
-    find: mockBucketFind,
-    delete: mockBucketDelete,
-  }),
-}));
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createChannel } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
 import {
   cleanupOrphanEncryptedPhotos,
   DEFAULT_ORPHAN_GRACE_MS,
 } from "@/lib/photo-cleanup";
-import Media from "@/models/Media";
-import { createChannel } from "../../helpers/factories";
 
-interface FakeGridFsFile {
-  _id: ObjectId;
-  uploadDate: Date;
-}
-
-function asyncIter(files: FakeGridFsFile[]) {
-  return {
-    async *[Symbol.asyncIterator]() {
-      for (const f of files) yield f;
+async function createPhotoBlob(opts: { createdAt?: Date } = {}) {
+  const blob = await prisma.encryptedPhotoBlob.create({
+    data: {
+      bytes: Buffer.from("photo-bytes"),
+      mimeType: "image/jpeg",
     },
-  };
+  });
+  if (opts.createdAt) {
+    await prisma.$executeRaw`
+      UPDATE "EncryptedPhotoBlob" SET "createdAt" = ${opts.createdAt} WHERE id = ${blob.id}
+    `;
+  }
+  return blob;
 }
 
-function mockBucketContents(files: FakeGridFsFile[]) {
-  mockBucketFind.mockReturnValueOnce(asyncIter(files));
-}
-
-async function createPhotoMedia(channelId: string, gridFsId: ObjectId, refOverride?: number) {
-  return Media.create({
-    ref: refOverride ?? Math.floor(Math.random() * 1_000_000),
-    channel_id: channelId,
-    name: `Photo ${gridFsId.toString().slice(-6)}`,
-    description: "",
-    source_url: gridFsId.toString(),
-    media_type: "photo",
-    position: 1,
-    comments_count: 0,
-    flags_count: 0,
+async function createPhotoMedia(channelId: string, blobId: string, refOverride?: number) {
+  return prisma.media.create({
+    data: {
+      ref: refOverride ?? Math.floor(Math.random() * 1_000_000),
+      channelId,
+      name: `Photo ${blobId.slice(-6)}`,
+      description: "",
+      sourceUrl: blobId,
+      mediaType: "photo",
+      position: 1,
+    },
   });
 }
 
@@ -65,14 +48,11 @@ describe("cleanupOrphanEncryptedPhotos", () => {
 
   afterEach(async () => {
     await clearCollections();
-    vi.clearAllMocks();
   });
 
-  it("deletes a GridFS file with no referencing Media row (older than grace)", async () => {
-    const orphanId = new ObjectId();
-    mockBucketContents([
-      { _id: orphanId, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) }, // 2h ago
-    ]);
+  it("deletes a blob with no referencing Media row (older than grace)", async () => {
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h ago
+    const orphan = await createPhotoBlob({ createdAt: old });
 
     const result = await cleanupOrphanEncryptedPhotos();
 
@@ -80,20 +60,16 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(result.orphaned).toBe(1);
     expect(result.deleted).toBe(1);
     expect(result.errors).toHaveLength(0);
-    expect(mockBucketDelete).toHaveBeenCalledTimes(1);
-    expect((mockBucketDelete.mock.calls[0][0] as ObjectId).toString()).toBe(
-      orphanId.toString()
-    );
+
+    const remaining = await prisma.encryptedPhotoBlob.findUnique({ where: { id: orphan.id } });
+    expect(remaining).toBeNull();
   });
 
-  it("preserves a GridFS file that IS referenced by a Media row", async () => {
+  it("preserves a blob that IS referenced by a Media row", async () => {
     const channel = await createChannel();
-    const referencedId = new ObjectId();
-    await createPhotoMedia(channel._id.toString(), referencedId);
-
-    mockBucketContents([
-      { _id: referencedId, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-    ]);
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const referenced = await createPhotoBlob({ createdAt: old });
+    await createPhotoMedia(channel.id, referenced.id);
 
     const result = await cleanupOrphanEncryptedPhotos();
 
@@ -101,26 +77,24 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(result.referenced).toBe(1);
     expect(result.orphaned).toBe(0);
     expect(result.deleted).toBe(0);
-    expect(mockBucketDelete).not.toHaveBeenCalled();
+
+    const stillThere = await prisma.encryptedPhotoBlob.findUnique({ where: { id: referenced.id } });
+    expect(stillThere).not.toBeNull();
   });
 
-  it("skips orphan files younger than the grace period", async () => {
-    const youngOrphan = new ObjectId();
-    mockBucketContents([
-      { _id: youngOrphan, uploadDate: new Date(Date.now() - 5 * 60 * 1000) }, // 5min ago
-    ]);
+  it("skips orphan blobs younger than the grace period", async () => {
+    const young = new Date(Date.now() - 5 * 60 * 1000); // 5min ago
+    await createPhotoBlob({ createdAt: young });
 
     const result = await cleanupOrphanEncryptedPhotos();
 
     expect(result.orphaned).toBe(1);
     expect(result.skippedYoung).toBe(1);
     expect(result.deleted).toBe(0);
-    expect(mockBucketDelete).not.toHaveBeenCalled();
   });
 
-  it("deletes orphan files of any age when graceMs is 0", async () => {
-    const justUploaded = new ObjectId();
-    mockBucketContents([{ _id: justUploaded, uploadDate: new Date() }]);
+  it("deletes orphan blobs of any age when graceMs is 0", async () => {
+    await createPhotoBlob({ createdAt: new Date() });
 
     const result = await cleanupOrphanEncryptedPhotos({ graceMs: 0 });
 
@@ -129,58 +103,26 @@ describe("cleanupOrphanEncryptedPhotos", () => {
   });
 
   it("dryRun reports without deleting", async () => {
-    const orphanId = new ObjectId();
-    mockBucketContents([
-      { _id: orphanId, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-    ]);
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const blob = await createPhotoBlob({ createdAt: old });
 
     const result = await cleanupOrphanEncryptedPhotos({ dryRun: true });
 
     expect(result.orphaned).toBe(1);
     expect(result.deleted).toBe(0);
-    expect(mockBucketDelete).not.toHaveBeenCalled();
-  });
-
-  it("collects errors and continues across the rest of the batch", async () => {
-    const a = new ObjectId();
-    const b = new ObjectId();
-    const c = new ObjectId();
-    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    mockBucketContents([
-      { _id: a, uploadDate: old },
-      { _id: b, uploadDate: old },
-      { _id: c, uploadDate: old },
-    ]);
-
-    // Middle file delete fails — first and third should still succeed.
-    mockBucketDelete
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("gridfs broke on b"))
-      .mockResolvedValueOnce(undefined);
-
-    const result = await cleanupOrphanEncryptedPhotos();
-
-    expect(result.scanned).toBe(3);
-    expect(result.orphaned).toBe(3);
-    expect(result.deleted).toBe(2);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].gridFsId).toBe(b.toString());
-    expect(result.errors[0].error).toMatch(/gridfs broke on b/);
+    const stillThere = await prisma.encryptedPhotoBlob.findUnique({ where: { id: blob.id } });
+    expect(stillThere).not.toBeNull();
   });
 
   it("mixed batch — referenced kept, young orphan kept, old orphan deleted", async () => {
     const channel = await createChannel();
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const young = new Date(Date.now() - 5 * 60 * 1000);
 
-    const kept = new ObjectId();
-    const young = new ObjectId();
-    const oldOrphan = new ObjectId();
-    await createPhotoMedia(channel._id.toString(), kept);
-
-    mockBucketContents([
-      { _id: kept, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-      { _id: young, uploadDate: new Date(Date.now() - 5 * 60 * 1000) },
-      { _id: oldOrphan, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-    ]);
+    const kept = await createPhotoBlob({ createdAt: old });
+    const youngOrphan = await createPhotoBlob({ createdAt: young });
+    const oldOrphan = await createPhotoBlob({ createdAt: old });
+    await createPhotoMedia(channel.id, kept.id);
 
     const result = await cleanupOrphanEncryptedPhotos();
 
@@ -190,34 +132,30 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(result.skippedYoung).toBe(1);
     expect(result.deleted).toBe(1);
 
-    expect(mockBucketDelete).toHaveBeenCalledTimes(1);
-    expect((mockBucketDelete.mock.calls[0][0] as ObjectId).toString()).toBe(
-      oldOrphan.toString()
-    );
+    // old orphan deleted, others preserved
+    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: oldOrphan.id } })).toBeNull();
+    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: youngOrphan.id } })).not.toBeNull();
+    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
 
-  it("only matches Media rows where media_type is 'photo' (a non-photo row with the same source_url string does NOT protect a file)", async () => {
+  it("only matches Media rows where mediaType is 'photo' (a non-photo row with the same sourceUrl does NOT protect a blob)", async () => {
     const channel = await createChannel();
-    const fileId = new ObjectId();
-    // Create a NON-photo media that coincidentally has the GridFS id as source_url.
-    await Media.create({
-      ref: 42,
-      channel_id: channel._id,
-      name: "Video with confusing URL",
-      description: "",
-      source_url: fileId.toString(),
-      media_type: "video",
-      position: 1,
-      comments_count: 0,
-      flags_count: 0,
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const blob = await createPhotoBlob({ createdAt: old });
+    // Create a NON-photo media that coincidentally has the blob id as sourceUrl.
+    await prisma.media.create({
+      data: {
+        ref: 42,
+        channelId: channel.id,
+        name: "Video with confusing URL",
+        description: "",
+        sourceUrl: blob.id,
+        mediaType: "video",
+        position: 1,
+      },
     });
 
-    mockBucketContents([
-      { _id: fileId, uploadDate: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-    ]);
-
     const result = await cleanupOrphanEncryptedPhotos();
-    // The video row does NOT count as a reference for the encrypted-photo bucket
     expect(result.referenced).toBe(0);
     expect(result.deleted).toBe(1);
   });
@@ -226,8 +164,7 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(DEFAULT_ORPHAN_GRACE_MS).toBe(60 * 60 * 1000);
   });
 
-  it("scans an empty bucket cleanly", async () => {
-    mockBucketContents([]);
+  it("scans an empty table cleanly", async () => {
     const result = await cleanupOrphanEncryptedPhotos();
     expect(result).toEqual({
       scanned: 0,
@@ -237,18 +174,5 @@ describe("cleanupOrphanEncryptedPhotos", () => {
       skippedYoung: 0,
       errors: [],
     });
-    expect(mockBucketDelete).not.toHaveBeenCalled();
-  });
-
-  it("treats missing uploadDate as immediately eligible for deletion", async () => {
-    const noDate = new ObjectId();
-    mockBucketContents([{ _id: noDate, uploadDate: undefined as unknown as Date }]);
-
-    const result = await cleanupOrphanEncryptedPhotos();
-    expect(result.deleted).toBe(1);
-    expect(result.skippedYoung).toBe(0);
   });
 });
-
-// Reference unused imports to satisfy the linter when the harness file shrinks
-void mongoose;

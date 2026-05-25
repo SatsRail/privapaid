@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 
@@ -13,12 +12,12 @@ export async function GET(
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
 
-  await connectDB();
   const { id } = await params;
 
-  const media = await Media.findById(id)
-    .select("source_url media_type name")
-    .lean();
+  const media = await prisma.media.findUnique({
+    where: { id },
+    select: { sourceUrl: true, mediaType: true, name: true },
+  });
 
   if (!media) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -35,7 +34,7 @@ export async function GET(
   });
 
   return NextResponse.json({
-    source_url: media.source_url,
-    media_type: media.media_type,
+    source_url: media.sourceUrl,
+    media_type: media.mediaType,
   });
 }

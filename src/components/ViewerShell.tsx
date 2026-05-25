@@ -1,7 +1,5 @@
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { getInstanceConfig } from "@/config/instance";
-import Channel from "@/models/Channel";
-import Category from "@/models/Category";
 import Sidebar from "@/components/Sidebar";
 
 interface ViewerShellProps {
@@ -9,30 +7,45 @@ interface ViewerShellProps {
 }
 
 export default async function ViewerShell({ children }: ViewerShellProps) {
-  await connectDB();
   const instanceConfig = await getInstanceConfig();
 
-  const categories = await Category.find({ active: true })
-    .sort({ position: 1 })
-    .select("name")
-    .lean();
+  const categories = await prisma.category.findMany({
+    where: { active: true },
+    orderBy: { position: "asc" },
+    select: { id: true, name: true },
+  });
 
-  const channelFilter: Record<string, unknown> = { active: true };
-  if (!instanceConfig.nsfw) {
-    channelFilter.nsfw = false;
+  const channels = await prisma.channel.findMany({
+    where: {
+      active: true,
+      ...(instanceConfig.nsfw ? {} : { nsfw: false }),
+    },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      profileImageUrl: true,
+      profileImageBytes: true,
+      mediaCount: true,
+      isLive: true,
+      categoryId: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // The bytea-backed image route lives at /api/images/channel/<id>. Resolve
+  // here so client components can drop straight into <img src>.
+  function channelAvatar(ch: typeof channels[number]): string {
+    if (ch.profileImageBytes) return `/api/images/channel/${ch.id}`;
+    return ch.profileImageUrl;
   }
-
-  const channels = await Channel.find(channelFilter)
-    .select("slug name profile_image_url profile_image_id media_count is_live category_id")
-    .sort({ created_at: -1 })
-    .lean();
 
   // Group by category for sidebar
   const channelsByCategory: Record<string, typeof channels> = {};
   const uncategorized: typeof channels = [];
 
   for (const ch of channels) {
-    const catId = ch.category_id?.toString();
+    const catId = ch.categoryId;
     if (catId) {
       if (!channelsByCategory[catId]) channelsByCategory[catId] = [];
       channelsByCategory[catId].push(ch);
@@ -41,44 +54,34 @@ export default async function ViewerShell({ children }: ViewerShellProps) {
     }
   }
 
-  // Serialize for client component
-  const serializedChannels = channels.map((ch) => ({
-    _id: ch._id.toString(),
-    slug: ch.slug,
-    name: ch.name,
-    profile_image_url: ch.profile_image_url,
-    profile_image_id: ch.profile_image_id,
-    media_count: ch.media_count,
-    is_live: ch.is_live,
-  }));
+  // Serialize for client component. We pass the pre-resolved avatar URL
+  // through `profile_image_url` and leave `profile_image_id` undefined —
+  // matching the Sidebar component's existing snake_case props contract.
+  function serialize(ch: typeof channels[number]) {
+    return {
+      _id: ch.id,
+      slug: ch.slug,
+      name: ch.name,
+      profile_image_url: channelAvatar(ch),
+      profile_image_id: undefined,
+      media_count: ch.mediaCount,
+      is_live: ch.isLive,
+    };
+  }
+
+  const serializedChannels = channels.map(serialize);
 
   const serializedCategories = categories.map((cat) => ({
-    _id: cat._id.toString(),
+    _id: cat.id,
     name: cat.name,
   }));
 
   const serializedByCategory: Record<string, typeof serializedChannels> = {};
   for (const [catId, chs] of Object.entries(channelsByCategory)) {
-    serializedByCategory[catId] = chs.map((ch) => ({
-      _id: ch._id.toString(),
-      slug: ch.slug,
-      name: ch.name,
-      profile_image_url: ch.profile_image_url,
-      profile_image_id: ch.profile_image_id,
-      media_count: ch.media_count,
-      is_live: ch.is_live,
-    }));
+    serializedByCategory[catId] = chs.map(serialize);
   }
 
-  const serializedUncategorized = uncategorized.map((ch) => ({
-    _id: ch._id.toString(),
-    slug: ch.slug,
-    name: ch.name,
-    profile_image_url: ch.profile_image_url,
-    profile_image_id: ch.profile_image_id,
-    media_count: ch.media_count,
-    is_live: ch.is_live,
-  }));
+  const serializedUncategorized = uncategorized.map(serialize);
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">

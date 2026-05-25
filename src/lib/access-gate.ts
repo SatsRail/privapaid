@@ -15,8 +15,7 @@ import {
   COOKIE_NAME,
 } from "@/lib/macaroon-cookie";
 import { getMerchantKey } from "@/lib/merchant-key";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ export interface AccessResult {
  * must still grant access regardless of archival status (archiving a product
  * means "stop selling", not "revoke everyone's access").
  *
- * The filter is `product_status != "archived"` — active, inactive, and
+ * The filter is `productStatus != "archived"` — active, inactive, and
  * undefined all pass. This is intentional: a missing status field must
  * never lock out a paying customer.
  */
@@ -65,45 +64,60 @@ export async function getProductsForMedia(
 ): Promise<GatedProduct[]> {
   const products: GatedProduct[] = [];
   // Only filter out archived when we're NOT including them. Inactive and
-  // undefined-status products always pass — see the comment above.
-  const statusFilter = options.includeArchived ? {} : { product_status: { $ne: "archived" } };
+  // null status always pass — see the comment above.
+  const archivedFilter = options.includeArchived
+    ? {}
+    : { productStatus: { not: "archived" } };
 
-  const mediaProducts = await MediaProduct.find({
-    media_id: mediaId,
-    ...statusFilter,
-  })
-    .select("satsrail_product_id encrypted_source_url key_fingerprint product_status")
-    .lean();
+  const mediaProducts = await prisma.mediaProduct.findMany({
+    where: {
+      mediaId,
+      ...archivedFilter,
+    },
+    select: {
+      satsrailProductId: true,
+      encryptedSourceUrl: true,
+      keyFingerprint: true,
+      productStatus: true,
+    },
+  });
 
   for (const mp of mediaProducts) {
-    if (mp.encrypted_source_url) {
+    if (mp.encryptedSourceUrl) {
       products.push({
-        productId: mp.satsrail_product_id,
-        encryptedBlob: mp.encrypted_source_url,
-        keyFingerprint: mp.key_fingerprint,
-        status: mp.product_status,
+        productId: mp.satsrailProductId,
+        encryptedBlob: mp.encryptedSourceUrl,
+        keyFingerprint: mp.keyFingerprint ?? undefined,
+        status: mp.productStatus ?? undefined,
       });
     }
   }
 
-  const channelProducts = await ChannelProduct.find({
-    channel_id: channelId,
-    "encrypted_media.media_id": mediaId,
-    ...statusFilter,
-  })
-    .select("satsrail_product_id key_fingerprint encrypted_media product_status")
-    .lean();
+  const channelProducts = await prisma.channelProduct.findMany({
+    where: {
+      channelId,
+      ...archivedFilter,
+      encryptedMedia: { some: { mediaId } },
+    },
+    select: {
+      satsrailProductId: true,
+      keyFingerprint: true,
+      productStatus: true,
+      encryptedMedia: {
+        where: { mediaId },
+        select: { encryptedSourceUrl: true },
+      },
+    },
+  });
 
   for (const cp of channelProducts) {
-    const entry = cp.encrypted_media.find(
-      (em) => String(em.media_id) === String(mediaId)
-    );
-    if (entry?.encrypted_source_url) {
+    const entry = cp.encryptedMedia[0];
+    if (entry?.encryptedSourceUrl) {
       products.push({
-        productId: cp.satsrail_product_id,
-        encryptedBlob: entry.encrypted_source_url,
-        keyFingerprint: cp.key_fingerprint,
-        status: cp.product_status,
+        productId: cp.satsrailProductId,
+        encryptedBlob: entry.encryptedSourceUrl,
+        keyFingerprint: cp.keyFingerprint ?? undefined,
+        status: cp.productStatus ?? undefined,
       });
     }
   }

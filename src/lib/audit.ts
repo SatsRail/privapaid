@@ -1,10 +1,11 @@
-import AuditLog from "@/models/AuditLog";
+import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
+import type { AuditActorType } from "@prisma/client";
 
 interface AuditEntry {
   actorId: string;
   actorEmail?: string;
-  actorType: "admin" | "customer" | "system";
+  actorType: AuditActorType;
   action: string;
   targetType?: string;
   targetId?: string;
@@ -23,16 +24,18 @@ export async function audit(entry: AuditEntry): Promise<void> {
       "";
     const userAgent = hdrs.get("user-agent") || "";
 
-    await AuditLog.create({
-      actor_id: entry.actorId,
-      actor_email: entry.actorEmail || "",
-      actor_type: entry.actorType,
-      action: entry.action,
-      target_type: entry.targetType || "",
-      target_id: entry.targetId || "",
-      details: entry.details || {},
-      ip,
-      user_agent: userAgent,
+    await prisma.auditLog.create({
+      data: {
+        actorId: entry.actorId,
+        actorEmail: entry.actorEmail || "",
+        actorType: entry.actorType,
+        action: entry.action,
+        targetType: entry.targetType || "",
+        targetId: entry.targetId || "",
+        details: (entry.details ?? {}) as object,
+        ip,
+        userAgent,
+      },
     });
   } catch (err) {
     console.error("Audit log write failed:", err);

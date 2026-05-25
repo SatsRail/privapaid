@@ -1,10 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
@@ -24,38 +20,42 @@ export default async function ChannelDetailPage({
 }) {
   const { id } = await params;
   const { locale, currency } = await getInstanceConfig();
-  await connectDB();
 
-  const channel = await Channel.findById(id)
-    .populate("category_id", "name")
-    .lean();
+  const channel = await prisma.channel.findUnique({
+    where: { id },
+    include: { category: { select: { name: true } } },
+  });
   if (!channel) notFound();
 
-  const media = await Media.find({ channel_id: id })
-    .sort({ position: 1 })
-    .lean();
+  const media = await prisma.media.findMany({
+    where: { channelId: id },
+    orderBy: { position: "asc" },
+  });
 
-  const cat = channel.category_id as { name?: string } | null;
+  const cat = channel.category;
 
   // Fetch media-level product associations
-  const mediaIds = media.map((m) => m._id);
-  const mediaProducts = await MediaProduct.find({ media_id: { $in: mediaIds } })
-    .select("media_id")
-    .lean();
-  const mediaWithProduct = new Set(
-    mediaProducts.map((mp) => String(mp.media_id))
-  );
+  const mediaIds = media.map((m) => m.id);
+  const mediaProducts = await prisma.mediaProduct.findMany({
+    where: { mediaId: { in: mediaIds } },
+    select: { mediaId: true },
+  });
+  const mediaWithProduct = new Set(mediaProducts.map((mp) => mp.mediaId));
 
-  // Fetch channel-level products
-  const channelProductDocs = await ChannelProduct.find({ channel_id: id })
-    .select("satsrail_product_id encrypted_media")
-    .lean();
+  // Fetch channel-level products and their encrypted media join rows.
+  const channelProductDocs = await prisma.channelProduct.findMany({
+    where: { channelId: id },
+    select: {
+      satsrailProductId: true,
+      encryptedMedia: { select: { mediaId: true } },
+    },
+  });
 
   // Build a set of media IDs covered by channel products
   const mediaCoveredByChannel = new Set<string>();
   for (const cp of channelProductDocs) {
-    for (const em of cp.encrypted_media) {
-      mediaCoveredByChannel.add(String(em.media_id));
+    for (const em of cp.encryptedMedia) {
+      mediaCoveredByChannel.add(em.mediaId);
     }
   }
 
@@ -83,15 +83,15 @@ export default async function ChannelDetailPage({
 
         channelProducts = channelProductDocs
           .map((doc) => {
-            const sp = satsrailProductMap.get(doc.satsrail_product_id);
+            const sp = satsrailProductMap.get(doc.satsrailProductId);
             if (!sp) return null;
             return {
-              satsrail_product_id: doc.satsrail_product_id,
+              satsrail_product_id: doc.satsrailProductId,
               name: sp.name,
               price_cents: sp.price_cents,
               currency: sp.currency,
               status: sp.status,
-              encrypted_media_count: doc.encrypted_media.length,
+              encrypted_media_count: doc.encryptedMedia.length,
             };
           })
           .filter((p): p is ChannelProductData => p !== null);
@@ -170,19 +170,18 @@ export default async function ChannelDetailPage({
           </thead>
           <tbody className="divide-y divide-[var(--theme-border)]">
             {media.map((m) => {
-              const mId = String(m._id);
-              const hasIndividual = mediaWithProduct.has(mId);
-              const hasChannel = mediaCoveredByChannel.has(mId);
+              const hasIndividual = mediaWithProduct.has(m.id);
+              const hasChannel = mediaCoveredByChannel.has(m.id);
 
               return (
-                <tr key={mId} className="hover:bg-[var(--theme-bg-secondary)]">
+                <tr key={m.id} className="hover:bg-[var(--theme-bg-secondary)]">
                   <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{m.position}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--theme-text-secondary)]">
                     {m.ref != null ? `md_${m.ref}` : "—"}
                   </td>
                   <td className="px-4 py-3 font-medium">{m.name}</td>
                   <td className="px-4 py-3">
-                    <Badge>{m.media_type}</Badge>
+                    <Badge>{m.mediaType}</Badge>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
@@ -199,7 +198,7 @@ export default async function ChannelDetailPage({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
-                      href={`/admin/channels/${id}/media/${m._id}/edit`}
+                      href={`/admin/channels/${id}/media/${m.id}/edit`}
                       className="text-[var(--theme-primary)] hover:underline"
                     >
                       {t(locale, "admin.channels.edit")}

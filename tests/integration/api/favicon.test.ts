@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createSettings } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
-const { mockConnectDB, mockSettingsFindOne, mockGetLogoBuffer, mockSharpResize, mockSharpPng, mockSharpToBuffer, mockSharpInstance } = vi.hoisted(() => {
+const { mockGetLogoBuffer, mockSharpResize, mockSharpPng, mockSharpToBuffer, mockSharpInstance } = vi.hoisted(() => {
   const _mockSharpResize = vi.fn();
   const _mockSharpPng = vi.fn();
   const _mockSharpToBuffer = vi.fn();
@@ -13,8 +16,6 @@ const { mockConnectDB, mockSettingsFindOne, mockGetLogoBuffer, mockSharpResize, 
   _mockSharpResize.mockReturnValue(_mockSharpInstance);
   _mockSharpPng.mockReturnValue(_mockSharpInstance);
   return {
-    mockConnectDB: vi.fn().mockResolvedValue(undefined),
-    mockSettingsFindOne: vi.fn(),
     mockGetLogoBuffer: vi.fn(),
     mockSharpResize: _mockSharpResize,
     mockSharpPng: _mockSharpPng,
@@ -22,16 +23,6 @@ const { mockConnectDB, mockSettingsFindOne, mockGetLogoBuffer, mockSharpResize, 
     mockSharpInstance: _mockSharpInstance,
   };
 });
-
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: mockConnectDB,
-}));
-
-vi.mock("@/models/Settings", () => ({
-  default: {
-    findOne: mockSettingsFindOne,
-  },
-}));
 
 vi.mock("@/lib/logo", () => ({
   getLogoBuffer: mockGetLogoBuffer,
@@ -48,16 +39,30 @@ function buildRequest(): Request {
 }
 
 describe("GET /api/favicon", () => {
+  beforeAll(async () => {
+    await setupTestDB();
+  });
+
+  afterAll(async () => {
+    await teardownTestDB();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockSharpResize.mockReturnValue(mockSharpInstance);
     mockSharpPng.mockReturnValue(mockSharpInstance);
   });
 
-  it("returns PNG favicon when settings have logo_image_id", async () => {
+  afterEach(async () => {
+    await clearCollections();
+  });
+
+  it("returns PNG favicon when settings have logoBytes", async () => {
     const faviconBuffer = Buffer.from("fake-png-data");
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue({ setup_completed: true, logo_image_id: "abc123" }),
+    await createSettings();
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { logoBytes: Buffer.from("raw-logo"), logoMimeType: "image/png" },
     });
     mockGetLogoBuffer.mockResolvedValue(Buffer.from("raw-logo"));
     mockSharpToBuffer.mockResolvedValue(faviconBuffer);
@@ -69,10 +74,12 @@ describe("GET /api/favicon", () => {
     expect(res.headers.get("Cache-Control")).toContain("public");
   });
 
-  it("returns PNG favicon when settings have logo_url", async () => {
+  it("returns PNG favicon when settings have logoUrl", async () => {
     const faviconBuffer = Buffer.from("fake-png-data");
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue({ setup_completed: true, logo_url: "https://example.com/logo.png" }),
+    await createSettings();
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { logoUrl: "https://example.com/logo.png" },
     });
     mockGetLogoBuffer.mockResolvedValue(Buffer.from("raw-logo"));
     mockSharpToBuffer.mockResolvedValue(faviconBuffer);
@@ -84,9 +91,7 @@ describe("GET /api/favicon", () => {
   });
 
   it("redirects to /favicon.ico when no logo settings exist", async () => {
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue({ setup_completed: true }),
-    });
+    await createSettings();
 
     const res = await GET(buildRequest());
 
@@ -95,10 +100,7 @@ describe("GET /api/favicon", () => {
   });
 
   it("redirects to /favicon.ico when settings is null", async () => {
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue(null),
-    });
-
+    // No settings row
     const res = await GET(buildRequest());
 
     expect(res.status).toBe(307);
@@ -106,8 +108,10 @@ describe("GET /api/favicon", () => {
   });
 
   it("redirects to /favicon.ico when getLogoBuffer returns null", async () => {
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue({ setup_completed: true, logo_image_id: "abc123" }),
+    await createSettings();
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { logoBytes: Buffer.from("raw-logo") },
     });
     mockGetLogoBuffer.mockResolvedValue(null);
 
@@ -118,8 +122,10 @@ describe("GET /api/favicon", () => {
   });
 
   it("redirects to /favicon.ico when sharp throws", async () => {
-    mockSettingsFindOne.mockReturnValue({
-      lean: vi.fn().mockResolvedValue({ setup_completed: true, logo_image_id: "abc123" }),
+    await createSettings();
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { logoBytes: Buffer.from("raw-logo") },
     });
     mockGetLogoBuffer.mockResolvedValue(Buffer.from("raw-logo"));
     mockSharpToBuffer.mockRejectedValue(new Error("Sharp processing failed"));

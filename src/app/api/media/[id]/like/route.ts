@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { getProductsForMedia, verifyMacaroonAccess } from "@/lib/access-gate";
-import Media from "@/models/Media";
-import Customer from "@/models/Customer";
 import { auth } from "@/lib/auth";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { rateLimit } from "@/lib/rate-limit";
@@ -32,28 +30,33 @@ export async function POST(
 
   const { action } = validated;
 
-  await connectDB();
-
   // Verify media exists up-front so we can use its channel for product lookup.
-  const media = await Media.findById(id);
+  const media = await prisma.media.findUnique({
+    where: { id },
+    select: { id: true, channelId: true, likesCount: true },
+  });
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
 
   // Single source of truth for product lookup — same call comments uses.
-  const products = await getProductsForMedia(String(media._id), String(media.channel_id));
+  const products = await getProductsForMedia(media.id, media.channelId);
   const productIds = products.map((p) => p.productId);
 
   // Path 1: Logged-in customer with purchase record.
   let allowed = false;
   const session = await auth();
   if (session?.user?.id && session.user.role === "customer") {
-    const customer = await Customer.findById(session.user.id)
-      .select("purchases")
-      .lean();
-    allowed = !!customer?.purchases?.some(
-      (p) => productIds.includes(p.satsrail_product_id)
-    );
+    if (productIds.length > 0) {
+      const purchase = await prisma.purchase.findFirst({
+        where: {
+          customerId: session.user.id,
+          satsrailProductId: { in: productIds },
+        },
+        select: { id: true },
+      });
+      allowed = !!purchase;
+    }
   }
 
   // Path 2: Macaroon-based proof of payment (anonymous payers).
@@ -70,32 +73,36 @@ export async function POST(
   }
 
   if (action === "like") {
-    const updated = await Media.findByIdAndUpdate(
-      id,
-      { $inc: { likes_count: 1 } },
-      { new: true }
-    );
-    // Media existed at the top of the handler and the rate-limit
-    // window is short; treat a missing doc here as a race we let
-    // surface as a generic 404.
-    if (!updated) {
+    try {
+      const updated = await prisma.media.update({
+        where: { id },
+        data: { likesCount: { increment: 1 } },
+        select: { likesCount: true },
+      });
+      return NextResponse.json({ likes_count: updated.likesCount });
+    } catch {
+      // Media existed at the top of the handler and the rate-limit
+      // window is short; treat a missing doc here as a race we let
+      // surface as a generic 404.
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
-    return NextResponse.json({ likes_count: updated.likes_count });
   }
 
   // unlike — conditional decrement so the counter never goes below 0.
-  const updated = await Media.findOneAndUpdate(
-    { _id: id, likes_count: { $gt: 0 } },
-    { $inc: { likes_count: -1 } },
-    { new: true }
-  );
+  const result = await prisma.media.updateMany({
+    where: { id, likesCount: { gt: 0 } },
+    data: { likesCount: { decrement: 1 } },
+  });
 
-  if (updated) {
-    return NextResponse.json({ likes_count: updated.likes_count });
+  if (result.count > 0) {
+    const fresh = await prisma.media.findUnique({
+      where: { id },
+      select: { likesCount: true },
+    });
+    return NextResponse.json({ likes_count: fresh?.likesCount ?? 0 });
   }
 
   // Counter is already at 0 — return the current value (0). Media
   // existence was already verified above, so we don't re-check.
-  return NextResponse.json({ likes_count: media.likes_count });
+  return NextResponse.json({ likes_count: media.likesCount });
 }

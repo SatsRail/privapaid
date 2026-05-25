@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
-import Media from "@/models/Media";
-import Channel from "@/models/Channel";
-import MediaProduct from "@/models/MediaProduct";
-import ChannelProduct from "@/models/ChannelProduct";
+import { prisma } from "@/lib/prisma";
 import { getNextRef } from "@/models/Counter";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
@@ -16,7 +12,6 @@ import { wrapDekFromBase64url } from "@/lib/photo-dek";
 export async function GET(req: NextRequest) {
   const auth = await requireAdminApi();
   if (auth instanceof NextResponse) return auth;
-  await connectDB();
   const { searchParams } = new URL(req.url);
   const channelId = searchParams.get("channel_id");
 
@@ -27,28 +22,29 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const mediaItems = await Media.find({ channel_id: channelId, deleted_at: null })
-    .sort({ position: 1 })
-    .lean();
+  const mediaItems = await prisma.media.findMany({
+    where: { channelId, deletedAt: null },
+    orderBy: { position: "asc" },
+  });
 
   // Attach product IDs to each media item
-  const mediaIds = mediaItems.map((m) => m._id);
-  const mediaProducts = await MediaProduct.find({
-    media_id: { $in: mediaIds },
-  })
-    .select("media_id satsrail_product_id")
-    .lean();
+  const mediaIds = mediaItems.map((m) => m.id);
+  const mediaProducts = mediaIds.length > 0
+    ? await prisma.mediaProduct.findMany({
+        where: { mediaId: { in: mediaIds } },
+        select: { mediaId: true, satsrailProductId: true },
+      })
+    : [];
 
   const productMap = new Map<string, string[]>();
   for (const mp of mediaProducts) {
-    const key = String(mp.media_id);
-    if (!productMap.has(key)) productMap.set(key, []);
-    productMap.get(key)!.push(mp.satsrail_product_id);
+    if (!productMap.has(mp.mediaId)) productMap.set(mp.mediaId, []);
+    productMap.get(mp.mediaId)!.push(mp.satsrailProductId);
   }
 
   const data = mediaItems.map((m) => ({
     ...m,
-    product_ids: productMap.get(String(m._id)) || [],
+    product_ids: productMap.get(m.id) || [],
   }));
 
   return NextResponse.json({ data });
@@ -60,11 +56,9 @@ export async function POST(req: NextRequest) {
   const result = await validateBody(req, schemas.mediaCreate);
   if (isValidationError(result)) return result;
 
-  await connectDB();
-
   const { channel_id, name, source_url, media_type, dek } = result;
 
-  const channel = await Channel.findById(channel_id);
+  const channel = await prisma.channel.findUnique({ where: { id: channel_id } });
   if (!channel) {
     return NextResponse.json({ error: "Channel not found" }, { status: 404 });
   }
@@ -73,7 +67,9 @@ export async function POST(req: NextRequest) {
   // have the DEK in hand to wrap it under each product key — there's no other
   // way to recover the per-photo DEK on the server.
   if (media_type === "photo") {
-    const existingChannelProducts = await ChannelProduct.countDocuments({ channel_id });
+    const existingChannelProducts = await prisma.channelProduct.count({
+      where: { channelId: channel_id },
+    });
     if (existingChannelProducts > 0 && !dek) {
       return NextResponse.json(
         { error: "dek is required for photo media when the channel already has products" },
@@ -83,10 +79,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Auto-set position
-  const maxPos = await Media.findOne({ channel_id })
-    .sort({ position: -1 })
-    .select("position")
-    .lean();
+  const maxPos = await prisma.media.findFirst({
+    where: { channelId: channel_id },
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
 
   const ref = await getNextRef("media");
 
@@ -105,19 +102,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const media = await Media.create({
-    ref,
-    channel_id,
-    name: name.trim(),
-    description: result.description || "",
-    source_url,
-    media_type: media_type || "video",
-    ...(encryptedDek && { encrypted_dek: encryptedDek }),
-    thumbnail_url: result.thumbnail_url || "",
-    thumbnail_id: result.thumbnail_id || "",
-    position: result.position ?? (maxPos?.position ?? 0) + 1,
-    comments_count: 0,
-    flags_count: 0,
+  const media = await prisma.media.create({
+    data: {
+      ref,
+      channelId: channel_id,
+      name: name.trim(),
+      description: result.description || "",
+      sourceUrl: source_url,
+      mediaType: media_type || "video",
+      ...(encryptedDek ? { encryptedDek } : {}),
+      thumbnailUrl: result.thumbnail_url || "",
+      position: result.position ?? (maxPos?.position ?? 0) + 1,
+      commentsCount: 0,
+      flagsCount: 0,
+    },
   });
 
   audit({
@@ -126,39 +124,41 @@ export async function POST(req: NextRequest) {
     actorType: "admin",
     action: "media.create",
     targetType: "media",
-    targetId: String(media._id),
+    targetId: media.id,
     details: { name: media.name, channel_id },
   });
 
   // Increment channel media count
-  await Channel.findByIdAndUpdate(channel_id, { $inc: { media_count: 1 } });
+  await prisma.channel.update({
+    where: { id: channel_id },
+    data: { mediaCount: { increment: 1 } },
+  });
 
   // Encrypt for existing channel products
   try {
-    const channelProductDocs = await ChannelProduct.find({ channel_id });
+    const channelProductDocs = await prisma.channelProduct.findMany({
+      where: { channelId: channel_id },
+    });
     if (channelProductDocs.length > 0) {
       const sk = await getMerchantKey();
       if (sk) {
         for (const cp of channelProductDocs) {
           const { key } = await satsrail.getProductKey(
             sk,
-            cp.satsrail_product_id
+            cp.satsrailProductId
           );
           // For photo media (envelope encryption), wrap the per-photo DEK
-          // rather than the source_url (which is just a GridFS pointer).
+          // rather than the source_url (which is just a blob pointer).
           const plaintext = media_type === "photo" ? (dek as string) : source_url;
-          const encrypted_source_url = encryptSourceUrl(plaintext, key, cp.satsrail_product_id);
-          await ChannelProduct.updateOne(
-            { _id: cp._id },
-            {
-              $push: {
-                encrypted_media: {
-                  media_id: media._id,
-                  encrypted_source_url,
-                },
-              },
-            }
-          );
+          const encryptedSourceUrl = encryptSourceUrl(plaintext, key, cp.satsrailProductId);
+          await prisma.channelProductMedia.create({
+            data: {
+              channelProductId: cp.id,
+              mediaId: media.id,
+              encryptedSourceUrl,
+              keyFingerprint: cp.keyFingerprint,
+            },
+          });
         }
       }
     }

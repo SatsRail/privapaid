@@ -1,0 +1,391 @@
+// PrivaPaid Stream — PostgreSQL schema
+//
+// Migration from MongoDB/Mongoose. See plan:
+// /Users/rafael/.claude/plans/privapaid-app-uses-mongodb-we-precious-harbor.md
+//
+// Hard constraints:
+//   1. SatsRail always holds the encryption keys (never in this DB).
+//   2. Encrypted blob format must stay byte-identical:
+//        Base64( IV[12] + ciphertext + auth_tag[16] ), AAD = satsrailProductId.
+//   3. external_ref format `ch_<channel.ref>` / `md_<media.ref>` is opaque to
+//      the portal but must survive unchanged.
+//   4. Media.sourceUrl plaintext recovery store stays (key rotation source).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [citext]
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum AdminRole {
+  owner
+  admin
+  moderator
+}
+
+enum AuditActorType {
+  admin
+  customer
+  system
+}
+
+enum MediaType {
+  video
+  audio
+  article
+  photo
+  podcast
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+
+/// Admin — team display + role assignment. Auth handled by SatsRail.
+model Admin {
+  id           String    @id @default(cuid())
+  email        String    @unique @db.Citext
+  passwordHash String
+  name         String
+  role         AdminRole @default(admin)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+/// Category — content taxonomy.
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique @db.Citext
+  position  Int       @default(0)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  channels  Channel[]
+
+  @@index([position])
+  @@index([active])
+}
+
+/// Channel — content source, has many Media.
+model Channel {
+  id                    String   @id @default(cuid())
+  ref                   Int      @unique // from Counter; emitted as `ch_<ref>` to portal
+  slug                  String   @unique @db.Citext
+  satsrailProductTypeId String?
+  name                  String
+  bio                   String   @default("")
+  categoryId            String?
+  nsfw                  Boolean  @default(false)
+  // Flat object: { youtube, twitter, discord, instagram, tiktok, website }.
+  // Never sub-queried — keep as JSON.
+  socialLinks           Json     @default("{}")
+  profileImageUrl       String   @default("")
+  profileImageBytes     Bytes?   // replaces GridFS pointer
+  profileImageMimeType  String?
+  isLive                Boolean  @default(false)
+  streamUrl             String   @default("")
+  active                Boolean  @default(true)
+  /// Denormalized count of associated Media. Updated via { increment: 1 }
+  /// in the same transaction as Media create/delete.
+  mediaCount            Int      @default(0)
+  deletedAt             DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  category           Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  media              Media[]
+  channelProducts    ChannelProduct[]
+  favoritedBy        Customer[]        @relation("CustomerFavorites")
+
+  @@index([categoryId])
+  @@index([active])
+  @@index([createdAt(sort: Desc)])
+}
+
+/// Media — one of video/audio/article/photo/podcast.
+model Media {
+  id            String    @id @default(cuid())
+  ref           Int       @unique // from Counter; emitted as `md_<ref>` to portal
+  channelId     String
+  name          String
+  description   String    @default("")
+  /// Plaintext recovery store. For video/audio/podcast: URL. For article:
+  /// markdown body. For photo: EncryptedPhotoBlob.id (ciphertext at rest).
+  /// Public routes MUST filter this out — admin-only. The re-encryption flow
+  /// reads it directly so rotation doesn't depend on SatsRail's old_key.
+  sourceUrl     String
+  mediaType     MediaType @default(video)
+  /// Photo-only: per-photo DEK wrapped under operator's PHOTO_KEK. Allows
+  /// product creation without a SatsRail round-trip.
+  encryptedDek  String?
+  thumbnailUrl  String    @default("")
+  thumbnailBytes     Bytes?   // replaces GridFS thumbnail
+  thumbnailMimeType  String?
+  /// Direct URLs (from import). Cap-of-6 enforced in application code.
+  previewImageUrls   String[]  @default([])
+  position           Int       @default(0)
+  commentsCount      Int       @default(0)
+  viewsCount         Int       @default(0)
+  flagsCount         Int       @default(0)
+  likesCount         Int       @default(0)
+  sharesCount        Int       @default(0)
+  deletedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  channel              Channel                @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  comments             Comment[]
+  flags                Flag[]
+  mediaProduct         MediaProduct?
+  channelProductMedias ChannelProductMedia[]
+  previewImages        PreviewImage[]
+
+  @@index([channelId, position])
+  @@index([channelId, viewsCount(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
+/// PreviewImage — admin-uploaded preview images for a Media item.
+/// Replaces Mongo's preview_image_ids[] array of GridFS pointers.
+/// Cap-of-6 per media enforced in application code (was a Mongoose validator).
+model PreviewImage {
+  id        String   @id @default(cuid())
+  mediaId   String
+  position  Int      @default(0)
+  bytes     Bytes
+  mimeType  String
+  createdAt DateTime @default(now())
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId, position])
+}
+
+/// EncryptedPhotoBlob — encrypted photo bytes (AES-256-GCM at rest).
+/// Replaces the `encrypted_photos` GridFS bucket. `Media.sourceUrl` for photos
+/// stores this row's id (preserves the GridFS-pointer indirection).
+model EncryptedPhotoBlob {
+  id        String   @id @default(cuid())
+  bytes     Bytes
+  mimeType  String
+  createdAt DateTime @default(now())
+}
+
+/// ChannelProduct — bundle product sold via SatsRail. One channel can have
+/// many; each contains one-or-more encrypted media entries (the bundle).
+model ChannelProduct {
+  id                           String    @id @default(cuid())
+  channelId                    String
+  /// UUID from SatsRail. Canonical product identifier.
+  satsrailProductId            String    @unique
+  /// SHA-256 hex of encryption key for client verification.
+  keyFingerprint               String?
+  // Cached product data from SatsRail (synced on demand to reduce round-trips)
+  productName                  String?
+  productPriceCents            Int?
+  productCurrency              String?
+  productAccessDurationSeconds Int?
+  productStatus                String?   @default("active")
+  productSlug                  String?
+  productExternalRef           String?   // e.g. "ch_7"
+  syncedAt                     DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  channel         Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  encryptedMedia  ChannelProductMedia[]
+
+  @@index([channelId])
+}
+
+/// ChannelProductMedia — join table for ChannelProduct ↔ Media with the
+/// product-specific encrypted blob for each entry. Separate table (vs JSON)
+/// because key rotation re-encrypts each entry transactionally.
+model ChannelProductMedia {
+  id                  String   @id @default(cuid())
+  channelProductId    String
+  mediaId             String
+  /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
+  /// AAD = ChannelProduct.satsrailProductId.
+  encryptedSourceUrl  String
+  keyFingerprint      String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  channelProduct ChannelProduct @relation(fields: [channelProductId], references: [id], onDelete: Cascade)
+  media          Media          @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@unique([channelProductId, mediaId])
+  @@index([mediaId])
+}
+
+/// MediaProduct — individual media item sold as a product (1:1 with Media).
+model MediaProduct {
+  id                           String    @id @default(cuid())
+  mediaId                      String    @unique
+  satsrailProductId            String    @unique
+  /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
+  /// AAD = satsrailProductId.
+  encryptedSourceUrl           String
+  keyFingerprint               String?
+  // Cached product data from SatsRail
+  productName                  String?
+  productPriceCents            Int?
+  productCurrency              String?
+  productAccessDurationSeconds Int?
+  productStatus                String?   @default("active")
+  productSlug                  String?
+  productExternalRef           String?   // e.g. "md_12"
+  syncedAt                     DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+}
+
+/// Customer — buyer account.
+model Customer {
+  id                    String    @id @default(cuid())
+  nickname              String    @unique @db.Citext
+  passwordHash          String
+  profileImageBytes     Bytes?
+  profileImageMimeType  String?
+  deletedAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  favoriteChannels Channel[]  @relation("CustomerFavorites")
+  purchases        Purchase[]
+  comments         Comment[]
+  flags            Flag[]
+}
+
+/// Purchase — separate table replacing Customer.purchases[] embedded array.
+model Purchase {
+  id                String   @id @default(cuid())
+  customerId        String
+  satsrailOrderId   String
+  satsrailProductId String
+  purchasedAt       DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, purchasedAt(sort: Desc)])
+  @@index([satsrailProductId])
+}
+
+/// Comment — thread on media items. `customerId` nullable for anonymous.
+model Comment {
+  id         String   @id @default(cuid())
+  mediaId    String
+  customerId String?
+  nickname   String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  media    Media     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([mediaId, createdAt(sort: Desc)])
+  @@index([customerId])
+}
+
+/// Flag — content moderation. One customer can only flag the same media once.
+model Flag {
+  id         String   @id @default(cuid())
+  mediaId    String
+  customerId String
+  flagType   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  media    Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaId, customerId])
+  @@index([customerId])
+}
+
+/// Settings — singleton (enforced by check constraint `id = 1`).
+model Settings {
+  id                      Int       @id @default(1)
+  setupCompleted          Boolean   @default(false)
+  setupCompletedAt        DateTime?
+  instanceName            String
+  instanceDomain          String    @default("localhost:3000")
+  nsfwEnabled             Boolean   @default(false)
+  adultDisclaimer         String    @default("")
+  themePrimary            String    @default("#3b82f6")
+  themeBg                 String    @default("#0a0a0a")
+  themeBgSecondary        String    @default("#18181b")
+  themeText               String    @default("#ededed")
+  themeTextSecondary      String    @default("#a1a1aa")
+  themeHeading            String    @default("#fafafa")
+  themeBorder             String    @default("#27272a")
+  themeFont               String    @default("Geist")
+  logoUrl                 String    @default("")
+  logoBytes               Bytes?    // replaces logo_image_id GridFS pointer
+  logoMimeType            String?
+  aboutText               String    @default("")
+  satsrailApiUrl          String    @default("https://satsrail.com/api/v1")
+  satsrailApiKeyEncrypted String?
+  merchantId              String?
+  merchantName            String?
+  merchantCurrency        String    @default("USD")
+  merchantLocale          String    @default("en")
+  googleAnalyticsId       String    @default("")
+  googleSiteVerification  String    @default("")
+  sentryDsn               String    @default("")
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+}
+
+/// AuditLog — write-only audit trail. App-level cleanup job deletes rows
+/// older than 90 days (replaces MongoDB TTL index).
+model AuditLog {
+  id         String         @id @default(cuid())
+  actorId    String
+  actorEmail String         @default("")
+  actorType  AuditActorType
+  action     String
+  targetType String         @default("")
+  targetId   String         @default("")
+  details    Json           @default("{}")
+  ip         String         @default("")
+  userAgent  String         @default("")
+  createdAt  DateTime       @default(now())
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@index([createdAt]) // for cleanup job
+}
+
+/// WebhookEvent — idempotency table for SatsRail webhooks. App-level cleanup
+/// job deletes rows older than 7 days (replaces MongoDB TTL index).
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@index([processedAt])
+}
+
+/// Counter — atomic sequence generator for human-readable refs (channel,
+/// media). `getNextRef(name)` does an upsert with { increment: 1 } in a
+/// single statement — atomic at READ COMMITTED. Matches Mongo semantics
+/// exactly so caller code is unchanged.
+model Counter {
+  id  String @id
+  seq Int    @default(0)
+}

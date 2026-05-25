@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import config from "@/config/instance";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
 
 export const dynamic = "force-dynamic";
 
@@ -12,46 +10,68 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ results: [] });
   }
 
-  await connectDB();
-
-  // Escape regex special characters
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(escaped, "i");
-
-  const channelFilter: Record<string, unknown> = {
+  // No more regex escaping — Postgres `contains` (ILIKE under the hood when
+  // mode: "insensitive") treats the query as a literal substring.
+  const channelWhere: Record<string, unknown> = {
     active: true,
-    $or: [{ name: regex }, { bio: regex }, { slug: regex }],
+    OR: [
+      { name: { contains: q, mode: "insensitive" } },
+      { bio: { contains: q, mode: "insensitive" } },
+      // slug is citext so case-insensitive comes for free
+      { slug: { contains: q } },
+    ],
   };
   if (!config.nsfw) {
-    channelFilter.nsfw = false;
+    channelWhere.nsfw = false;
   }
 
   const [channels, mediaItems] = await Promise.all([
-    Channel.find(channelFilter)
-      .select("slug name profile_image_url profile_image_id")
-      .limit(5)
-      .lean(),
-    Media.find({
-      $or: [{ name: regex }, { description: regex }],
-    })
-      .select("name media_type channel_id thumbnail_url thumbnail_id")
-      .limit(10)
-      .lean(),
+    prisma.channel.findMany({
+      where: channelWhere,
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        profileImageUrl: true,
+        profileImageMimeType: true,
+      },
+      take: 5,
+    }),
+    prisma.media.findMany({
+      where: {
+        OR: [
+          { name: { contains: q, mode: "insensitive" } },
+          { description: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        mediaType: true,
+        channelId: true,
+        thumbnailUrl: true,
+        thumbnailMimeType: true,
+      },
+      take: 10,
+    }),
   ]);
 
   // Build channel slug lookup for media results
-  const channelIds = [...new Set(mediaItems.map((m) => m.channel_id.toString()))];
-  const mediaChannels = await Channel.find({
-    _id: { $in: channelIds },
-    active: true,
-    ...(config.nsfw ? {} : { nsfw: false }),
-  })
-    .select("slug name")
-    .lean();
+  const channelIds = [...new Set(mediaItems.map((m) => m.channelId))];
+  const mediaChannels = channelIds.length
+    ? await prisma.channel.findMany({
+        where: {
+          id: { in: channelIds },
+          active: true,
+          ...(config.nsfw ? {} : { nsfw: false }),
+        },
+        select: { id: true, slug: true, name: true },
+      })
+    : [];
 
   const slugMap = new Map<string, string>();
   for (const ch of mediaChannels) {
-    slugMap.set(ch._id.toString(), ch.slug);
+    slugMap.set(ch.id, ch.slug);
   }
 
   const results: Array<{
@@ -66,22 +86,22 @@ export async function GET(req: NextRequest) {
   for (const ch of channels) {
     results.push({
       type: "channel",
-      id: ch._id.toString(),
+      id: ch.id,
       name: ch.name,
       slug: ch.slug,
     });
   }
 
   for (const m of mediaItems) {
-    const channelSlug = slugMap.get(m.channel_id.toString());
+    const channelSlug = slugMap.get(m.channelId);
     if (!channelSlug) continue; // skip media from inactive/nsfw-hidden channels
     results.push({
       type: "media",
-      id: m._id.toString(),
+      id: m.id,
       name: m.name,
-      slug: m._id.toString(),
+      slug: m.id,
       channelSlug,
-      mediaType: m.media_type,
+      mediaType: m.mediaType,
     });
   }
 

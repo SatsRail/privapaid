@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mocks — MUST be before route imports
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) }));
@@ -9,7 +8,6 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
   cookies: vi.fn().mockResolvedValue({ get: vi.fn().mockReturnValue(undefined) }),
 }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/config/instance", () => ({
   getInstanceConfig: vi.fn().mockResolvedValue({
@@ -24,11 +22,13 @@ const { mockAuth } = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 
 import { GET as getComments, POST as createComment } from "@/app/api/media/[id]/comments/route";
-import Media from "@/models/Media";
-import Channel from "@/models/Channel";
-import Customer from "@/models/Customer";
-import Comment from "@/models/Comment";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
+
+let refSeed = 5000;
+function nextRef(): number {
+  refSeed += 1;
+  return refSeed;
+}
 
 function jsonRequest(url: string, method: string, body?: Record<string, unknown>): NextRequest {
   const init: { method: string; headers: Record<string, string>; body?: string } = { method, headers: { "Content-Type": "application/json" } };
@@ -37,9 +37,6 @@ function jsonRequest(url: string, method: string, body?: Record<string, unknown>
 }
 
 describe("Comments API — GET /api/media/[id]/comments", () => {
-  let channelId: string;
-  let mediaId: string;
-
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -54,23 +51,25 @@ describe("Comments API — GET /api/media/[id]/comments", () => {
   });
 
   async function seed() {
-    const channel = await Channel.create({
-      ref: 1,
-      slug: "ch-comments",
-      name: "Comments Channel",
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `ch-comments-${nextRef()}`,
+        name: "Comments Channel",
+      },
     });
-    channelId = String(channel._id);
 
-    const media = await Media.create({
-      ref: 200,
-      channel_id: channelId,
-      name: "Commentable Video",
-      source_url: "https://example.com/video.mp4",
-      media_type: "video",
-      position: 1,
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Commentable Video",
+        sourceUrl: "https://example.com/video.mp4",
+        mediaType: "video",
+        position: 1,
+      },
     });
-    mediaId = String(media._id);
-    return { channelId, mediaId };
+    return { channelId: channel.id, mediaId: media.id };
   }
 
   it("returns empty comments for media with none", async () => {
@@ -86,22 +85,28 @@ describe("Comments API — GET /api/media/[id]/comments", () => {
 
   it("returns comments for a media item", async () => {
     const { mediaId } = await seed();
-    const customer = await Customer.create({
-      nickname: "commenter1",
-      password_hash: "hashed",
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "commenter1",
+        passwordHash: "hashed",
+      },
     });
 
-    await Comment.create({
-      media_id: mediaId,
-      customer_id: customer._id,
-      nickname: "commenter1",
-      body: "Great video!",
+    await prisma.comment.create({
+      data: {
+        mediaId,
+        customerId: customer.id,
+        nickname: "commenter1",
+        body: "Great video!",
+      },
     });
-    await Comment.create({
-      media_id: mediaId,
-      customer_id: customer._id,
-      nickname: "commenter1",
-      body: "Second comment",
+    await prisma.comment.create({
+      data: {
+        mediaId,
+        customerId: customer.id,
+        nickname: "commenter1",
+        body: "Second comment",
+      },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "GET");
@@ -116,9 +121,6 @@ describe("Comments API — GET /api/media/[id]/comments", () => {
 });
 
 describe("Comments API — POST /api/media/[id]/comments", () => {
-  let channelId: string;
-  let mediaId: string;
-
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -133,49 +135,54 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
   });
 
   async function seedWithProduct() {
-    const channel = await Channel.create({
-      ref: 2,
-      slug: "ch-post-comments",
-      name: "Post Comments Channel",
-    });
-    channelId = String(channel._id);
-
-    const media = await Media.create({
-      ref: 201,
-      channel_id: channelId,
-      name: "Paid Video",
-      source_url: "https://example.com/paid.mp4",
-      media_type: "video",
-      position: 1,
-    });
-    mediaId = String(media._id);
-
-    const mp = await MediaProduct.create({
-      media_id: mediaId,
-      satsrail_product_id: "prod_abc",
-      encrypted_source_url: "encrypted_blob",
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `ch-post-comments-${nextRef()}`,
+        name: "Post Comments Channel",
+      },
     });
 
-    return { channelId, mediaId, productId: mp.satsrail_product_id };
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Paid Video",
+        sourceUrl: "https://example.com/paid.mp4",
+        mediaType: "video",
+        position: 1,
+      },
+    });
+
+    const mp = await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_abc",
+        encryptedSourceUrl: "encrypted_blob",
+      },
+    });
+
+    return { channelId: channel.id, mediaId: media.id, productId: mp.satsrailProductId };
   }
 
   it("creates a comment from authenticated customer with purchase", async () => {
     const { mediaId, productId } = await seedWithProduct();
 
-    const customer = await Customer.create({
-      nickname: "buyer1",
-      password_hash: "hashed",
-      purchases: [
-        {
-          satsrail_order_id: "ord_1",
-          satsrail_product_id: productId,
-          purchased_at: new Date(),
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "buyer1",
+        passwordHash: "hashed",
+        purchases: {
+          create: [{
+            satsrailOrderId: "ord_1",
+            satsrailProductId: productId,
+          }],
         },
-      ],
+      },
     });
 
     mockAuth.mockResolvedValue({
-      user: { id: String(customer._id), name: "buyer1", role: "customer" },
+      user: { id: customer.id, name: "buyer1", role: "customer" },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
@@ -188,22 +195,23 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
     expect(resBody.body).toBe("Love this content!");
     expect(resBody.customer.nickname).toBe("buyer1");
 
-    // Verify comments_count incremented
-    const media = await Media.findById(mediaId);
-    expect(media!.comments_count).toBe(1);
+    // Verify commentsCount incremented
+    const media = await prisma.media.findUnique({ where: { id: mediaId } });
+    expect(media!.commentsCount).toBe(1);
   });
 
   it("returns 401 without purchase or macaroon", async () => {
     const { mediaId } = await seedWithProduct();
 
-    const customer = await Customer.create({
-      nickname: "nopurchase",
-      password_hash: "hashed",
-      purchases: [],
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "nopurchase",
+        passwordHash: "hashed",
+      },
     });
 
     mockAuth.mockResolvedValue({
-      user: { id: String(customer._id), name: "nopurchase", role: "customer" },
+      user: { id: customer.id, name: "nopurchase", role: "customer" },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
@@ -219,20 +227,21 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
   it("returns 400 for invalid body (empty comment)", async () => {
     const { mediaId, productId } = await seedWithProduct();
 
-    const customer = await Customer.create({
-      nickname: "buyer2",
-      password_hash: "hashed",
-      purchases: [
-        {
-          satsrail_order_id: "ord_2",
-          satsrail_product_id: productId,
-          purchased_at: new Date(),
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "buyer2",
+        passwordHash: "hashed",
+        purchases: {
+          create: [{
+            satsrailOrderId: "ord_2",
+            satsrailProductId: productId,
+          }],
         },
-      ],
+      },
     });
 
     mockAuth.mockResolvedValue({
-      user: { id: String(customer._id), name: "buyer2", role: "customer" },
+      user: { id: customer.id, name: "buyer2", role: "customer" },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
@@ -243,15 +252,17 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
   });
 
   it("returns 404 for non-existent media", async () => {
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = "ckmissingfakefakefakefake";
 
-    const customer = await Customer.create({
-      nickname: "ghost",
-      password_hash: "hashed",
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "ghost",
+        passwordHash: "hashed",
+      },
     });
 
     mockAuth.mockResolvedValue({
-      user: { id: String(customer._id), name: "ghost", role: "customer" },
+      user: { id: customer.id, name: "ghost", role: "customer" },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${fakeId}/comments`, "POST", {
@@ -288,20 +299,21 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
   it("authenticated path ignores submittedNickname (anti-impersonation)", async () => {
     const { mediaId, productId } = await seedWithProduct();
 
-    const customer = await Customer.create({
-      nickname: "realname",
-      password_hash: "hashed",
-      purchases: [
-        {
-          satsrail_order_id: "ord_n",
-          satsrail_product_id: productId,
-          purchased_at: new Date(),
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "realname",
+        passwordHash: "hashed",
+        purchases: {
+          create: [{
+            satsrailOrderId: "ord_n",
+            satsrailProductId: productId,
+          }],
         },
-      ],
+      },
     });
 
     mockAuth.mockResolvedValue({
-      user: { id: String(customer._id), name: "realname", role: "customer" },
+      user: { id: customer.id, name: "realname", role: "customer" },
     });
 
     const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
@@ -316,9 +328,6 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
 });
 
 describe("Comments API — GET fallback nickname rendering", () => {
-  let channelId: string;
-  let mediaId: string;
-
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -333,37 +342,40 @@ describe("Comments API — GET fallback nickname rendering", () => {
   });
 
   it("falls back to 'Anonymous' when neither nickname nor populated customer is available", async () => {
-    const channel = await Channel.create({
-      ref: 99,
-      slug: "ch-anon",
-      name: "Anon Channel",
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `ch-anon-${nextRef()}`,
+        name: "Anon Channel",
+      },
     });
-    channelId = String(channel._id);
 
-    const media = await Media.create({
-      ref: 555,
-      channel_id: channelId,
-      name: "Anon Video",
-      source_url: "https://example.com/a.mp4",
-      media_type: "video",
-      position: 1,
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Anon Video",
+        sourceUrl: "https://example.com/a.mp4",
+        mediaType: "video",
+        position: 1,
+      },
     });
-    mediaId = String(media._id);
 
-    // Insert directly bypassing schema validation (nickname is normally required)
-    await Comment.collection.insertOne({
-      media_id: new mongoose.Types.ObjectId(mediaId),
-      body: "lonely comment",
-      created_at: new Date(),
-      updated_at: new Date(),
+    // Create with blank nickname to simulate the legacy case
+    await prisma.comment.create({
+      data: {
+        mediaId: media.id,
+        nickname: "",
+        body: "lonely comment",
+      },
     });
 
     const req = jsonRequest(
-      `http://localhost:3000/api/media/${mediaId}/comments`,
+      `http://localhost:3000/api/media/${media.id}/comments`,
       "GET"
     );
     const res = await getComments(req, {
-      params: Promise.resolve({ id: mediaId }),
+      params: Promise.resolve({ id: media.id }),
     });
     const body = await res.json();
     expect(res.status).toBe(200);
@@ -371,39 +383,46 @@ describe("Comments API — GET fallback nickname rendering", () => {
     expect(body[0].customer.nickname).toBe("Anonymous");
   });
 
-  it("uses customer.nickname populated via customer_id when comment.nickname is blank", async () => {
-    const channel = await Channel.create({
-      ref: 100,
-      slug: "ch-pop",
-      name: "Populated Channel",
+  it("uses customer.nickname populated via customerId when comment.nickname is blank", async () => {
+    const channel = await prisma.channel.create({
+      data: {
+        ref: nextRef(),
+        slug: `ch-pop-${nextRef()}`,
+        name: "Populated Channel",
+      },
     });
-    const media = await Media.create({
-      ref: 556,
-      channel_id: String(channel._id),
-      name: "Pop Video",
-      source_url: "https://example.com/p.mp4",
-      media_type: "video",
-      position: 1,
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "Pop Video",
+        sourceUrl: "https://example.com/p.mp4",
+        mediaType: "video",
+        position: 1,
+      },
     });
-    const customer = await Customer.create({
-      nickname: "populated",
-      password_hash: "hashed",
+    const customer = await prisma.customer.create({
+      data: {
+        nickname: "populated",
+        passwordHash: "hashed",
+      },
     });
 
-    await Comment.collection.insertOne({
-      media_id: media._id,
-      customer_id: customer._id,
-      body: "from customer",
-      created_at: new Date(),
-      updated_at: new Date(),
+    await prisma.comment.create({
+      data: {
+        mediaId: media.id,
+        customerId: customer.id,
+        nickname: "",
+        body: "from customer",
+      },
     });
 
     const req = jsonRequest(
-      `http://localhost:3000/api/media/${media._id}/comments`,
+      `http://localhost:3000/api/media/${media.id}/comments`,
       "GET"
     );
     const res = await getComments(req, {
-      params: Promise.resolve({ id: String(media._id) }),
+      params: Promise.resolve({ id: media.id }),
     });
     const body = await res.json();
     expect(body[0].customer.nickname).toBe("populated");

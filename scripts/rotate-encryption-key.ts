@@ -1,6 +1,6 @@
 /**
  * Rotate SK_ENCRYPTION_KEY — the envelope key that protects every
- * Settings.satsrail_api_key_encrypted row.
+ * Settings.satsrailApiKeyEncrypted row.
  *
  * Reads OLD_SK_ENCRYPTION_KEY and NEW_SK_ENCRYPTION_KEY from env,
  * decrypts each encrypted merchant key with the old key, re-encrypts
@@ -12,7 +12,7 @@
  * Usage:
  *   OLD_SK_ENCRYPTION_KEY=<64hex> \
  *   NEW_SK_ENCRYPTION_KEY=<64hex> \
- *   MONGODB_URI=mongodb://... \
+ *   DATABASE_URL=postgres://... \
  *   npx tsx scripts/rotate-encryption-key.ts            # apply
  *
  *   OLD_SK_ENCRYPTION_KEY=... NEW_SK_ENCRYPTION_KEY=... \
@@ -33,9 +33,8 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import mongoose from "mongoose";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import Settings from "@/models/Settings";
+import { prisma } from "@/lib/prisma";
 
 interface Args {
   dryRun: boolean;
@@ -102,18 +101,22 @@ async function main() {
     process.exit(1);
   }
 
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    console.error("FATAL: MONGODB_URI is required.");
+  if (!process.env.DATABASE_URL) {
+    console.error("FATAL: DATABASE_URL is required.");
     process.exit(1);
   }
 
   console.log(dryRun ? "rotate-encryption-key (DRY RUN)" : "rotate-encryption-key");
-  await mongoose.connect(uri);
 
-  const rows = await Settings.find({
-    satsrail_api_key_encrypted: { $nin: [null, ""] },
-  }).select("_id satsrail_api_key_encrypted");
+  const rows = await prisma.settings.findMany({
+    where: {
+      NOT: [
+        { satsrailApiKeyEncrypted: null },
+        { satsrailApiKeyEncrypted: "" },
+      ],
+    },
+    select: { id: true, satsrailApiKeyEncrypted: true },
+  });
 
   console.log(`Found ${rows.length} settings row(s) with an encrypted merchant key.`);
 
@@ -122,8 +125,8 @@ async function main() {
   const failures: { id: string; reason: string }[] = [];
 
   for (const row of rows) {
-    const id = String(row._id);
-    const envelope = row.satsrail_api_key_encrypted as string;
+    const id = String(row.id);
+    const envelope = row.satsrailApiKeyEncrypted as string;
 
     let plaintext: string;
     try {
@@ -139,14 +142,23 @@ async function main() {
     const newEnvelope = encryptWithKey(plaintext, newKey);
 
     if (!dryRun) {
-      row.satsrail_api_key_encrypted = newEnvelope;
-      await row.save();
+      // Wrap the per-row rewrite in a transaction so a mid-flight failure
+      // can't leave a half-written envelope. The update is a single row but
+      // the transaction boundary makes the intent explicit and protects
+      // against future expansion (e.g., re-encrypting related product blobs
+      // under the same key).
+      await prisma.$transaction([
+        prisma.settings.update({
+          where: { id: row.id },
+          data: { satsrailApiKeyEncrypted: newEnvelope },
+        }),
+      ]);
     }
     ok++;
     console.log(`  ✓ ${id}: ${dryRun ? "would rewrap" : "rewrapped"}`);
   }
 
-  await mongoose.disconnect();
+  await prisma.$disconnect();
 
   console.log("");
   console.log(`Summary: ${ok} rewrapped, ${failed} failed.`);

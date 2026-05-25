@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
 
 const { mockRequireOwnerApi, mockCleanup, mockAudit } = vi.hoisted(() => ({
@@ -11,7 +10,6 @@ const { mockRequireOwnerApi, mockCleanup, mockAudit } = vi.hoisted(() => ({
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockResolvedValue(mongoose) }));
 vi.mock("@/lib/auth-helpers", () => ({ requireOwnerApi: mockRequireOwnerApi }));
 vi.mock("@/lib/audit", () => ({ audit: mockAudit }));
 vi.mock("@/lib/photo-cleanup", () => ({
@@ -104,7 +102,7 @@ describe("POST /api/admin/photos/cleanup", () => {
       orphaned: 2,
       deleted: 1,
       skippedYoung: 1,
-      errors: [{ gridFsId: "abc", error: "boom" }],
+      errors: [{ blobId: "abc", error: "boom" }],
     });
 
     const res = await POST(buildRequest({ graceSeconds: 120 }));
@@ -155,11 +153,11 @@ describe("POST /api/admin/photos/cleanup", () => {
   });
 
   it("returns 500 when the cleanup throws", async () => {
-    mockCleanup.mockRejectedValueOnce(new Error("mongo broke"));
+    mockCleanup.mockRejectedValueOnce(new Error("db broke"));
     const res = await POST(buildRequest({}));
     const body = await res.json();
     expect(res.status).toBe(500);
-    expect(body.error).toBe("mongo broke");
+    expect(body.error).toBe("db broke");
   });
 
   it("tolerates a missing body and uses defaults", async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
 // Hoisted mock state so the vi.mock factory can read it at module-init time
 // without TDZ issues. Test cases mutate `mockConfig` to flip nsfw on a
@@ -12,10 +12,6 @@ const { mockConfig } = vi.hoisted(() => ({
     nsfw: false,
     locale: "en",
   },
-}));
-
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 vi.mock("@/config/instance", () => ({
@@ -32,6 +28,12 @@ import { GET } from "@/app/c/[slug]/feed.xml/route";
 function feedRequest(slug: string): [Request, { params: Promise<{ slug: string }> }] {
   const req = new Request(`http://localhost:3000/c/${slug}/feed.xml`);
   return [req, { params: Promise.resolve({ slug }) }];
+}
+
+// Helper to set createdAt on a media row (Prisma blocks setting @default(now())
+// fields directly via the regular API).
+async function setMediaCreatedAt(id: string, when: Date) {
+  await prisma.$executeRaw`UPDATE "Media" SET "createdAt" = ${when} WHERE id = ${id}`;
 }
 
 describe("GET /c/[slug]/feed.xml", () => {
@@ -58,14 +60,15 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("returns 404 for an inactive channel", async () => {
       const ch = await createChannel({ slug: "hidden", active: false });
-      await createMedia(ch._id.toString());
+      await createMedia(ch.id);
       const res = await GET(...feedRequest("hidden"));
       expect(res.status).toBe(404);
     });
 
     it("returns 404 for a soft-deleted channel", async () => {
-      const ch = await createChannel({ slug: "tombstoned", deleted_at: new Date() });
-      await createMedia(ch._id.toString());
+      const ch = await createChannel({ slug: "tombstoned" });
+      await prisma.channel.update({ where: { id: ch.id }, data: { deletedAt: new Date() } });
+      await createMedia(ch.id);
       const res = await GET(...feedRequest("tombstoned"));
       expect(res.status).toBe(404);
     });
@@ -81,7 +84,7 @@ describe("GET /c/[slug]/feed.xml", () => {
   describe("200 branches", () => {
     it("returns 200 with correct headers for an active channel with media", async () => {
       const ch = await createChannel({ slug: "good", name: "Good Channel" });
-      await createMedia(ch._id.toString(), { name: "First Video" });
+      await createMedia(ch.id, { name: "First Video" });
 
       const res = await GET(...feedRequest("good"));
 
@@ -132,20 +135,14 @@ describe("GET /c/[slug]/feed.xml", () => {
       expect(body).toContain("<language>es</language>");
     });
 
-    it("orders items by created_at desc (newest first)", async () => {
+    it("orders items by createdAt desc (newest first)", async () => {
       const ch = await createChannel({ slug: "ordered" });
-      await createMedia(ch._id.toString(), {
-        name: "Oldest",
-        created_at: new Date("2026-01-01T00:00:00Z"),
-      });
-      await createMedia(ch._id.toString(), {
-        name: "Newest",
-        created_at: new Date("2026-03-01T00:00:00Z"),
-      });
-      await createMedia(ch._id.toString(), {
-        name: "Middle",
-        created_at: new Date("2026-02-01T00:00:00Z"),
-      });
+      const oldest = await createMedia(ch.id, { name: "Oldest" });
+      const newest = await createMedia(ch.id, { name: "Newest" });
+      const middle = await createMedia(ch.id, { name: "Middle" });
+      await setMediaCreatedAt(oldest.id, new Date("2026-01-01T00:00:00Z"));
+      await setMediaCreatedAt(newest.id, new Date("2026-03-01T00:00:00Z"));
+      await setMediaCreatedAt(middle.id, new Date("2026-02-01T00:00:00Z"));
 
       const res = await GET(...feedRequest("ordered"));
       const body = await res.text();
@@ -160,11 +157,9 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("excludes soft-deleted media items", async () => {
       const ch = await createChannel({ slug: "with-deletes" });
-      await createMedia(ch._id.toString(), { name: "Visible" });
-      await createMedia(ch._id.toString(), {
-        name: "Soft Deleted",
-        deleted_at: new Date(),
-      });
+      await createMedia(ch.id, { name: "Visible" });
+      const sd = await createMedia(ch.id, { name: "Soft Deleted" });
+      await prisma.media.update({ where: { id: sd.id }, data: { deletedAt: new Date() } });
 
       const res = await GET(...feedRequest("with-deletes"));
       const body = await res.text();
@@ -175,13 +170,10 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("caps the feed at 50 items", async () => {
       const ch = await createChannel({ slug: "many-items" });
-      // Create 55 items with distinct created_at so the sort is stable.
       const base = Date.now();
       for (let i = 0; i < 55; i++) {
-        await createMedia(ch._id.toString(), {
-          name: `Item ${i.toString().padStart(2, "0")}`,
-          created_at: new Date(base - i * 1000),
-        });
+        const m = await createMedia(ch.id, { name: `Item ${i.toString().padStart(2, "0")}` });
+        await setMediaCreatedAt(m.id, new Date(base - i * 1000));
       }
 
       const res = await GET(...feedRequest("many-items"));
@@ -192,7 +184,7 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("escapes XML special characters in name and description", async () => {
       const ch = await createChannel({ slug: "escapes" });
-      await createMedia(ch._id.toString(), {
+      await createMedia(ch.id, {
         name: "Tom & Jerry <eats> \"cheese\"",
         description: "if x > y && y < z then 'ok'",
       });
@@ -210,10 +202,8 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("emits pubDate in RFC 822 format", async () => {
       const ch = await createChannel({ slug: "dates" });
-      await createMedia(ch._id.toString(), {
-        name: "Dated",
-        created_at: new Date("2026-03-21T16:37:22.000Z"),
-      });
+      const m = await createMedia(ch.id, { name: "Dated" });
+      await setMediaCreatedAt(m.id, new Date("2026-03-21T16:37:22.000Z"));
 
       const res = await GET(...feedRequest("dates"));
       const body = await res.text();
@@ -223,8 +213,8 @@ describe("GET /c/[slug]/feed.xml", () => {
 
     it("links items to /c/{slug}/{mediaId} as both <link> and <guid>", async () => {
       const ch = await createChannel({ slug: "links" });
-      const media = await createMedia(ch._id.toString(), { name: "L" });
-      const itemUrl = `https://test.example.com/c/links/${media._id.toString()}`;
+      const media = await createMedia(ch.id, { name: "L" });
+      const itemUrl = `https://test.example.com/c/links/${media.id}`;
 
       const res = await GET(...feedRequest("links"));
       const body = await res.text();

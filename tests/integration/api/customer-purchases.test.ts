@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mock rate limit
 vi.mock("@/lib/rate-limit", () => ({
@@ -12,22 +11,14 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
 
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
-}));
-
 // Mock audit
 vi.mock("@/lib/audit", () => ({
   audit: vi.fn(),
 }));
 
-// Mock customer auth — use vi.hoisted to create ObjectId before vi.mock factories
-const { customerId } = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Types } = require("mongoose");
-  return { customerId: new Types.ObjectId() };
-});
+const { customerIdRef } = vi.hoisted(() => ({
+  customerIdRef: { id: "" as string },
+}));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({
     id: "admin-1",
@@ -39,10 +30,10 @@ vi.mock("@/lib/auth-helpers", () => ({
     email: "admin@test.com",
     role: "owner",
   }),
-  requireCustomerApi: vi.fn().mockResolvedValue({
-    id: customerId.toString(),
+  requireCustomerApi: vi.fn().mockImplementation(async () => ({
+    id: customerIdRef.id,
     name: "testuser",
-  }),
+  })),
 }));
 
 // Mock satsrail
@@ -58,6 +49,7 @@ vi.mock("@/lib/encryption", () => ({
 
 import { NextRequest } from "next/server";
 import { GET, POST } from "@/app/api/customer/purchases/route";
+import { prisma } from "@/lib/prisma";
 import { createCustomer, createSettings } from "../../helpers/factories";
 
 function buildPostRequest(body: unknown): NextRequest {
@@ -84,7 +76,8 @@ describe("Customer Purchases routes", () => {
 
   describe("GET /api/customer/purchases", () => {
     it("returns empty purchases initially", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
 
       const res = await GET();
       const body = await res.json();
@@ -96,7 +89,8 @@ describe("Customer Purchases routes", () => {
 
   describe("POST /api/customer/purchases", () => {
     it("records a purchase (from_checkout bypasses verification)", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
 
       const req = buildPostRequest({
         order_id: "from_checkout",
@@ -116,17 +110,15 @@ describe("Customer Purchases routes", () => {
     });
 
     it("prevents duplicate purchases", async () => {
-      await createCustomer({
-        _id: customerId,
-        nickname: "buyer",
-        purchases: [
-          {
-            satsrail_order_id: "order_1",
-            satsrail_product_id: "prod_dup",
-            purchased_at: new Date(),
-          },
-        ],
+      const customer = await createCustomer({ nickname: "buyer" });
+      await prisma.purchase.create({
+        data: {
+          customerId: customer.id,
+          satsrailOrderId: "order_1",
+          satsrailProductId: "prod_dup",
+        },
       });
+      customerIdRef.id = customer.id;
 
       const req = buildPostRequest({
         order_id: "from_checkout",
@@ -140,7 +132,8 @@ describe("Customer Purchases routes", () => {
     });
 
     it("returns 400 for invalid data", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
 
       const req = buildPostRequest({});
       const res = await POST(req);
@@ -151,7 +144,7 @@ describe("Customer Purchases routes", () => {
     });
 
     it("returns 404 when the customer no longer exists", async () => {
-      // No customer with this id in DB
+      customerIdRef.id = "ckmissingfakefakefakefake";
 
       const req = buildPostRequest({
         order_id: "from_checkout",
@@ -163,8 +156,9 @@ describe("Customer Purchases routes", () => {
     });
 
     it("returns 403 when SatsRail order is not paid", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
-      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
+      await createSettings({ satsrailApiKeyEncrypted: "encrypted_key_value" });
 
       mockSatsrailClient.getOrder.mockResolvedValue({
         id: "order_unpaid",
@@ -183,8 +177,9 @@ describe("Customer Purchases routes", () => {
     });
 
     it("returns 403 when SatsRail returns a falsy order", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
-      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
+      await createSettings({ satsrailApiKeyEncrypted: "encrypted_key_value" });
 
       mockSatsrailClient.getOrder.mockResolvedValue(null);
 
@@ -197,8 +192,9 @@ describe("Customer Purchases routes", () => {
     });
 
     it("returns 502 when SatsRail verification throws", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
-      await createSettings({ satsrail_api_key_encrypted: "encrypted_key_value" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
+      await createSettings({ satsrailApiKeyEncrypted: "encrypted_key_value" });
 
       mockSatsrailClient.getOrder.mockRejectedValue(new Error("network down"));
 
@@ -212,7 +208,8 @@ describe("Customer Purchases routes", () => {
     });
 
     it("skips order verification when no settings are configured", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
       // No Settings — should fall through and just record the purchase
 
       const req = buildPostRequest({
@@ -225,9 +222,10 @@ describe("Customer Purchases routes", () => {
     });
 
     it("verifies order against SatsRail for non-checkout orders", async () => {
-      await createCustomer({ _id: customerId, nickname: "buyer" });
+      const customer = await createCustomer({ nickname: "buyer" });
+      customerIdRef.id = customer.id;
       await createSettings({
-        satsrail_api_key_encrypted: "encrypted_key_value",
+        satsrailApiKeyEncrypted: "encrypted_key_value",
       });
 
       mockSatsrailClient.getOrder.mockResolvedValue({

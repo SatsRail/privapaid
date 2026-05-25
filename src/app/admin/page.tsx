@@ -1,20 +1,18 @@
-import { connectDB } from "@/lib/mongodb";
-import { Channel, Media, Customer, Category } from "@/models";
+import { prisma } from "@/lib/prisma";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
-  await connectDB();
   const { locale } = await getInstanceConfig();
 
   const [channelCount, mediaCount, customerCount, categoryCount] =
     await Promise.all([
-      Channel.countDocuments({ active: true }),
-      Media.countDocuments(),
-      Customer.countDocuments(),
-      Category.countDocuments({ active: true }),
+      prisma.channel.count({ where: { active: true } }),
+      prisma.media.count(),
+      prisma.customer.count(),
+      prisma.category.count({ where: { active: true } }),
     ]);
 
   const stats = [

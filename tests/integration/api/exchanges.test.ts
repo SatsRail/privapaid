@@ -1,14 +1,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
-import mongoose from "mongoose";
 import { NextRequest } from "next/server";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 
 // Mocks — MUST be before route imports
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) }));
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
-vi.mock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth-helpers", () => ({
   requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),
@@ -29,7 +27,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 // We need to reset the module cache between tests to clear the in-memory cache
 // in the exchanges route. We'll use dynamic imports after resetModules.
- 
+
 let GET: (req: NextRequest) => Promise<Response>;
 
 describe("Exchanges API", () => {
@@ -51,7 +49,6 @@ describe("Exchanges API", () => {
     vi.doMock("next/headers", () => ({
       headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
     }));
-    vi.doMock("@/lib/mongodb", () => ({ connectDB: vi.fn().mockImplementation(async () => mongoose) }));
     vi.doMock("@/lib/audit", () => ({ audit: vi.fn() }));
     vi.doMock("@/lib/auth-helpers", () => ({
       requireAdminApi: vi.fn().mockResolvedValue({ id: "admin-1", email: "admin@test.com", role: "owner" }),

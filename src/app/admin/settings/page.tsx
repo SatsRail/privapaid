@@ -1,19 +1,33 @@
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/auth-helpers";
-import Settings from "@/models/Settings";
 import AppearanceForm from "./AppearanceForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   await requireOwner();
-  await connectDB();
 
-  const settings = await Settings.findOne({ setup_completed: true })
-    .select(
-      "instance_name logo_url logo_image_id about_text nsfw_enabled theme_primary theme_bg theme_bg_secondary theme_text theme_text_secondary theme_heading theme_border theme_font google_analytics_id google_site_verification sentry_dsn"
-    )
-    .lean();
+  const settings = await prisma.settings.findFirst({
+    where: { setupCompleted: true },
+    select: {
+      instanceName: true,
+      logoUrl: true,
+      logoBytes: true,
+      aboutText: true,
+      nsfwEnabled: true,
+      themePrimary: true,
+      themeBg: true,
+      themeBgSecondary: true,
+      themeText: true,
+      themeTextSecondary: true,
+      themeHeading: true,
+      themeBorder: true,
+      themeFont: true,
+      googleAnalyticsId: true,
+      googleSiteVerification: true,
+      sentryDsn: true,
+    },
+  });
 
   if (!settings) {
     return (
@@ -23,23 +37,25 @@ export default async function SettingsPage() {
     );
   }
 
-  // Serialize for client component
+  // Serialize for client component. The presence of logoBytes is signalled
+  // via the logo route URL — there's only ever one logo (Settings is a
+  // singleton), so we use a fixed marker to indicate "uploaded bytes exist".
   const initialValues = {
-    instance_name: settings.instance_name || "",
-    logo_url: settings.logo_url || "",
-    logo_image_id: settings.logo_image_id || "",
-    about_text: settings.about_text || "",
-    theme_primary: settings.theme_primary || "#3b82f6",
-    theme_bg: settings.theme_bg || "#0a0a0a",
-    theme_bg_secondary: settings.theme_bg_secondary || "#18181b",
-    theme_text: settings.theme_text || "#ededed",
-    theme_text_secondary: settings.theme_text_secondary || "#a1a1aa",
-    theme_heading: settings.theme_heading || "#fafafa",
-    theme_border: settings.theme_border || "#27272a",
-    theme_font: settings.theme_font || "Geist",
-    google_analytics_id: settings.google_analytics_id || "",
-    google_site_verification: settings.google_site_verification || "",
-    sentry_dsn: settings.sentry_dsn || "",
+    instance_name: settings.instanceName || "",
+    logo_url: settings.logoUrl || "",
+    logo_image_id: settings.logoBytes ? "logo" : "",
+    about_text: settings.aboutText || "",
+    theme_primary: settings.themePrimary || "#3b82f6",
+    theme_bg: settings.themeBg || "#0a0a0a",
+    theme_bg_secondary: settings.themeBgSecondary || "#18181b",
+    theme_text: settings.themeText || "#ededed",
+    theme_text_secondary: settings.themeTextSecondary || "#a1a1aa",
+    theme_heading: settings.themeHeading || "#fafafa",
+    theme_border: settings.themeBorder || "#27272a",
+    theme_font: settings.themeFont || "Geist",
+    google_analytics_id: settings.googleAnalyticsId || "",
+    google_site_verification: settings.googleSiteVerification || "",
+    sentry_dsn: settings.sentryDsn || "",
   };
 
   return (

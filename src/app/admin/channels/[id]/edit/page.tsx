@@ -1,7 +1,5 @@
 import { notFound } from "next/navigation";
-import { connectDB } from "@/lib/mongodb";
-import Channel from "@/models/Channel";
-import Category from "@/models/Category";
+import { prisma } from "@/lib/prisma";
 import config from "@/config/instance";
 import ChannelForm from "../../ChannelForm";
 
@@ -13,30 +11,35 @@ export default async function EditChannelPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await connectDB();
 
   const [channel, categories] = await Promise.all([
-    Channel.findById(id).lean(),
-    Category.find({ active: true }).sort({ position: 1 }).select("name").lean(),
+    prisma.channel.findUnique({ where: { id } }),
+    prisma.category.findMany({
+      where: { active: true },
+      orderBy: { position: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   if (!channel) notFound();
 
   const cats = categories.map((c) => ({
-    _id: String(c._id),
+    _id: c.id,
     name: c.name,
   }));
 
+  const profileImageId = channel.profileImageBytes ? channel.id : "";
+
   const serialized = {
-    _id: String(channel._id),
+    _id: channel.id,
     name: channel.name,
     slug: channel.slug,
     bio: channel.bio || "",
-    category_id: channel.category_id ? String(channel.category_id) : null,
+    category_id: channel.categoryId ?? null,
     nsfw: channel.nsfw,
-    profile_image_url: channel.profile_image_url || "",
-    profile_image_id: channel.profile_image_id || "",
-    social_links: (channel.social_links as Record<string, string>) || {},
+    profile_image_url: channel.profileImageUrl || "",
+    profile_image_id: profileImageId,
+    social_links: (channel.socialLinks as Record<string, string>) || {},
     active: channel.active,
   };
 

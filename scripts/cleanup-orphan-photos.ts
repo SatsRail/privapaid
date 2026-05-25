@@ -1,5 +1,5 @@
 /**
- * Delete encrypted photo blobs in GridFS that no Media row references.
+ * Delete encrypted photo blobs that no Media row references.
  *
  * Usage:
  *   npx tsx scripts/cleanup-orphan-photos.ts                # default: 1h grace
@@ -8,7 +8,7 @@
  *   npx tsx scripts/cleanup-orphan-photos.ts --grace 86400 --dry-run
  *
  * Suitable for a daily cron. Exits 0 on success (including "nothing to do"),
- * 1 if MONGODB_URI is missing, 2 if any individual delete failed (the rest of
+ * 1 if DATABASE_URL is missing, 2 if any individual delete failed (the rest of
  * the run still proceeds — non-fatal so cron logs surface but don't escalate).
  *
  * Idempotent: safe to run as often as you like.
@@ -17,7 +17,7 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import mongoose from "mongoose";
+import { prisma } from "@/lib/prisma";
 import {
   cleanupOrphanEncryptedPhotos,
   DEFAULT_ORPHAN_GRACE_MS,
@@ -48,13 +48,11 @@ function parseArgs(argv: string[]) {
 async function main() {
   const { graceMs, dryRun } = parseArgs(process.argv.slice(2));
 
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    console.error("MONGODB_URI is not set");
+  if (!process.env.DATABASE_URL) {
+    console.error("DATABASE_URL is not set");
     process.exit(1);
   }
 
-  await mongoose.connect(uri);
   try {
     const start = Date.now();
     const result = await cleanupOrphanEncryptedPhotos({ graceMs, dryRun });
@@ -78,7 +76,7 @@ async function main() {
       process.exitCode = 2;
     }
   } finally {
-    await mongoose.disconnect();
+    await prisma.$disconnect();
   }
 }
 

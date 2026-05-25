@@ -1,18 +1,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import mongoose from "mongoose";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createChannel, createMedia } from "../../helpers/factories";
-import MediaProduct from "@/models/MediaProduct";
+import { prisma } from "@/lib/prisma";
 
 // Mock auth
 const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
-}));
-
-// Mock connectDB
-vi.mock("@/lib/mongodb", () => ({
-  connectDB: vi.fn().mockImplementation(async () => mongoose),
 }));
 
 // Mock satsrail client
@@ -71,7 +65,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = "ckmissingfakefakefakefake";
     const [req, ctx] = exportRequest(fakeId);
     const res = await GET(req, ctx);
     expect(res.status).toBe(404);
@@ -81,12 +75,9 @@ describe("GET /api/admin/channels/[id]/export", () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
-    const channel = await createChannel({
-      name: "Deleted",
-      slug: "deleted-ch",
-      deleted_at: new Date(),
-    });
-    const [req, ctx] = exportRequest(String(channel._id));
+    const channel = await createChannel({ name: "Deleted", slug: "deleted-ch" });
+    await prisma.channel.update({ where: { id: channel.id }, data: { deletedAt: new Date() } });
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     expect(res.status).toBe(404);
   });
@@ -97,7 +88,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
     });
     const channel = await createChannel({ name: "Empty Channel", slug: "empty-ch" });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     expect(res.status).toBe(200);
 
@@ -111,22 +102,21 @@ describe("GET /api/admin/channels/[id]/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Test Channel", slug: "test-ch" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "Episode 1",
       description: "First episode",
-      source_url: "https://example.com/ep1.mp4",
-      media_type: "video",
-      thumbnail_url: "https://example.com/thumb1.jpg",
+      sourceUrl: "https://example.com/ep1.mp4",
+      mediaType: "video",
       position: 1,
     });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "Episode 2",
-      source_url: "https://example.com/ep2.mp3",
-      media_type: "audio",
+      sourceUrl: "https://example.com/ep2.mp3",
+      mediaType: "audio",
       position: 2,
     });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 
@@ -137,7 +127,6 @@ describe("GET /api/admin/channels/[id]/export", () => {
       description: "First episode",
       source_url: "https://example.com/ep1.mp4",
       media_type: "video",
-      thumbnail_url: "https://example.com/thumb1.jpg",
       position: 1,
     });
     expect(body.media[0].ref).toBeDefined();
@@ -154,23 +143,25 @@ describe("GET /api/admin/channels/[id]/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Paid Channel", slug: "paid-ch" });
-    const media = await createMedia(String(channel._id), {
+    const media = await createMedia(channel.id, {
       name: "Premium Video",
-      source_url: "https://example.com/premium.mp4",
+      sourceUrl: "https://example.com/premium.mp4",
     });
 
-    await MediaProduct.create({
-      media_id: media._id,
-      satsrail_product_id: "prod_123",
-      encrypted_source_url: "encrypted-blob",
-      key_fingerprint: "fp_abc",
-      product_name: "Premium Access",
-      product_price_cents: 500,
-      product_currency: "USD",
-      product_access_duration_seconds: 86400,
+    await prisma.mediaProduct.create({
+      data: {
+        mediaId: media.id,
+        satsrailProductId: "prod_123",
+        encryptedSourceUrl: "encrypted-blob",
+        keyFingerprint: "fp_abc",
+        productName: "Premium Access",
+        productPriceCents: 500,
+        productCurrency: "USD",
+        productAccessDurationSeconds: 86400,
+      },
     });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 
@@ -188,12 +179,12 @@ describe("GET /api/admin/channels/[id]/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Free Channel", slug: "free-ch" });
-    await createMedia(String(channel._id), {
+    await createMedia(channel.id, {
       name: "Free Video",
-      source_url: "https://example.com/free.mp4",
+      sourceUrl: "https://example.com/free.mp4",
     });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 
@@ -206,10 +197,11 @@ describe("GET /api/admin/channels/[id]/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Mix Channel", slug: "mix-ch" });
-    await createMedia(String(channel._id), { name: "Active Media" });
-    await createMedia(String(channel._id), { name: "Deleted Media", deleted_at: new Date() });
+    await createMedia(channel.id, { name: "Active Media" });
+    const sd = await createMedia(channel.id, { name: "Deleted Media" });
+    await prisma.media.update({ where: { id: sd.id }, data: { deletedAt: new Date() } });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 
@@ -223,7 +215,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
     });
     const channel = await createChannel({ name: "My Channel", slug: "my-channel" });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const disposition = res.headers.get("Content-Disposition");
     expect(disposition).toBe('attachment; filename="channel-my-channel-export.json"');
@@ -234,11 +226,11 @@ describe("GET /api/admin/channels/[id]/export", () => {
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
     const channel = await createChannel({ name: "Sorted", slug: "sorted-ch" });
-    await createMedia(String(channel._id), { name: "Third", position: 3 });
-    await createMedia(String(channel._id), { name: "First", position: 1 });
-    await createMedia(String(channel._id), { name: "Second", position: 2 });
+    await createMedia(channel.id, { name: "Third", position: 3 });
+    await createMedia(channel.id, { name: "First", position: 1 });
+    await createMedia(channel.id, { name: "Second", position: 2 });
 
-    const [req, ctx] = exportRequest(String(channel._id));
+    const [req, ctx] = exportRequest(channel.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 
@@ -254,10 +246,10 @@ describe("GET /api/admin/channels/[id]/export", () => {
     });
     const channel1 = await createChannel({ name: "Channel A", slug: "ch-a" });
     const channel2 = await createChannel({ name: "Channel B", slug: "ch-b" });
-    await createMedia(String(channel1._id), { name: "Media A" });
-    await createMedia(String(channel2._id), { name: "Media B" });
+    await createMedia(channel1.id, { name: "Media A" });
+    await createMedia(channel2.id, { name: "Media B" });
 
-    const [req, ctx] = exportRequest(String(channel1._id));
+    const [req, ctx] = exportRequest(channel1.id);
     const res = await GET(req, ctx);
     const body = JSON.parse(await res.text());
 

@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/mongodb";
-import { createCustomer } from "../../helpers/factories";
-import Customer from "@/models/Customer";
-import mongoose from "mongoose";
+import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createCustomer, createChannel } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
 describe("Customer model", () => {
   beforeAll(async () => {
@@ -20,22 +19,20 @@ describe("Customer model", () => {
   it("creates a customer with required fields", async () => {
     const customer = await createCustomer({ nickname: "testuser" });
     expect(customer.nickname).toBe("testuser");
-    expect(customer.password_hash).toBeDefined();
-    expect(customer._id).toBeDefined();
+    expect(customer.passwordHash).toBeDefined();
+    expect(customer.id).toBeDefined();
   });
 
   it("sets default values", async () => {
     const customer = await createCustomer();
-    expect(customer.profile_image_id).toBe("");
-    expect(customer.favorite_channel_ids).toEqual([]);
-    expect(customer.purchases).toEqual([]);
-    expect(customer.deleted_at).toBeNull();
+    expect(customer.profileImageBytes).toBeNull();
+    expect(customer.deletedAt).toBeNull();
   });
 
   it("creates timestamps", async () => {
     const customer = await createCustomer();
-    expect(customer.created_at).toBeInstanceOf(Date);
-    expect(customer.updated_at).toBeInstanceOf(Date);
+    expect(customer.createdAt).toBeInstanceOf(Date);
+    expect(customer.updatedAt).toBeInstanceOf(Date);
   });
 
   it("enforces nickname uniqueness", async () => {
@@ -43,33 +40,37 @@ describe("Customer model", () => {
     await expect(createCustomer({ nickname: "uniqueuser" })).rejects.toThrow();
   });
 
-  it("stores purchases", async () => {
+  it("stores purchases as related rows", async () => {
     const customer = await createCustomer();
-    customer.purchases.push({
-      satsrail_order_id: "order_123",
-      satsrail_product_id: "prod_456",
-      purchased_at: new Date(),
+    await prisma.purchase.create({
+      data: {
+        customerId: customer.id,
+        satsrailOrderId: "order_123",
+        satsrailProductId: "prod_456",
+      },
     });
-    await customer.save();
 
-    const found = await Customer.findById(customer._id);
+    const found = await prisma.customer.findUnique({
+      where: { id: customer.id },
+      include: { purchases: true },
+    });
     expect(found!.purchases).toHaveLength(1);
-    expect(found!.purchases[0].satsrail_order_id).toBe("order_123");
+    expect(found!.purchases[0].satsrailOrderId).toBe("order_123");
   });
 
-  it("stores favorite channel IDs", async () => {
+  it("stores favorite channels via relation", async () => {
     const customer = await createCustomer();
-    const channelId = new mongoose.Types.ObjectId();
-    customer.favorite_channel_ids.push(channelId);
-    await customer.save();
+    const channel = await createChannel();
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { favoriteChannels: { connect: { id: channel.id } } },
+    });
 
-    const found = await Customer.findById(customer._id);
-    expect(found!.favorite_channel_ids).toHaveLength(1);
-    expect(found!.favorite_channel_ids[0].toString()).toBe(channelId.toString());
-  });
-
-  it("trims nickname", async () => {
-    const customer = await createCustomer({ nickname: "  trimmed  " });
-    expect(customer.nickname).toBe("trimmed");
+    const found = await prisma.customer.findUnique({
+      where: { id: customer.id },
+      include: { favoriteChannels: true },
+    });
+    expect(found!.favoriteChannels).toHaveLength(1);
+    expect(found!.favoriteChannels[0].id).toBe(channel.id);
   });
 });

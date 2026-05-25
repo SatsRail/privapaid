@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
+import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
-import {
-  getEncryptedPhotosBucket,
-  ALLOWED_IMAGE_TYPES,
-  MAX_IMAGE_SIZE,
-} from "@/lib/gridfs";
+import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/gridfs";
 import { rateLimit } from "@/lib/rate-limit";
 import { encryptBytes } from "@/lib/content-encryption";
 
@@ -13,7 +10,8 @@ import { encryptBytes } from "@/lib/content-encryption";
  * POST /api/admin/photos
  *
  * Uploads a photo, encrypts it under a fresh random DEK (data encryption key),
- * stores the ciphertext in GridFS, and returns the GridFS ID + the DEK.
+ * stores the ciphertext in the EncryptedPhotoBlob table, and returns the blob
+ * id + the DEK.
  *
  * The DEK is NOT persisted server-side. The client must immediately use it to
  * create a SatsRail product via /api/admin/media/[id]/create-product, which
@@ -91,16 +89,13 @@ export async function POST(req: NextRequest) {
     const dek = randomBytes(32);
     const ciphertext = encryptBytes(cleanBuffer, dek);
 
-    // Persist ciphertext in the encrypted_photos GridFS bucket
-    const bucket = await getEncryptedPhotosBucket();
-    const uploadStream = bucket.openUploadStream(
-      `enc_${detected.ext}_${Date.now()}`,
-      { metadata: { contentType: detected.mime, uploaded_by: auth.id } }
-    );
-    await new Promise<void>((resolve, reject) => {
-      uploadStream.on("finish", () => resolve());
-      uploadStream.on("error", (err) => reject(err));
-      uploadStream.end(ciphertext);
+    // Persist ciphertext as a row in the EncryptedPhotoBlob table.
+    const blob = await prisma.encryptedPhotoBlob.create({
+      data: {
+        bytes: ciphertext,
+        mimeType: detected.mime,
+      },
+      select: { id: true },
     });
 
     // Convert DEK to base64url so it round-trips cleanly through JSON +
@@ -114,7 +109,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        gridFsId: uploadStream.id.toString(),
+        // The legacy `gridFsId` name is preserved for client compatibility —
+        // it's just an opaque blob id from the client's perspective.
+        gridFsId: blob.id,
         dek: dekBase64url,
         mime: detected.mime,
       },

@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { connectDB } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 import { getInstanceConfig } from "@/config/instance";
-import Channel from "@/models/Channel";
-import Media from "@/models/Media";
 
 export const dynamic = "force-dynamic";
 
@@ -26,16 +24,24 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  await connectDB();
   const { domain, nsfw: nsfwAllowed, locale } = await getInstanceConfig();
 
-  const channel = await Channel.findOne({
-    slug,
-    active: true,
-    deleted_at: null,
-  })
-    .select("name bio profile_image_url profile_image_id nsfw updated_at")
-    .lean();
+  const channel = await prisma.channel.findFirst({
+    where: {
+      slug,
+      active: true,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      bio: true,
+      profileImageUrl: true,
+      profileImageBytes: true,
+      nsfw: true,
+      updatedAt: true,
+    },
+  });
 
   if (!channel) {
     return new NextResponse("Channel not found", { status: 404 });
@@ -44,33 +50,40 @@ export async function GET(
     return new NextResponse("Channel not found", { status: 404 });
   }
 
-  const mediaItems = await Media.find({
-    channel_id: channel._id,
-    deleted_at: null,
-  })
-    .select("_id name description thumbnail_url thumbnail_id media_type created_at")
-    .sort({ created_at: -1 })
-    .limit(FEED_LIMIT)
-    .lean();
+  const mediaItems = await prisma.media.findMany({
+    where: {
+      channelId: channel.id,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      thumbnailUrl: true,
+      thumbnailBytes: true,
+      mediaType: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: FEED_LIMIT,
+  });
 
   const baseUrl = `https://${domain}`;
   const channelUrl = `${baseUrl}/c/${slug}`;
   const feedUrl = `${channelUrl}/feed.xml`;
-  const channelImage = channel.profile_image_id
-    ? `${baseUrl}/api/images/${channel.profile_image_id}`
-    : channel.profile_image_url;
+  const channelImage = channel.profileImageBytes
+    ? `${baseUrl}/api/images/channel/${channel.id}`
+    : channel.profileImageUrl;
   const lastBuild = rfc822(
-    mediaItems[0]?.created_at instanceof Date
-      ? mediaItems[0].created_at
-      : (channel.updated_at instanceof Date ? channel.updated_at : new Date())
+    mediaItems[0]?.createdAt ?? channel.updatedAt ?? new Date()
   );
 
   const items = mediaItems
     .map((m) => {
-      const itemUrl = `${channelUrl}/${m._id}`;
-      const thumb = m.thumbnail_id
-        ? `${baseUrl}/api/images/${m.thumbnail_id}`
-        : m.thumbnail_url;
+      const itemUrl = `${channelUrl}/${m.id}`;
+      const thumb = m.thumbnailBytes
+        ? `${baseUrl}/api/images/media-thumbnail/${m.id}`
+        : m.thumbnailUrl;
       const descriptionHtml =
         (thumb ? `<p><img src="${escapeXml(thumb)}" alt="${escapeXml(m.name)}" /></p>` : "") +
         (m.description ? `<p>${escapeXml(m.description)}</p>` : "");
@@ -78,8 +91,8 @@ export async function GET(
       <title>${escapeXml(m.name)}</title>
       <link>${escapeXml(itemUrl)}</link>
       <guid isPermaLink="true">${escapeXml(itemUrl)}</guid>
-      <pubDate>${rfc822(m.created_at instanceof Date ? m.created_at : new Date())}</pubDate>
-      <category>${escapeXml(m.media_type)}</category>
+      <pubDate>${rfc822(m.createdAt)}</pubDate>
+      <category>${escapeXml(m.mediaType)}</category>
       <description><![CDATA[${descriptionHtml}]]></description>
     </item>`;
     })
