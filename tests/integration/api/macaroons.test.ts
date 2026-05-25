@@ -38,7 +38,7 @@ vi.mock("@/lib/merchant-key", () => ({
 // Intercept global fetch
 vi.stubGlobal("fetch", mockFetch);
 
-import { POST, DELETE, PUT } from "@/app/api/macaroons/route";
+import { POST, DELETE, PUT, GET } from "@/app/api/macaroons/route";
 
 function jsonRequest(method: string, body: Record<string, unknown>): NextRequest {
   return new NextRequest(new URL("http://localhost:3000/api/macaroons"), {
@@ -359,5 +359,95 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
 
     expect(res.status).toBe(502);
     expect(res.cookies.get("satsrail_macaroons")).toBeUndefined();
+  });
+});
+
+describe("Macaroons API — GET /api/macaroons", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCookieStore._clear();
+  });
+
+  it("returns empty list when no cookie is set", async () => {
+    const res = await GET();
+    const body = await res.json();
+    expect(body.products).toEqual([]);
+  });
+
+  it("returns product_ids only (never the macaroon strings), newest first", async () => {
+    const map = {
+      old_prod: { m: "mac_old", t: 1000 },
+      new_prod: { m: "mac_new", t: 2000 },
+    };
+    mockCookieStore._set("satsrail_macaroons", JSON.stringify(map));
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.products).toHaveLength(2);
+    expect(body.products[0].product_id).toBe("new_prod");
+    expect(body.products[0].stored_at).toBe(2000);
+    expect(body.products[1].product_id).toBe("old_prod");
+    // Macaroon strings must NOT leak.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("mac_old");
+    expect(serialized).not.toContain("mac_new");
+  });
+
+  it("filters out entries without a macaroon field", async () => {
+    const map = {
+      valid_prod: { m: "mac_v", t: 100 },
+      empty_prod: { m: "", t: 200 },
+    };
+    mockCookieStore._set("satsrail_macaroons", JSON.stringify(map));
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.products).toHaveLength(1);
+    expect(body.products[0].product_id).toBe("valid_prod");
+  });
+});
+
+describe("Macaroons API — CSRF + rate-limit guards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCookieStore._clear();
+  });
+
+  function badOriginRequest(method: string, body: Record<string, unknown>): NextRequest {
+    return new NextRequest(new URL("http://localhost:3000/api/macaroons"), {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        // Mismatched origin to trigger checkOrigin failure.
+        origin: "https://evil.example.com",
+        host: "localhost:3000",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("POST returns CSRF failure when origin mismatches host", async () => {
+    const res = await POST(badOriginRequest("POST", { product_id: "p", macaroon: "m" }));
+    expect([403, 400]).toContain(res.status);
+  });
+
+  it("DELETE returns CSRF failure when origin mismatches host", async () => {
+    const res = await DELETE(badOriginRequest("DELETE", { product_id: "p" }));
+    expect([403, 400]).toContain(res.status);
+  });
+
+  it("PUT returns CSRF failure when origin mismatches host", async () => {
+    const res = await PUT(badOriginRequest("PUT", { product_id: "p" }));
+    expect([403, 400]).toContain(res.status);
+  });
+
+  it("POST rejects an oversized macaroon with 413", async () => {
+    // Build a string just over the per-entry cap (MAX_BYTES ≈ 3.5KB; one
+    // macaroon larger than MAX_BYTES alone trips the insertWithCap throw).
+    const huge = "x".repeat(8000);
+    const req = jsonRequest("POST", { product_id: "p_huge", macaroon: huge });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
   });
 });

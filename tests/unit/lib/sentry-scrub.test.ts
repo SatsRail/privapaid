@@ -171,6 +171,53 @@ describe("sentry-scrub", () => {
       expect(data.url).toBe("https://satsrail.com/api/v1/products");
     });
 
+    it("scrubs event.contexts", () => {
+      const event: ErrorEvent = {
+        contexts: {
+          state: { satsrail_api_key: "sk_live_leak", other: "ok" },
+        },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      const state = event.contexts!.state as Record<string, unknown>;
+      expect(String(state.satsrail_api_key)).toContain(SCRUB_MARKER);
+      expect(state.other).toBe("ok");
+    });
+
+    it("scrubs event.tags", () => {
+      const event: ErrorEvent = {
+        tags: { password: "leaked-pw", environment: "production" },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      expect(String(event.tags!.password)).toContain(SCRUB_MARKER);
+      expect(event.tags!.environment).toBe("production");
+    });
+
+    it("scrubs event.user", () => {
+      const event: ErrorEvent = {
+        user: { id: "u1", authorization: "Bearer x" },
+      } as unknown as ErrorEvent;
+      scrubEvent(event);
+      expect(String(event.user!.authorization)).toContain(SCRUB_MARKER);
+      expect(event.user!.id).toBe("u1");
+    });
+
+    it("skips breadcrumbs whose data is missing", () => {
+      const event: ErrorEvent = {
+        breadcrumbs: [
+          { category: "navigation" } as Breadcrumb,
+          {
+            category: "fetch",
+            data: { authorization: "Bearer leak" },
+          } as Breadcrumb,
+        ],
+      } as unknown as ErrorEvent;
+      // Should not throw on the data-less crumb.
+      scrubEvent(event);
+      expect(String(event.breadcrumbs![1].data!.authorization)).toContain(
+        SCRUB_MARKER
+      );
+    });
+
     it("scrubs the Phase 5 plaintext recovery fields", () => {
       const event: ErrorEvent = {
         extra: {

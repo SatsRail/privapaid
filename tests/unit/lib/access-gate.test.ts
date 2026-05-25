@@ -576,5 +576,38 @@ describe("access-gate", () => {
       const result = await verifyMacaroonAccess(["prod_1"]);
       expect(result.granted).toBe(false);
     });
+
+    it("returns not granted when portal returns 200 but valid:false (treat as bad_body)", async () => {
+      mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_x" }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: false, remaining_seconds: 100 }),
+      });
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(false);
+    });
+
+    it("returns not granted when remaining_seconds is zero or missing", async () => {
+      mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_y" }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, remaining_seconds: 0, key: "k" }),
+      });
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(false);
+    });
+
+    it("returns not granted when remaining_seconds is not a number", async () => {
+      mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "mac_z" }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, remaining_seconds: "many", key: "k" }),
+      });
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(false);
+    });
   });
 });

@@ -296,6 +296,67 @@ describe("Comments API — POST /api/media/[id]/comments", () => {
     expect(res.status).toBe(400);
   });
 
+  it("creates a comment via macaroon (anonymous paid customer, no session)", async () => {
+    const { mediaId } = await seedWithProduct();
+    mockAuth.mockResolvedValue(null);
+    const accessGate = await import("@/lib/access-gate");
+    const spy = vi.spyOn(accessGate, "verifyMacaroonAccess").mockResolvedValueOnce({
+      granted: true,
+      productId: "prod_abc",
+      key: "k",
+      remainingSeconds: 3600,
+    });
+
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
+      body: "Anonymous payer here",
+      nickname: "anon-buyer",
+    });
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(201);
+    expect((await res.json()).customer.nickname).toBe("anon-buyer");
+    spy.mockRestore();
+  });
+
+  it("returns 400 when macaroon path lacks a nickname", async () => {
+    const { mediaId } = await seedWithProduct();
+    mockAuth.mockResolvedValue(null);
+    const accessGate = await import("@/lib/access-gate");
+    const spy = vi.spyOn(accessGate, "verifyMacaroonAccess").mockResolvedValueOnce({
+      granted: true,
+      productId: "prod_abc",
+      key: "k",
+      remainingSeconds: 3600,
+    });
+
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
+      body: "Nickname please",
+    });
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/nickname required/i);
+    spy.mockRestore();
+  });
+
+  it("non-customer session falls through to macaroon check", async () => {
+    const { mediaId } = await seedWithProduct();
+    // Admin trying to comment — has session but role != customer.
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", name: "admin", role: "admin" },
+    });
+    const accessGate = await import("@/lib/access-gate");
+    const spy = vi.spyOn(accessGate, "verifyMacaroonAccess").mockResolvedValueOnce({
+      granted: false,
+    });
+
+    const req = jsonRequest(`http://localhost:3000/api/media/${mediaId}/comments`, "POST", {
+      body: "admin trying to comment",
+      nickname: "admin",
+    });
+    const res = await createComment(req, { params: Promise.resolve({ id: mediaId }) });
+    expect(res.status).toBe(401);
+    spy.mockRestore();
+  });
+
   it("authenticated path ignores submittedNickname (anti-impersonation)", async () => {
     const { mediaId, productId } = await seedWithProduct();
 
