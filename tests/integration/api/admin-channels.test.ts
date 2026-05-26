@@ -163,5 +163,41 @@ describe("Admin Channels list/create routes", () => {
       const body = await res.json();
       expect(body.error).toBe("Validation failed");
     });
+
+    it("registers SatsRail product type with the auto-assigned ch_<ref>", async () => {
+      // The route inserts the channel first (Postgres autoincrement
+      // assigns ref), then calls satsrail.createProductType with
+      // external_ref = ch_<channel.ref>. If that handshake ever skips a
+      // step, the portal can't reach back into this PrivaPaid channel.
+      const req = buildPostRequest({ name: "Rail Channel", slug: "rail-ch" });
+      const res = await POST(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(mockSatsrailClient.createProductType).toHaveBeenCalledTimes(1);
+      expect(mockSatsrailClient.createProductType).toHaveBeenCalledWith(
+        "sk_test_key",
+        expect.objectContaining({
+          name: "Rail Channel",
+          external_ref: `ch_${body.data.ref}`,
+        })
+      );
+      expect(body.data.satsrailProductTypeId).toBe("pt_123");
+    });
+
+    it("still creates the local channel when SatsRail product-type registration fails", async () => {
+      // SatsRail outages must not block local channel creation — operators
+      // can retry the rail sync from the admin UI. The channel persists
+      // with satsrailProductTypeId = null.
+      mockSatsrailClient.createProductType.mockRejectedValueOnce(new Error("rail down"));
+
+      const req = buildPostRequest({ name: "Offline Channel", slug: "offline-ch" });
+      const res = await POST(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(body.data.slug).toBe("offline-ch");
+      expect(body.data.satsrailProductTypeId).toBeNull();
+    });
   });
 });

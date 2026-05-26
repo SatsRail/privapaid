@@ -144,6 +144,34 @@ describe("POST /api/admin/settings/reset", () => {
     );
   });
 
+  it("issues setval() on both ref sequences so refs restart from 1", async () => {
+    // Spy on raw SQL to confirm the route restarts both sequences. We
+    // can't assert the post-reset sequence value directly from another
+    // transaction — parallel vitest workers share the DB and `nextval`
+    // is intentionally lock-free, so the value the next query observes
+    // is racy by design. What we *can* assert is that the route emitted
+    // the right setval() statements inside its reset transaction.
+    const execSpy = vi.spyOn(prisma, "$executeRawUnsafe");
+    try {
+      await createChannel({ name: "Pre-reset", slug: "pre-ch" });
+
+      const res = await POST(resetRequest({ confirm: "RESET" }));
+      expect(res.status).toBe(200);
+
+      const stmts = execSpy.mock.calls.map((c) => c[0] as string);
+      const setvalStmts = stmts.filter((s) => s.includes("setval"));
+      expect(setvalStmts.length).toBeGreaterThanOrEqual(2);
+      expect(
+        setvalStmts.some((s) => s.includes('pg_get_serial_sequence(\'"Channel"\'')),
+      ).toBe(true);
+      expect(
+        setvalStmts.some((s) => s.includes('pg_get_serial_sequence(\'"Media"\'')),
+      ).toBe(true);
+    } finally {
+      execSpy.mockRestore();
+    }
+  });
+
   it("returns 500 when the underlying truncate throws (outer catch)", async () => {
     // Replace $transaction with a one-shot thrower so the reset route's
     // outer catch fires. Testcontainers Postgres stays up.

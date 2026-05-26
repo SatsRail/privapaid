@@ -23,6 +23,25 @@ describe("Channel model", () => {
     expect(channel.id).toBeDefined();
   });
 
+  it("auto-assigns ref via the Postgres sequence when omitted", async () => {
+    // The migration sets Channel.ref's default to nextval(channel_ref_seq),
+    // so callers can omit ref entirely. The factory relies on this. If the
+    // sequence is missing or unbound, this test fails with a NOT NULL
+    // violation — which is exactly the alarm bell we want.
+    const a = await prisma.channel.create({
+      data: { name: "Seq A", slug: "seq-a" },
+    });
+    const b = await prisma.channel.create({
+      data: { name: "Seq B", slug: "seq-b" },
+    });
+    expect(typeof a.ref).toBe("number");
+    expect(typeof b.ref).toBe("number");
+    // Strict monotonicity is the contract — parallel vitest workers can
+    // bump the shared sequence between these two inserts, so we don't
+    // assert `a.ref + 1` exactly.
+    expect(b.ref).toBeGreaterThan(a.ref);
+  });
+
   it("sets default values", async () => {
     const channel = await prisma.channel.create({
       data: {
