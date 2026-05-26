@@ -168,7 +168,7 @@ The fastest path to production. Railway handles Docker builds, Postgres, and SSL
 
 ### 1. Deploy
 
-Click the button in [README.md](README.md) or visit [railway.com/deploy](https://railway.com/deploy/j2B0mN?referralCode=6xvEI7).
+Click the button in [README.md](README.md) or visit [railway.com/deploy](https://railway.com/deploy/53Raga?referralCode=6xvEI7&utm_medium=integration&utm_source=template&utm_campaign=generic).
 
 Railway creates two services:
 - **App** — built from the Dockerfile in this repo (entrypoint runs `prisma migrate deploy` before starting)

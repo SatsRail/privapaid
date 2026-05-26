@@ -36,7 +36,7 @@ Encryption keys and auth secrets are generated automatically on first run.
 
 ### Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/j2B0mN?referralCode=6xvEI7)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/53Raga?referralCode=6xvEI7&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 One click spins up the app + Postgres from the template. Railway prompts for the required environment variables during deploy.
 
