@@ -36,6 +36,12 @@ Encryption keys and auth secrets are generated automatically on first run.
 
 ### Railway
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/j2B0mN?referralCode=6xvEI7)
+
+One click spins up the app + Postgres from the template. Railway prompts for the required environment variables during deploy.
+
+If you'd rather deploy your own fork manually:
+
 1. **Create the project:** in [Railway](https://railway.com/), click **New Project** → **Deploy from GitHub repo** → pick your fork of `privapaid`. Railway will detect the `Dockerfile` and start a build.
 2. **Add Postgres:** on the project canvas, click **+ Create** → **Database** → **Add PostgreSQL**.
 3. **Generate secrets locally:**
