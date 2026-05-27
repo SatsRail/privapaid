@@ -12,6 +12,11 @@ process.env.DATABASE_URL =
 // Test environment variables
 process.env.SK_ENCRYPTION_KEY =
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+// 32-byte (base64) KEK used by content-dek.ts to wrap per-content DEKs.
+// Articles + photos create at the API level call `wrapDek` which loads this
+// at first use. content-dek.test.ts manages its own KEK via _resetKekCache.
+process.env.CONTENT_KEK =
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 process.env.AUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
 process.env.NEXTAUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
 process.env.NEXTAUTH_URL = "http://localhost:3000";
