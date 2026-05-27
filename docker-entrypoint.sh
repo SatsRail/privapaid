@@ -94,24 +94,77 @@ fi
 # window): run `npx prisma migrate deploy` as a separate deploy hook or
 # manual step so a slow migration can't time out the container boot and
 # leave _prisma_migrations in a half-applied state.
+#
+# P3009 auto-heal: when `migrate deploy` exits with P3009 (a row in
+# _prisma_migrations has started_at but no finished_at), we attempt a
+# narrowly-scoped automatic repair IFF the database schema is verifiably
+# empty — i.e. every locally-defined migration shows up in `migrate status`
+# as either pending or as the failed one(s). In that case the failed
+# transaction rolled back at the database layer and the `_prisma_migrations`
+# row is a ghost left from Prisma's record-then-execute ordering, safe to
+# clear. If ANY migration has previously applied successfully, we refuse to
+# auto-heal and demand manual repair.
+#
+# Set PRISMA_AUTO_RESOLVE=false to disable this path.
 if [ "${RUN_MIGRATIONS:-true}" = "true" ] && [ -n "$DATABASE_URL" ]; then
-  echo "Checking migration status..."
-  status_output=$(npx prisma migrate status 2>&1 || true)
-  echo "$status_output"
+  echo "Applying pending migrations..."
+  deploy_output=$(npx prisma migrate deploy 2>&1)
+  deploy_exit=$?
+  echo "$deploy_output"
 
-  # Fail fast on failed / partially-applied migrations. A previous deploy
-  # killed mid-migration (container reaper, platform timeout, OOM) leaves a
-  # row in _prisma_migrations with started_at but no finished_at and no
-  # rolled_back_at. `migrate deploy` will refuse to proceed (Prisma error
-  # P3009); without this guard the entrypoint exits non-zero AT THE DEPLOY
-  # STEP rather than the status step, which still works but is one round-
-  # trip slower per restart. Catching at status reads cleaner in the log.
-  if echo "$status_output" | grep -qE "in a failed state|partially applied|found failed migrations|migration .* failed"; then
-    cat <<EOF
+  if [ "$deploy_exit" -ne 0 ]; then
+    if echo "$deploy_output" | grep -q "P3009" && [ "${PRISMA_AUTO_RESOLVE:-true}" = "true" ]; then
+      # Extract failed migration names from the P3009 error output. Each
+      # appears as: "The `<name>` migration started at <ts> failed".
+      failed_migrations=$(echo "$deploy_output" | grep -oE 'The `[^`]+` migration started' | sed -E 's/^The `(.*)` migration started$/\1/')
+
+      if [ -z "$failed_migrations" ]; then
+        echo "FATAL: P3009 reported but no failed migration name was parseable from output." >&2
+        exit 1
+      fi
+
+      status_output=$(npx prisma migrate status 2>&1 || true)
+      # "have not yet been applied:" section lists pending migrations, one per
+      # line, until the next blank line.
+      pending=$(echo "$status_output" | awk '/have not yet been applied:/{flag=1; next} flag && /^[[:space:]]*$/{flag=0} flag' | grep -E '^[0-9]+_' || true)
+      local_migrations=$(ls -1 prisma/migrations 2>/dev/null | grep -E '^[0-9]+_' | sort)
+
+      safe_to_resolve=true
+      for m in $local_migrations; do
+        if ! echo "$pending" | grep -qFx "$m" && ! echo "$failed_migrations" | grep -qFx "$m"; then
+          safe_to_resolve=false
+          break
+        fi
+      done
+
+      if [ "$safe_to_resolve" = "true" ]; then
+        cat <<EOF
 
 ============================================================
-FATAL: Database has migrations in a failed or stuck state.
-       prisma migrate deploy will not proceed.
+P3009 detected, schema verified empty (no migrations have ever
+applied successfully). Auto-resolving stuck migration(s) so the
+next deploy retries them cleanly:
+EOF
+        for m in $failed_migrations; do
+          echo "  Marking $m as rolled-back..."
+          if ! npx prisma migrate resolve --rolled-back "$m"; then
+            echo "FATAL: prisma migrate resolve --rolled-back $m failed." >&2
+            exit 1
+          fi
+        done
+        echo "Retrying migrate deploy..."
+        if ! npx prisma migrate deploy; then
+          echo "FATAL: prisma migrate deploy failed after auto-resolve." >&2
+          exit 1
+        fi
+        echo "============================================================"
+      else
+        cat <<EOF
+
+============================================================
+FATAL: prisma migrate deploy failed (P3009), and the database
+       has previously-applied migrations — refusing to auto-
+       resolve a stuck migration on a non-empty schema.
 
 Diagnose by inspecting _prisma_migrations:
   SELECT migration_name, started_at, finished_at, rolled_back_at
@@ -123,17 +176,15 @@ Repair options:
       npx prisma migrate resolve --applied <migration_name>
   - If it applied nothing and you want to retry on next deploy:
       npx prisma migrate resolve --rolled-back <migration_name>
-  - On an empty database (no app tables yet) the simplest fix is:
-      DELETE FROM "_prisma_migrations" WHERE finished_at IS NULL;
-    then redeploy.
+
+Set PRISMA_AUTO_RESOLVE=false to silence this path if you
+already plan to repair manually.
 ============================================================
 EOF
-    exit 1
-  fi
-
-  echo "Applying pending migrations..."
-  if ! npx prisma migrate deploy; then
-    cat <<EOF
+        exit 1
+      fi
+    else
+      cat <<EOF
 
 FATAL: prisma migrate deploy failed (see error above).
        If the process was killed mid-migration (platform timeout,
@@ -141,7 +192,8 @@ FATAL: prisma migrate deploy failed (see error above).
        entry. Resolve it before redeploying — the entrypoint will
        refuse to start on the next deploy until you do.
 EOF
-    exit 1
+      exit 1
+    fi
   fi
 fi
 
