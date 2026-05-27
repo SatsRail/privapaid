@@ -9,7 +9,7 @@ For architecture, encryption design, and code-coupled documentation, see [`docs/
 - [[Deploy on Railway]] — one-click template, the fastest path to production
 - [[Deploy on EC2]] — `t3.small` + Docker Compose, the simplest VM setup
 - [[Deploy on Elastic Beanstalk]] — for teams already on AWS EB
-- [[Postgres: managed vs local]] — Provider trade-offs
+- [[Postgres Managed vs Local]] — provider trade-offs
 
 ## Operations
 
@@ -28,6 +28,6 @@ For architecture, encryption design, and code-coupled documentation, see [`docs/
 
 ## Reference
 
-- [Architecture (docs/ENCRYPTION.md)](https://github.com/SatsRail/privapaid/blob/main/docs/ENCRYPTION.md) — canonical encryption design
+- [Architecture — docs/ENCRYPTION.md](https://github.com/SatsRail/privapaid/blob/main/docs/ENCRYPTION.md) — canonical encryption design
 - [Changelog](https://github.com/SatsRail/privapaid/blob/main/CHANGELOG.md)
-- [License (FSL-1.1-ALv2)](https://github.com/SatsRail/privapaid/blob/main/LICENSE)
+- [License — FSL-1.1-ALv2](https://github.com/SatsRail/privapaid/blob/main/LICENSE)

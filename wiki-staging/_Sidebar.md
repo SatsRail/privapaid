@@ -3,7 +3,7 @@
 - [[Deploy on Railway]]
 - [[Deploy on EC2]]
 - [[Deploy on Elastic Beanstalk]]
-- [[Postgres: managed vs local]]
+- [[Postgres Managed vs Local]]
 
 **Operations**
 - [[Operator Playbook]]
