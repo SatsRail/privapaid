@@ -102,11 +102,11 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ] && [ -n "$DATABASE_URL" ]; then
   # Fail fast on failed / partially-applied migrations. A previous deploy
   # killed mid-migration (container reaper, platform timeout, OOM) leaves a
   # row in _prisma_migrations with started_at but no finished_at and no
-  # rolled_back_at. `migrate deploy` will refuse to proceed; without this
-  # guard the entrypoint exits non-zero and the healthcheck loops silently
-  # until the deploy window expires. Surface the state explicitly with
-  # repair instructions instead.
-  if echo "$status_output" | grep -qE "in a failed state|partially applied"; then
+  # rolled_back_at. `migrate deploy` will refuse to proceed (Prisma error
+  # P3009); without this guard the entrypoint exits non-zero AT THE DEPLOY
+  # STEP rather than the status step, which still works but is one round-
+  # trip slower per restart. Catching at status reads cleaner in the log.
+  if echo "$status_output" | grep -qE "in a failed state|partially applied|found failed migrations|migration .* failed"; then
     cat <<EOF
 
 ============================================================
