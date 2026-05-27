@@ -3,7 +3,7 @@ import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/pos
 import { prisma } from "@/lib/prisma";
 
 /**
- * The viewer media page surfaces `Media.blob.blobId` to the client only when
+ * The viewer media page surfaces `Media.blob.envelopeId` to the client only when
  * `mediaType === "photo"` — for other types the blob (URL / markdown) is the
  * plaintext and must stay server-side. These tests assert that conditional.
  */
@@ -20,7 +20,7 @@ describe("Viewer page query for photo media", () => {
     await clearCollections();
   });
 
-  it("photo media exposes the blobId via Media.blob.blobId", async () => {
+  it("photo media exposes the blobId via Media.blob.envelopeId", async () => {
     const channel = await prisma.channel.create({
       data: {
         ref: 1,
@@ -30,7 +30,7 @@ describe("Viewer page query for photo media", () => {
       },
     });
 
-    const blobId = "blob-id-12345";
+    const envelopeIdValue = "env-id-12345";
     const media = await prisma.media.create({
       data: {
         ref: 1,
@@ -39,7 +39,7 @@ describe("Viewer page query for photo media", () => {
         mediaType: "photo",
         blob: {
           kind: "photo",
-          blobId,
+          envelopeId: envelopeIdValue,
           encryptedDek: "test_dek",
           mimeType: "image/jpeg",
         },
@@ -52,15 +52,15 @@ describe("Viewer page query for photo media", () => {
 
     expect(fetched).not.toBeNull();
     expect(fetched!.mediaType).toBe("photo");
-    const blob = fetched!.blob as { kind: string; blobId: string };
+    const blob = fetched!.blob as { kind: string; envelopeId: string };
     expect(blob.kind).toBe("photo");
-    expect(blob.blobId).toBe(blobId);
+    expect(blob.envelopeId).toBe(envelopeIdValue);
 
-    // Mirrors the page-level conditional that surfaces photo_gridfs_id only
-    // when the media is a photo.
-    const photoGridFsId =
-      fetched!.mediaType === "photo" ? blob.blobId : undefined;
-    expect(photoGridFsId).toBe(blobId);
+    // Mirrors the page-level conditional that surfaces envelope_id only
+    // for envelope-encrypted media kinds.
+    const envelopeId =
+      fetched!.mediaType === "photo" ? blob.envelopeId : undefined;
+    expect(envelopeId).toBe(envelopeIdValue);
   });
 
   it("non-photo media's blob plaintext stays server-side via the conditional", async () => {
@@ -89,11 +89,11 @@ describe("Viewer page query for photo media", () => {
     });
 
     // For non-photo media the conditional yields undefined.
-    const photoGridFsId =
+    const envelopeId =
       fetched!.mediaType === "photo"
         ? (fetched!.blob as { blobId?: string }).blobId
         : undefined;
-    expect(photoGridFsId).toBeUndefined();
+    expect(envelopeId).toBeUndefined();
     const blob = fetched!.blob as { kind: string; url?: string };
     expect(blob.url).toBe(secretUrl);
   });
@@ -111,7 +111,12 @@ describe("Viewer page query for photo media", () => {
       });
       const blob =
         mediaType === "article"
-          ? { kind: "markdown", body: `internal ${mediaType} body` }
+          ? {
+              kind: "article",
+              envelopeId: `env_${mediaType}_test`,
+              encryptedDek: "test_dek",
+              mimeType: "text/markdown; charset=utf-8",
+            }
           : { kind: "url", url: `https://internal.example.com/${mediaType}.bin` };
       const media = await prisma.media.create({
         data: {
@@ -127,11 +132,12 @@ describe("Viewer page query for photo media", () => {
         where: { id: media.id, channelId: channel.id },
       });
 
-      const photoGridFsId =
+      // url-backed media has no envelopeId in its blob shape.
+      const envelopeId =
         fetched!.mediaType === "photo"
-          ? (fetched!.blob as { blobId?: string }).blobId
+          ? (fetched!.blob as { envelopeId?: string }).envelopeId
           : undefined;
-      expect(photoGridFsId).toBeUndefined();
+      expect(envelopeId).toBeUndefined();
     });
   }
 });

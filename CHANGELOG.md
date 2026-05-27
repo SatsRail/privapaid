@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (licensing)
+
+- **License switched from MIT to FSL-1.1-ALv2** ([Functional Source License](https://fsl.software/),
+  version 1.1, Apache 2.0 future grant). PrivaPaid remains source-available
+  and free to self-host, fork, modify, and use commercially — including for
+  client work and internal deployments. The license restricts only **Competing
+  Use**: offering PrivaPaid as a hosted product or service that substitutes
+  for SatsRail's offering. Two years after each release, that release
+  additionally becomes available under Apache 2.0. See [LICENSE](LICENSE) for
+  the full text.
+
 ### Removed (breaking)
 
 - **Customer account feature removed.** Nickname-based customer login, the

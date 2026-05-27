@@ -173,7 +173,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
 
     // Fetch the bytes that the route persisted and verify they're NOT the
     // original plaintext.
-    const blob = await prisma.encryptedPhotoBlob.findUnique({
+    const blob = await prisma.encryptedEnvelope.findUnique({
       where: { id: body.gridFsId },
       select: { bytes: true },
     });
@@ -196,7 +196,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     // Round-trip: take the ciphertext from Postgres + the returned DEK
     // and confirm the original plaintext comes back. This is the strongest
     // end-to-end guarantee — if it fails, the photo is unrecoverable.
-    const blob = await prisma.encryptedPhotoBlob.findUnique({
+    const blob = await prisma.encryptedEnvelope.findUnique({
       where: { id: body.gridFsId },
       select: { bytes: true },
     });
@@ -215,7 +215,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     const body = await res.json();
     expect(res.status).toBe(201);
 
-    const blob = await prisma.encryptedPhotoBlob.findUnique({
+    const blob = await prisma.encryptedEnvelope.findUnique({
       where: { id: body.gridFsId },
     });
     expect(blob).not.toBeNull();
@@ -232,7 +232,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     expect(body1.dek).not.toBe(body2.dek);
     // And the persisted ciphertexts should differ (fresh DEK → fresh IV →
     // different ciphertext even for identical plaintext).
-    const blobs = await prisma.encryptedPhotoBlob.findMany({
+    const blobs = await prisma.encryptedEnvelope.findMany({
       where: { id: { in: [body1.gridFsId, body2.gridFsId] } },
       select: { id: true, bytes: true },
     });

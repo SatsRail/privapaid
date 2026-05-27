@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl } from "@/lib/content-encryption";
+import { unwrapDekToBase64url } from "@/lib/content-dek";
 import { satsrail } from "@/lib/satsrail";
 import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
 
@@ -14,8 +15,12 @@ import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob
  * 2. Create the product on SatsRail with external_ref: md_{media.ref},
  *    using the channel's product type.
  * 3. Fetch the product key.
- * 4. Encrypt the plaintext (URL / markdown body / wrapped DEK) under the
- *    product key with AAD = the SatsRail product UUID.
+ * 4. Encrypt the plaintext under the product key with AAD = the SatsRail
+ *    product UUID. Plaintext per media kind:
+ *      - url media: the URL string
+ *      - photo / article: the raw DEK (base64url) — recovered from the
+ *        request body for photos (envelope upload returned it) or by
+ *        unwrapping Media.blob.encryptedDek with CONTENT_KEK for articles.
  * 5. Write Product + MediaEncryptedBlob in one transaction.
  */
 export async function POST(
@@ -94,13 +99,20 @@ export async function POST(
     const { key, key_fingerprint } = await satsrail.getProductKey(skLive, product.id);
 
     // 3. Derive the plaintext to encrypt.
-    //    - Photo: the per-photo DEK the client supplied.
-    //    - Everything else: URL / markdown body via Media.blob.
-    const plaintext =
-      media.mediaType === "photo"
-        ? (dek as string)
-        : plaintextForEncryption(parseMediaBlob(media.blob));
-    const encryptedSourceUrl = encryptSourceUrl(plaintext, key, product.id);
+    //    - Photo:   the per-photo DEK the client supplied.
+    //    - Article: the per-article DEK, recovered by unwrapping
+    //               Media.blob.encryptedDek with CONTENT_KEK.
+    //    - URL kinds: the URL string via Media.blob.
+    const blob = parseMediaBlob(media.blob);
+    let plaintext: string;
+    if (media.mediaType === "photo") {
+      plaintext = dek as string;
+    } else if (blob.kind === "article") {
+      plaintext = unwrapDekToBase64url(blob.encryptedDek);
+    } else {
+      plaintext = plaintextForEncryption(blob);
+    }
+    const encryptedSource = encryptSourceUrl(plaintext, key, product.id);
 
     // 4. Write Product + MediaEncryptedBlob atomically.
     const result = await prisma.$transaction(async (tx) => {
@@ -123,7 +135,7 @@ export async function POST(
         data: {
           productId: productRow.id,
           mediaId,
-          encryptedSourceUrl,
+          encryptedSource,
           keyFingerprint: key_fingerprint,
         },
       });

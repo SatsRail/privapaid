@@ -1,25 +1,26 @@
 /**
- * KEK-based wrapping for per-photo DEKs.
+ * KEK-based wrapping for per-content DEKs.
  *
- * Photos are stored ciphertext-at-rest in the EncryptedPhotoBlob table under a random 32-byte DEK
- * (data encryption key). The DEK is then wrapped — historically only under
- * each SatsRail product key (envelope encryption), which forced a SatsRail
- * round-trip every time we needed to create a new product covering a photo
- * and made the "decrypt with an existing product to recover the DEK" step
- * a single point of failure (no existing product → can't create another).
+ * Envelope-encrypted content (photos, articles) is stored ciphertext-at-rest
+ * in the EncryptedEnvelope table under a random 32-byte DEK (data encryption
+ * key). The DEK is then wrapped — historically only under each SatsRail
+ * product key (envelope encryption), which forced a SatsRail round-trip every
+ * time we needed to create a new product covering the content and made the
+ * "decrypt with an existing product to recover the DEK" step a single point
+ * of failure (no existing product → can't create another).
  *
- * This module persists a second copy of the wrapped DEK on the Media doc
+ * This module persists a second copy of the wrapped DEK on the Media row
  * itself, wrapped under an operator-held KEK (key encryption key) from the
- * PHOTO_KEK env var. Creating new products becomes a single-step operation
- * with no SatsRail round-trip for the DEK, and "photo has no MediaProduct
+ * CONTENT_KEK env var. Creating new products becomes a single-step operation
+ * with no SatsRail round-trip for the DEK, and "no existing MediaEncryptedBlob
  * yet" stops being a blocker.
  *
- * Threat model: a database-only snapshot leak still does NOT expose photo
- * content, because the KEK lives in the operator's environment, not the
- * database. If the operator's infrastructure is compromised end-to-end
- * (DB + env), photos are exposed — but at that point the merchant API key
- * is also compromised, so the previous wrap-only-under-product-key model
- * gave no additional protection either.
+ * Threat model: a database-only snapshot leak still does NOT expose content,
+ * because the KEK lives in the operator's environment, not the database. If
+ * the operator's infrastructure is compromised end-to-end (DB + env), content
+ * is exposed — but at that point the merchant API key is also compromised, so
+ * the previous wrap-only-under-product-key model gave no additional protection
+ * either.
  */
 
 import { encryptBytes, decryptBytes } from "@/lib/content-encryption";
@@ -30,27 +31,27 @@ const DEK_LENGTH = 32;
 let cachedKek: Buffer | null = null;
 
 /**
- * Load and validate the PHOTO_KEK from the environment.
+ * Load and validate the CONTENT_KEK from the environment.
  *
  * Accepts both standard Base64 and URL-safe Base64. Caches after first read
  * — the env doesn't change at runtime.
  *
- * Throws if PHOTO_KEK is missing or doesn't decode to exactly 32 bytes.
+ * Throws if CONTENT_KEK is missing or doesn't decode to exactly 32 bytes.
  * Generate one with: `openssl rand -base64 32`
  */
 function loadKek(): Buffer {
   if (cachedKek) return cachedKek;
-  const raw = process.env.PHOTO_KEK;
+  const raw = process.env.CONTENT_KEK;
   if (!raw) {
     throw new Error(
-      "PHOTO_KEK is not set. Generate one with `openssl rand -base64 32` and add it to .env.local / your secrets store."
+      "CONTENT_KEK is not set. Generate one with `openssl rand -base64 32` and add it to .env.local / your secrets store."
     );
   }
   const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
   const buf = Buffer.from(normalized, "base64");
   if (buf.length !== KEK_LENGTH) {
     throw new Error(
-      `PHOTO_KEK must decode to ${KEK_LENGTH} bytes (got ${buf.length}). Regenerate with \`openssl rand -base64 32\`.`
+      `CONTENT_KEK must decode to ${KEK_LENGTH} bytes (got ${buf.length}). Regenerate with \`openssl rand -base64 32\`.`
     );
   }
   cachedKek = buf;

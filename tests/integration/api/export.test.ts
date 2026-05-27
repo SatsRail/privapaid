@@ -138,7 +138,7 @@ describe("GET /api/admin/export", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_123",
-        encryptedSourceUrl: "encrypted-blob",
+        encryptedSource: "encrypted-blob",
         keyFingerprint: "abc123",
         productName: "Paid Video Access",
         productPriceCents: 500,
@@ -173,7 +173,7 @@ describe("GET /api/admin/export", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_legacy",
-        encryptedSourceUrl: "encrypted-blob",
+        encryptedSource: "encrypted-blob",
         keyFingerprint: "fp",
         productName: "Legacy Access",
         productPriceCents: 100,
@@ -276,7 +276,7 @@ describe("GET /api/admin/export", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_blank",
-        encryptedSourceUrl: "blob",
+        encryptedSource: "blob",
         keyFingerprint: "fp",
       });
     const res = await GET();

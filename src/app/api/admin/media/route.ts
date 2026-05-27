@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
@@ -5,36 +6,72 @@ import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import { encryptSourceUrl } from "@/lib/content-encryption";
-import { wrapDekFromBase64url } from "@/lib/photo-dek";
-import {
-  parseMediaBlob,
-  plaintextForEncryption,
-  type MediaBlob,
-} from "@/lib/schemas/media-blob";
+import { encryptBytes, encryptSourceUrl } from "@/lib/content-encryption";
+import { wrapDek, wrapDekFromBase64url } from "@/lib/content-dek";
+import { type MediaBlob } from "@/lib/schemas/media-blob";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
 
+const ARTICLE_MIME = "text/markdown; charset=utf-8";
+
+function bytesToBase64url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/**
+ * Plan returned by `prepareCreatePlan` — pure (no DB writes). The caller
+ * executes the envelope row creation + Media.create + channel mediaCount
+ * increment in a single transaction.
+ *
+ * For envelope kinds (photo, article) `envelopeWrite` describes the new
+ * EncryptedEnvelope row to insert; the caller patches its returned id into
+ * `blobShape.envelopeId` before persisting Media.blob.
+ */
+type CreatePlan =
+  | {
+      kind: "url";
+      blob: MediaBlob;
+      productPlaintext: string;
+    }
+  | {
+      kind: "photo";
+      // Photo bytes were uploaded separately via /api/admin/photos; the
+      // envelopeId already exists. No new envelope row to create here.
+      blob: MediaBlob;
+      productPlaintext: string;
+    }
+  | {
+      kind: "article";
+      envelopeWrite: { bytes: Buffer; mimeType: string };
+      blobShape: { kind: "article"; encryptedDek: string; mimeType: string };
+      productPlaintext: string;
+    };
+
 /**
  * Translate the API wire shape (`source_url`, `media_type`, optional `dek` for
- * photos) into the Media.blob JSONB payload. `source_url` is overloaded today:
+ * photos) into a `CreatePlan` describing the DB writes to perform.
  *
- *   video/audio/podcast → URL
- *   article             → markdown body
- *   photo               → EncryptedPhotoBlob.id (the ciphertext pointer)
+ *   video/audio/podcast → source_url is the URL; product plaintext is the URL
+ *   photo               → source_url is the EncryptedEnvelope id; dek is the
+ *                         raw per-photo DEK; product plaintext is the raw DEK
+ *   article             → source_url is the markdown body; the server mints a
+ *                         per-article DEK and the caller writes a new
+ *                         EncryptedEnvelope row inside a transaction
  *
- * For photos, `dek` is the per-photo DEK from the upload response, wrapped
- * under PHOTO_KEK before persisting on the blob.
+ * For envelope kinds (photo, article) the DEK is wrapped under CONTENT_KEK
+ * and stored on Media.blob.encryptedDek so rotation can recover without
+ * SatsRail's old_key.
  */
-function buildBlobForCreate(
+function prepareCreatePlan(
   sourceUrl: string,
   mediaType: MediaType,
   dek: string | undefined,
-  mimeTypeFromBlob: string | null
-): MediaBlob | { error: string } {
-  if (mediaType === "article") {
-    return { kind: "markdown", body: sourceUrl };
-  }
+  mimeTypeFromEnvelope: string | null
+): CreatePlan | { error: string } {
   if (mediaType === "photo") {
     if (!dek) {
       return { error: "dek is required for photo media" };
@@ -49,12 +86,44 @@ function buildBlobForCreate(
     }
     return {
       kind: "photo",
-      blobId: sourceUrl,
-      encryptedDek,
-      mimeType: mimeTypeFromBlob ?? "application/octet-stream",
+      blob: {
+        kind: "photo",
+        envelopeId: sourceUrl,
+        encryptedDek,
+        mimeType: mimeTypeFromEnvelope ?? "application/octet-stream",
+      },
+      productPlaintext: dek,
     };
   }
-  return { kind: "url", url: sourceUrl };
+
+  if (mediaType === "article") {
+    // Server-side envelope encryption of markdown body. The raw DEK never
+    // leaves this function — it's consumed by the per-product wrap below and
+    // its only persisted form is the CONTENT_KEK-wrapped copy on Media.blob.
+    const dekBytes = randomBytes(32);
+    const dekBase64url = bytesToBase64url(dekBytes);
+    const ciphertext = encryptBytes(Buffer.from(sourceUrl, "utf8"), dekBytes);
+    let encryptedDek: string;
+    try {
+      encryptedDek = wrapDek(dekBytes);
+    } catch (err) {
+      return {
+        error: `Failed to KEK-wrap article DEK: ${err instanceof Error ? err.message : "unknown"}`,
+      };
+    }
+    return {
+      kind: "article",
+      envelopeWrite: { bytes: ciphertext, mimeType: ARTICLE_MIME },
+      blobShape: { kind: "article", encryptedDek, mimeType: ARTICLE_MIME },
+      productPlaintext: dekBase64url,
+    };
+  }
+
+  return {
+    kind: "url",
+    blob: { kind: "url", url: sourceUrl },
+    productPlaintext: sourceUrl,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -116,7 +185,8 @@ export async function POST(req: NextRequest) {
 
   // For photo media added to a channel with existing channel-scoped products,
   // we MUST have the DEK in hand to wrap it under each product key — there's
-  // no other way to recover the per-photo DEK on the server.
+  // no other way to recover the per-photo DEK on the server. (Articles don't
+  // need this check because the server mints their DEK locally.)
   if (mediaType === "photo") {
     const existingChannelProducts = await prisma.product.count({
       where: { channelId: channel_id },
@@ -129,22 +199,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // For photos, look up the EncryptedPhotoBlob row to recover its mimeType
-  // so the Media.blob carries a meaningful value for the public photo route.
-  let mimeTypeFromBlob: string | null = null;
+  // For photos, look up the EncryptedEnvelope row to recover its mimeType so
+  // the Media.blob carries a meaningful value for the public envelope route.
+  let mimeTypeFromEnvelope: string | null = null;
   if (mediaType === "photo") {
-    const blobRow = await prisma.encryptedPhotoBlob.findUnique({
+    const envelopeRow = await prisma.encryptedEnvelope.findUnique({
       where: { id: source_url },
       select: { mimeType: true },
     });
-    mimeTypeFromBlob = blobRow?.mimeType ?? null;
+    mimeTypeFromEnvelope = envelopeRow?.mimeType ?? null;
   }
 
-  const blobOrError = buildBlobForCreate(source_url, mediaType, dek, mimeTypeFromBlob);
-  if ("error" in blobOrError) {
-    return NextResponse.json({ error: blobOrError.error }, { status: 422 });
+  const plan = prepareCreatePlan(source_url, mediaType, dek, mimeTypeFromEnvelope);
+  if ("error" in plan) {
+    return NextResponse.json({ error: plan.error }, { status: 422 });
   }
-  const blob = blobOrError;
 
   // Auto-set position
   const maxPos = await prisma.media.findFirst({
@@ -153,16 +222,51 @@ export async function POST(req: NextRequest) {
     select: { position: true },
   });
 
-  const media = await prisma.media.create({
-    data: {
-      channelId: channel_id,
-      name: name.trim(),
-      description: result.description || "",
-      blob,
-      mediaType,
-      thumbnailUrl: result.thumbnail_url || "",
-      position: result.position ?? (maxPos?.position ?? 0) + 1,
-    },
+  // Envelope + Media + channel.mediaCount must commit atomically:
+  //   - If Media.create fails after envelope.create, the envelope row would be
+  //     orphan (cleanup-cron-recoverable, but worth avoiding).
+  //   - If channel.update fails after Media.create, mediaCount diverges from
+  //     the actual count.
+  const { media, productPlaintext } = await prisma.$transaction(async (tx) => {
+    let blob: MediaBlob;
+    let productPlaintext: string;
+    if (plan.kind === "article") {
+      const envelope = await tx.encryptedEnvelope.create({
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: plan.envelopeWrite.bytes as any,
+          mimeType: plan.envelopeWrite.mimeType,
+        },
+        select: { id: true },
+      });
+      blob = {
+        ...plan.blobShape,
+        envelopeId: envelope.id,
+      };
+      productPlaintext = plan.productPlaintext;
+    } else {
+      blob = plan.blob;
+      productPlaintext = plan.productPlaintext;
+    }
+
+    const media = await tx.media.create({
+      data: {
+        channelId: channel_id,
+        name: name.trim(),
+        description: result.description || "",
+        blob,
+        mediaType,
+        thumbnailUrl: result.thumbnail_url || "",
+        position: result.position ?? (maxPos?.position ?? 0) + 1,
+      },
+    });
+
+    await tx.channel.update({
+      where: { id: channel_id },
+      data: { mediaCount: { increment: 1 } },
+    });
+
+    return { media, productPlaintext };
   });
 
   audit({
@@ -173,12 +277,6 @@ export async function POST(req: NextRequest) {
     targetType: "media",
     targetId: media.id,
     details: { name: media.name, channel_id },
-  });
-
-  // Increment channel media count
-  await prisma.channel.update({
-    where: { id: channel_id },
-    data: { mediaCount: { increment: 1 } },
   });
 
   // Encrypt for existing channel-scoped products
@@ -194,15 +292,16 @@ export async function POST(req: NextRequest) {
             sk,
             cp.satsrailProductId
           );
-          // For photo media (envelope encryption), wrap the per-photo DEK
-          // rather than the source_url (which is just a blob pointer).
-          const plaintext = mediaType === "photo" ? (dek as string) : source_url;
-          const encryptedSourceUrl = encryptSourceUrl(plaintext, key, cp.satsrailProductId);
+          const encryptedSource = encryptSourceUrl(
+            productPlaintext,
+            key,
+            cp.satsrailProductId
+          );
           await prisma.mediaEncryptedBlob.create({
             data: {
               productId: cp.id,
               mediaId: media.id,
-              encryptedSourceUrl,
+              encryptedSource,
               keyFingerprint: cp.keyFingerprint,
             },
           });

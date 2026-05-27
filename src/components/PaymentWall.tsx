@@ -53,8 +53,8 @@ interface PaymentWallProps {
   }) => void;
   thumbnailUrl?: string;
   mediaType: string;
-  /** For media_type === "photo" only: GridFS ID of the encrypted bytes. */
-  photoGridFsId?: string;
+  /** For envelope-encrypted media (photo, article): EncryptedEnvelope row id. */
+  envelopeId?: string;
   merchantLogo?: string;
   merchantName?: string;
 }
@@ -69,7 +69,7 @@ export default function PaymentWall({
   onAccessClaim,
   thumbnailUrl,
   mediaType,
-  photoGridFsId,
+  envelopeId,
   merchantLogo,
   merchantName,
 }: PaymentWallProps) {
@@ -127,28 +127,28 @@ export default function PaymentWall({
     [mediaId, activeProductId, mediaType]
   );
 
-  // Unwrap encrypted content into displayable bytes. For non-photo media this
-  // is a single AES-GCM decrypt. For photo media the encrypted blob holds a
-  // DEK (envelope encryption): unwrap the DEK with the product key, fetch
-  // the ciphertext from GridFS, then decrypt with the DEK.
+  // Unwrap encrypted content into displayable bytes. For url-backed media this
+  // is a single AES-GCM decrypt. For envelope-encrypted media (photo, article)
+  // the encrypted blob holds a DEK: unwrap the DEK with the product key, fetch
+  // the ciphertext from the envelope route, then decrypt with the DEK.
   const resolveContent = useCallback(
     async (encryptedBlob: string, key: string, productId: string): Promise<Uint8Array> => {
       const inner = await decryptBlob(encryptedBlob, key, productId);
-      if (mediaType !== "photo") return inner;
-      if (!photoGridFsId) {
-        throw new Error("Photo media is missing its GridFS pointer");
+      if (mediaType !== "photo" && mediaType !== "article") return inner;
+      if (!envelopeId) {
+        throw new Error(`${mediaType} media is missing its envelope id`);
       }
       // `inner` is the UTF-8 bytes of the base64url DEK; decode it back to 32 raw bytes.
       const dekBase64url = new TextDecoder().decode(inner);
       const dekBytes = base64urlToBytes(dekBase64url);
-      const res = await fetch(`/api/photos/${photoGridFsId}`);
+      const res = await fetch(`/api/envelopes/${envelopeId}`);
       if (!res.ok) {
-        throw new Error(`Failed to fetch encrypted photo: ${res.status}`);
+        throw new Error(`Failed to fetch encrypted envelope: ${res.status}`);
       }
       const ciphertext = new Uint8Array(await res.arrayBuffer());
       return decryptBytesWithKey(ciphertext, dekBytes);
     },
-    [mediaType, photoGridFsId]
+    [mediaType, envelopeId]
   );
 
   // Decryption effect: whenever access becomes active, attempt to decrypt

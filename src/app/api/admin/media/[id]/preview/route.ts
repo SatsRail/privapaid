@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
+import { decryptBytes } from "@/lib/content-encryption";
+import { unwrapDek } from "@/lib/content-dek";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +37,42 @@ export async function GET(
   });
 
   // Recover the on-the-wire `source_url` value from Media.blob.
-  // Photo blobs surface the EncryptedPhotoBlob.id pointer (same as the
-  // legacy shape — bytes themselves stay behind /api/photos/[id]).
-  let sourceUrl = "";
+  //   url     → the URL as-is
+  //   photo   → surface the EncryptedEnvelope.id pointer (bytes stay behind /api/envelopes/[id])
+  //   article → decrypt the envelope on the fly and return the markdown body
+  let sourceUrl: string;
   try {
     const parsed = parseMediaBlob(media.blob);
-    if (parsed.kind === "url") sourceUrl = parsed.url;
-    else if (parsed.kind === "markdown") sourceUrl = parsed.body;
-    else sourceUrl = parsed.blobId;
-  } catch {
-    /* leave empty */
+    if (parsed.kind === "url") {
+      sourceUrl = parsed.url;
+    } else if (parsed.kind === "photo") {
+      sourceUrl = parsed.envelopeId;
+    } else {
+      const envelope = await prisma.encryptedEnvelope.findUnique({
+        where: { id: parsed.envelopeId },
+        select: { bytes: true },
+      });
+      if (!envelope) {
+        return NextResponse.json(
+          { error: "Envelope row missing — content unrecoverable" },
+          { status: 500 }
+        );
+      }
+      const dek = unwrapDek(parsed.encryptedDek);
+      const plaintext = decryptBytes(envelope.bytes as Buffer, dek);
+      sourceUrl = plaintext.toString("utf8");
+    }
+  } catch (err) {
+    // Don't log the err object directly — exception messages from the
+    // crypto layer can include byte offsets or key lengths that the Sentry
+    // scrubber doesn't cover. Surface a generic 500 to the admin.
+    console.error(
+      `media.preview ${id}: failed to recover source_url (${err instanceof Error ? err.name : "unknown"})`
+    );
+    return NextResponse.json(
+      { error: "Failed to decrypt content — check CONTENT_KEK configuration" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({

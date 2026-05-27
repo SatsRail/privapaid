@@ -6,7 +6,7 @@ import {
   wrapDekFromBase64url,
   unwrapDekToBase64url,
   _resetKekCache,
-} from "@/lib/photo-dek";
+} from "@/lib/content-dek";
 
 function randomKekBase64(): string {
   return randomBytes(32).toString("base64");
@@ -16,19 +16,19 @@ function dekBase64url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-describe("photo-dek", () => {
-  const originalKek = process.env.PHOTO_KEK;
+describe("content-dek", () => {
+  const originalKek = process.env.CONTENT_KEK;
 
   beforeEach(() => {
-    process.env.PHOTO_KEK = randomKekBase64();
+    process.env.CONTENT_KEK = randomKekBase64();
     _resetKekCache();
   });
 
   afterEach(() => {
     if (originalKek === undefined) {
-      delete process.env.PHOTO_KEK;
+      delete process.env.CONTENT_KEK;
     } else {
-      process.env.PHOTO_KEK = originalKek;
+      process.env.CONTENT_KEK = originalKek;
     }
     _resetKekCache();
   });
@@ -50,14 +50,14 @@ describe("photo-dek", () => {
     expect(() => wrapDek(Buffer.alloc(48))).toThrow(/32 bytes/);
   });
 
-  it("throws when PHOTO_KEK is unset", () => {
-    delete process.env.PHOTO_KEK;
+  it("throws when CONTENT_KEK is unset", () => {
+    delete process.env.CONTENT_KEK;
     _resetKekCache();
-    expect(() => wrapDek(randomBytes(32))).toThrow(/PHOTO_KEK is not set/);
+    expect(() => wrapDek(randomBytes(32))).toThrow(/CONTENT_KEK is not set/);
   });
 
-  it("throws when PHOTO_KEK is the wrong length", () => {
-    process.env.PHOTO_KEK = randomBytes(16).toString("base64");
+  it("throws when CONTENT_KEK is the wrong length", () => {
+    process.env.CONTENT_KEK = randomBytes(16).toString("base64");
     _resetKekCache();
     expect(() => wrapDek(randomBytes(32))).toThrow(/must decode to 32 bytes/);
   });
@@ -74,7 +74,7 @@ describe("photo-dek", () => {
     const dek = randomBytes(32);
     const wrapped = wrapDek(dek);
     // Rotate the KEK and re-load.
-    process.env.PHOTO_KEK = randomKekBase64();
+    process.env.CONTENT_KEK = randomKekBase64();
     _resetKekCache();
     expect(() => unwrapDek(wrapped)).toThrow();
   });

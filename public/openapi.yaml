@@ -16,7 +16,8 @@ info:
     **Public routes**: No authentication required.
   version: 1.0.0
   license:
-    name: MIT
+    name: FSL-1.1-ALv2
+    url: https://fsl.software/
 
 servers:
   - url: /api

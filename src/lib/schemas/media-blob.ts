@@ -3,16 +3,20 @@ import { z } from "zod";
 /**
  * Type-discriminated payload stored in Media.blob (JSONB).
  *
- * Admin-only — public routes MUST omit this field on the wire. The
- * re-encryption flow reads it directly so key rotation doesn't depend
- * on SatsRail's old_key.
+ * Admin-only — public routes MUST omit this field on the wire. For envelope-
+ * encrypted content (photo, article) the wrapped DEK on this row is what
+ * lets the re-encryption flow rotate product keys without SatsRail's old_key.
+ * For url-backed media the url itself is the plaintext recovery store.
  *
  * Shape per Media.mediaType:
- *   video / audio / podcast → { kind: "url",      url:  string }
- *   article                 → { kind: "markdown", body: string }
+ *   video / audio / podcast → { kind: "url",     url:  string }
  *   photo                   → { kind: "photo",
- *                               blobId:       EncryptedPhotoBlob.id,
- *                               encryptedDek: <DEK wrapped under PHOTO_KEK>,
+ *                               envelopeId:   EncryptedEnvelope.id,
+ *                               encryptedDek: <DEK wrapped under CONTENT_KEK>,
+ *                               mimeType:     string }
+ *   article                 → { kind: "article",
+ *                               envelopeId:   EncryptedEnvelope.id,
+ *                               encryptedDek: <DEK wrapped under CONTENT_KEK>,
  *                               mimeType:     string }
  *
  * Validate at every write site. Prisma can't enforce JSONB shape; this
@@ -24,42 +28,46 @@ export const urlBlobSchema = z.object({
   url: z.string().min(1, "url is required").max(8192, "url too long"),
 });
 
-export const markdownBlobSchema = z.object({
-  kind: z.literal("markdown"),
-  body: z.string(),
-});
+const envelopeShape = {
+  envelopeId: z.string().min(1, "envelopeId is required"),
+  encryptedDek: z.string().min(1, "encryptedDek is required"),
+  mimeType: z.string().min(1, "mimeType is required"),
+};
 
 export const photoBlobSchema = z.object({
   kind: z.literal("photo"),
-  blobId: z.string().min(1, "blobId is required"),
-  encryptedDek: z.string().min(1, "encryptedDek is required"),
-  mimeType: z.string().min(1, "mimeType is required"),
+  ...envelopeShape,
+});
+
+export const articleBlobSchema = z.object({
+  kind: z.literal("article"),
+  ...envelopeShape,
 });
 
 export const mediaBlobSchema = z.discriminatedUnion("kind", [
   urlBlobSchema,
-  markdownBlobSchema,
   photoBlobSchema,
+  articleBlobSchema,
 ]);
 
 export type UrlBlob = z.infer<typeof urlBlobSchema>;
-export type MarkdownBlob = z.infer<typeof markdownBlobSchema>;
 export type PhotoBlob = z.infer<typeof photoBlobSchema>;
+export type ArticleBlob = z.infer<typeof articleBlobSchema>;
 export type MediaBlob = z.infer<typeof mediaBlobSchema>;
 
 /**
  * Maps a Media.mediaType enum value to the expected blob kind. Used by write
  * paths to assert that the caller is providing a blob shape that matches the
- * declared media type — a video row with a `markdown` blob is a bug.
+ * declared media type — a video row with a `photo` blob is a bug.
  */
 export function expectedBlobKindFor(
   mediaType: "video" | "audio" | "podcast" | "article" | "photo"
 ): MediaBlob["kind"] {
   switch (mediaType) {
-    case "article":
-      return "markdown";
     case "photo":
       return "photo";
+    case "article":
+      return "article";
     default:
       return "url";
   }
@@ -77,17 +85,15 @@ export function parseMediaBlob(raw: unknown): MediaBlob {
 
 /**
  * Extract the plaintext that should be encrypted under a product key for
- * this media. Video/audio/podcast → URL; article → body; photo → the wrapped
- * DEK (used to decrypt EncryptedPhotoBlob.bytes after unwrapping with the
- * product key).
+ * this media. Video/audio/podcast → URL; photo/article → the wrapped DEK
+ * (which, after the product-key unwrap, decrypts EncryptedEnvelope.bytes).
  */
 export function plaintextForEncryption(blob: MediaBlob): string {
   switch (blob.kind) {
     case "url":
       return blob.url;
-    case "markdown":
-      return blob.body;
     case "photo":
+    case "article":
       return blob.encryptedDek;
   }
 }

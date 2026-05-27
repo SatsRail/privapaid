@@ -1,17 +1,17 @@
 import { prisma } from "@/lib/prisma";
 
 /**
- * Default grace period before an unreferenced encrypted-photo blob is eligible
- * for deletion. The upload → create-media → create-product flow is a few
- * round-trips; an hour is comfortably longer than any realistic admin session
- * but short enough that storage stays clean.
+ * Default grace period before an unreferenced encrypted envelope row is
+ * eligible for deletion. The upload → create-media → create-product flow is a
+ * few round-trips; an hour is comfortably longer than any realistic admin
+ * session but short enough that storage stays clean.
  */
 export const DEFAULT_ORPHAN_GRACE_MS = 60 * 60 * 1000; // 1 hour
 
 export interface CleanupOptions {
   /**
-   * Only delete files older than this many milliseconds. Defaults to 1 hour.
-   * Pass `0` to delete every unreferenced file regardless of age (use with care).
+   * Only delete rows older than this many milliseconds. Defaults to 1 hour.
+   * Pass `0` to delete every unreferenced row regardless of age (use with care).
    */
   graceMs?: number;
   /**
@@ -26,22 +26,22 @@ export interface CleanupResult {
   orphaned: number;
   deleted: number;
   skippedYoung: number;
-  errors: Array<{ blobId: string; error: string }>;
+  errors: Array<{ envelopeId: string; error: string }>;
 }
 
 /**
- * Scan the EncryptedPhotoBlob table and remove any ciphertext row that has no
- * `Media` row pointing at it (photo media stores the blob id in
- * `Media.blob.blobId`). Skips rows younger than `graceMs` so an in-progress
- * upload isn't deleted out from under the admin before they finish creating
- * the Media row + first product wrap.
+ * Scan the EncryptedEnvelope table and remove any ciphertext row that has no
+ * `Media` row pointing at it. Photo and article media types both store the
+ * envelope id in `Media.blob.envelopeId`. Skips rows younger than `graceMs`
+ * so an in-progress upload isn't deleted out from under the admin before
+ * they finish creating the Media row + first product wrap.
  *
  * Why this matters: the upload endpoint persists ciphertext before the admin
  * has committed to creating a Media row. If the admin abandons the flow, the
  * bytes stay forever. They're unrecoverable without the DEK (which was never
  * persisted), so they're not a security risk — just dead storage.
  */
-export async function cleanupOrphanEncryptedPhotos(
+export async function cleanupOrphanEnvelopes(
   options: CleanupOptions = {}
 ): Promise<CleanupResult> {
   const graceMs = options.graceMs ?? DEFAULT_ORPHAN_GRACE_MS;
@@ -67,17 +67,17 @@ export async function cleanupOrphanEncryptedPhotos(
       select: { id: true, createdAt: true },
     };
     const batch: Array<{ id: string; createdAt: Date }> =
-      await prisma.encryptedPhotoBlob.findMany(args);
+      await prisma.encryptedEnvelope.findMany(args);
     if (batch.length === 0) break;
     cursor = batch[batch.length - 1].id;
 
-    for (const blob of batch) {
+    for (const envelope of batch) {
       result.scanned++;
 
       const referenced = await prisma.media.findFirst({
         where: {
-          mediaType: "photo",
-          blob: { path: ["blobId"], equals: blob.id },
+          mediaType: { in: ["photo", "article"] },
+          blob: { path: ["envelopeId"], equals: envelope.id },
         },
         select: { id: true },
       });
@@ -88,7 +88,7 @@ export async function cleanupOrphanEncryptedPhotos(
 
       result.orphaned++;
 
-      const uploadedAt = blob.createdAt.getTime();
+      const uploadedAt = envelope.createdAt.getTime();
       if (uploadedAt && now - uploadedAt < graceMs) {
         result.skippedYoung++;
         continue;
@@ -97,11 +97,11 @@ export async function cleanupOrphanEncryptedPhotos(
       if (dryRun) continue;
 
       try {
-        await prisma.encryptedPhotoBlob.delete({ where: { id: blob.id } });
+        await prisma.encryptedEnvelope.delete({ where: { id: envelope.id } });
         result.deleted++;
       } catch (err) {
         const message = err instanceof Error ? err.message : "unknown error";
-        result.errors.push({ blobId: blob.id, error: message });
+        result.errors.push({ envelopeId: envelope.id, error: message });
       }
     }
   }

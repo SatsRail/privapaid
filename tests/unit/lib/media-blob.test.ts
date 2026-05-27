@@ -30,23 +30,10 @@ describe("Media.blob schema", () => {
       expect(result.success).toBe(false);
     });
 
-    it("accepts a markdown blob", () => {
-      const result = mediaBlobSchema.safeParse({
-        kind: "markdown",
-        body: "# heading",
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it("accepts an empty markdown body (drafts can be empty)", () => {
-      const result = mediaBlobSchema.safeParse({ kind: "markdown", body: "" });
-      expect(result.success).toBe(true);
-    });
-
     it("accepts a photo blob", () => {
       const result = mediaBlobSchema.safeParse({
         kind: "photo",
-        blobId: "blob_123",
+        envelopeId: "env_123",
         encryptedDek: "wrapped_dek_b64",
         mimeType: "image/jpeg",
       });
@@ -56,17 +43,17 @@ describe("Media.blob schema", () => {
     it("rejects a photo blob missing encryptedDek (envelope encryption would break)", () => {
       const result = mediaBlobSchema.safeParse({
         kind: "photo",
-        blobId: "blob_123",
+        envelopeId: "env_123",
         encryptedDek: "",
         mimeType: "image/jpeg",
       });
       expect(result.success).toBe(false);
     });
 
-    it("rejects a photo blob missing blobId", () => {
+    it("rejects a photo blob missing envelopeId", () => {
       const result = mediaBlobSchema.safeParse({
         kind: "photo",
-        blobId: "",
+        envelopeId: "",
         encryptedDek: "wrapped",
         mimeType: "image/jpeg",
       });
@@ -76,9 +63,37 @@ describe("Media.blob schema", () => {
     it("rejects a photo blob missing mimeType", () => {
       const result = mediaBlobSchema.safeParse({
         kind: "photo",
-        blobId: "blob_1",
+        envelopeId: "env_1",
         encryptedDek: "wrapped",
         mimeType: "",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts an article blob", () => {
+      const result = mediaBlobSchema.safeParse({
+        kind: "article",
+        envelopeId: "env_456",
+        encryptedDek: "wrapped_dek_b64",
+        mimeType: "text/markdown; charset=utf-8",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects an article blob missing encryptedDek", () => {
+      const result = mediaBlobSchema.safeParse({
+        kind: "article",
+        envelopeId: "env_456",
+        encryptedDek: "",
+        mimeType: "text/markdown; charset=utf-8",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects the legacy markdown discriminator (replaced by envelope-encrypted article)", () => {
+      const result = mediaBlobSchema.safeParse({
+        kind: "markdown",
+        body: "# heading",
       });
       expect(result.success).toBe(false);
     });
@@ -110,8 +125,8 @@ describe("Media.blob schema", () => {
   });
 
   describe("expectedBlobKindFor", () => {
-    it("maps article → markdown", () => {
-      expect(expectedBlobKindFor("article")).toBe("markdown");
+    it("maps article → article", () => {
+      expect(expectedBlobKindFor("article")).toBe("article");
     });
 
     it("maps photo → photo", () => {
@@ -137,23 +152,30 @@ describe("Media.blob schema", () => {
       expect(plaintextForEncryption(blob)).toBe("https://example.com/v.mp4");
     });
 
-    it("extracts the body from a markdown blob", () => {
-      const blob: MediaBlob = { kind: "markdown", body: "secret text" };
-      expect(plaintextForEncryption(blob)).toBe("secret text");
-    });
-
-    it("extracts the encryptedDek from a photo blob (NOT the blobId)", () => {
-      // This is the patent-sensitive invariant: photo encryption envelope-wraps
-      // the DEK, not the blobId. Confusing the two would let anyone with read
-      // access to the row decrypt the bytes.
+    it("returns the encryptedDek for a photo blob (NOT the envelopeId)", () => {
+      // This is the patent-sensitive invariant: envelope encryption uses the
+      // wrapped DEK as the per-product plaintext intermediate, not the
+      // envelope row id (which is public). Callers must unwrap before
+      // encrypting under a product key — `plaintextForEncryption` returns
+      // the wrapped form so the schema module stays decoupled from CONTENT_KEK.
       const blob: MediaBlob = {
         kind: "photo",
-        blobId: "blob_visible",
+        envelopeId: "env_visible",
         encryptedDek: "wrapped_secret",
         mimeType: "image/jpeg",
       };
       expect(plaintextForEncryption(blob)).toBe("wrapped_secret");
-      expect(plaintextForEncryption(blob)).not.toBe("blob_visible");
+      expect(plaintextForEncryption(blob)).not.toBe("env_visible");
+    });
+
+    it("returns the encryptedDek for an article blob (parallels photo)", () => {
+      const blob: MediaBlob = {
+        kind: "article",
+        envelopeId: "env_visible",
+        encryptedDek: "wrapped_article_dek",
+        mimeType: "text/markdown; charset=utf-8",
+      };
+      expect(plaintextForEncryption(blob)).toBe("wrapped_article_dek");
     });
   });
 });

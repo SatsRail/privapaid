@@ -18,7 +18,7 @@
     "db:studio": "prisma studio",
     "deploy": "bash scripts/deploy-demo.sh",
     "verify:sentry-dsn": "bash scripts/verify-sentry-dsn-inlined.sh",
-    "cleanup:orphan-photos": "tsx scripts/cleanup-orphan-photos.ts"
+    "cleanup:orphan-envelopes": "tsx scripts/cleanup-orphan-envelopes.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

@@ -4,12 +4,12 @@ import { createChannel } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
 import {
-  cleanupOrphanEncryptedPhotos,
+  cleanupOrphanEnvelopes,
   DEFAULT_ORPHAN_GRACE_MS,
-} from "@/lib/photo-cleanup";
+} from "@/lib/envelope-cleanup";
 
 async function createPhotoBlob(opts: { createdAt?: Date } = {}) {
-  const blob = await prisma.encryptedPhotoBlob.create({
+  const blob = await prisma.encryptedEnvelope.create({
     data: {
       bytes: Buffer.from("photo-bytes"),
       mimeType: "image/jpeg",
@@ -17,22 +17,22 @@ async function createPhotoBlob(opts: { createdAt?: Date } = {}) {
   });
   if (opts.createdAt) {
     await prisma.$executeRaw`
-      UPDATE "EncryptedPhotoBlob" SET "createdAt" = ${opts.createdAt.toISOString()}::timestamp WHERE id = ${blob.id}
+      UPDATE "EncryptedEnvelope" SET "createdAt" = ${opts.createdAt.toISOString()}::timestamp WHERE id = ${blob.id}
     `;
   }
   return blob;
 }
 
-async function createPhotoMedia(channelId: string, blobId: string, refOverride?: number) {
+async function createPhotoMedia(channelId: string, envelopeId: string, refOverride?: number) {
   return prisma.media.create({
     data: {
       ref: refOverride ?? Math.floor(Math.random() * 1_000_000),
       channelId,
-      name: `Photo ${blobId.slice(-6)}`,
+      name: `Photo ${envelopeId.slice(-6)}`,
       description: "",
       blob: {
         kind: "photo",
-        blobId,
+        envelopeId,
         encryptedDek: "test_dek",
         mimeType: "image/jpeg",
       },
@@ -42,7 +42,26 @@ async function createPhotoMedia(channelId: string, blobId: string, refOverride?:
   });
 }
 
-describe("cleanupOrphanEncryptedPhotos", () => {
+async function createArticleMedia(channelId: string, envelopeId: string, refOverride?: number) {
+  return prisma.media.create({
+    data: {
+      ref: refOverride ?? Math.floor(Math.random() * 1_000_000),
+      channelId,
+      name: `Article ${envelopeId.slice(-6)}`,
+      description: "",
+      blob: {
+        kind: "article",
+        envelopeId,
+        encryptedDek: "test_dek",
+        mimeType: "text/markdown; charset=utf-8",
+      },
+      mediaType: "article",
+      position: 1,
+    },
+  });
+}
+
+describe("cleanupOrphanEnvelopes", () => {
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -59,14 +78,14 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h ago
     const orphan = await createPhotoBlob({ createdAt: old });
 
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
 
     expect(result.scanned).toBe(1);
     expect(result.orphaned).toBe(1);
     expect(result.deleted).toBe(1);
     expect(result.errors).toHaveLength(0);
 
-    const remaining = await prisma.encryptedPhotoBlob.findUnique({ where: { id: orphan.id } });
+    const remaining = await prisma.encryptedEnvelope.findUnique({ where: { id: orphan.id } });
     expect(remaining).toBeNull();
   });
 
@@ -76,14 +95,14 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     const referenced = await createPhotoBlob({ createdAt: old });
     await createPhotoMedia(channel.id, referenced.id);
 
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
 
     expect(result.scanned).toBe(1);
     expect(result.referenced).toBe(1);
     expect(result.orphaned).toBe(0);
     expect(result.deleted).toBe(0);
 
-    const stillThere = await prisma.encryptedPhotoBlob.findUnique({ where: { id: referenced.id } });
+    const stillThere = await prisma.encryptedEnvelope.findUnique({ where: { id: referenced.id } });
     expect(stillThere).not.toBeNull();
   });
 
@@ -91,7 +110,7 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     const young = new Date(Date.now() - 5 * 60 * 1000); // 5min ago
     await createPhotoBlob({ createdAt: young });
 
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
 
     expect(result.orphaned).toBe(1);
     expect(result.skippedYoung).toBe(1);
@@ -101,7 +120,7 @@ describe("cleanupOrphanEncryptedPhotos", () => {
   it("deletes orphan blobs of any age when graceMs is 0", async () => {
     await createPhotoBlob({ createdAt: new Date() });
 
-    const result = await cleanupOrphanEncryptedPhotos({ graceMs: 0 });
+    const result = await cleanupOrphanEnvelopes({ graceMs: 0 });
 
     expect(result.deleted).toBe(1);
     expect(result.skippedYoung).toBe(0);
@@ -111,11 +130,11 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const blob = await createPhotoBlob({ createdAt: old });
 
-    const result = await cleanupOrphanEncryptedPhotos({ dryRun: true });
+    const result = await cleanupOrphanEnvelopes({ dryRun: true });
 
     expect(result.orphaned).toBe(1);
     expect(result.deleted).toBe(0);
-    const stillThere = await prisma.encryptedPhotoBlob.findUnique({ where: { id: blob.id } });
+    const stillThere = await prisma.encryptedEnvelope.findUnique({ where: { id: blob.id } });
     expect(stillThere).not.toBeNull();
   });
 
@@ -129,7 +148,7 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     const oldOrphan = await createPhotoBlob({ createdAt: old });
     await createPhotoMedia(channel.id, kept.id);
 
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
 
     expect(result.scanned).toBe(3);
     expect(result.referenced).toBe(1);
@@ -138,17 +157,17 @@ describe("cleanupOrphanEncryptedPhotos", () => {
     expect(result.deleted).toBe(1);
 
     // old orphan deleted, others preserved
-    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: oldOrphan.id } })).toBeNull();
-    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: youngOrphan.id } })).not.toBeNull();
-    expect(await prisma.encryptedPhotoBlob.findUnique({ where: { id: kept.id } })).not.toBeNull();
+    expect(await prisma.encryptedEnvelope.findUnique({ where: { id: oldOrphan.id } })).toBeNull();
+    expect(await prisma.encryptedEnvelope.findUnique({ where: { id: youngOrphan.id } })).not.toBeNull();
+    expect(await prisma.encryptedEnvelope.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
 
-  it("only matches Media rows where mediaType is 'photo' (a non-photo row with the same blobId does NOT protect a blob)", async () => {
+  it("only matches Media rows where mediaType is 'photo' or 'article' (a non-envelope row with the same id does NOT protect a blob)", async () => {
     const channel = await createChannel();
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const blob = await createPhotoBlob({ createdAt: old });
-    // Create a NON-photo media that coincidentally references the blob.id.
-    // The cleanup filter `mediaType: "photo"` should exclude it.
+    // Create a NON-envelope media that coincidentally references the blob.id.
+    // The cleanup filter `mediaType in ["photo", "article"]` should exclude it.
     await prisma.media.create({
       data: {
         ref: 42,
@@ -161,9 +180,20 @@ describe("cleanupOrphanEncryptedPhotos", () => {
       },
     });
 
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
     expect(result.referenced).toBe(0);
     expect(result.deleted).toBe(1);
+  });
+
+  it("preserves a blob referenced by an article Media row (envelope kind)", async () => {
+    const channel = await createChannel();
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const referenced = await createPhotoBlob({ createdAt: old });
+    await createArticleMedia(channel.id, referenced.id);
+
+    const result = await cleanupOrphanEnvelopes();
+    expect(result.referenced).toBe(1);
+    expect(result.deleted).toBe(0);
   });
 
   it("DEFAULT_ORPHAN_GRACE_MS is one hour", () => {
@@ -171,7 +201,7 @@ describe("cleanupOrphanEncryptedPhotos", () => {
   });
 
   it("scans an empty table cleanly", async () => {
-    const result = await cleanupOrphanEncryptedPhotos();
+    const result = await cleanupOrphanEnvelopes();
     expect(result).toEqual({
       scanned: 0,
       referenced: 0,

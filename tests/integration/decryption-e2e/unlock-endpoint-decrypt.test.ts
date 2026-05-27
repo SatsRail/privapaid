@@ -80,7 +80,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
   async function seedMediaProduct(opts: {
     mediaType: "article" | "photo" | "video";
     sourceUrl: string;
-    encryptedSourceUrl: string;
+    encryptedSource: string;
     keyFingerprintHex: string;
     productId: string;
   }) {
@@ -94,11 +94,16 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     });
     const blob =
       opts.mediaType === "article"
-        ? { kind: "markdown", body: opts.sourceUrl }
+        ? {
+            kind: "article",
+            envelopeId: opts.sourceUrl,
+            encryptedDek: "test_dek",
+            mimeType: "text/markdown; charset=utf-8",
+          }
         : opts.mediaType === "photo"
           ? {
               kind: "photo",
-              blobId: opts.sourceUrl,
+              envelopeId: opts.sourceUrl,
               encryptedDek: "test_dek",
               mimeType: "image/jpeg",
             }
@@ -115,7 +120,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: opts.productId,
-        encryptedSourceUrl: opts.encryptedSourceUrl,
+        encryptedSource: opts.encryptedSource,
         keyFingerprint: opts.keyFingerprintHex,
       });
     return { mediaId: media.id, channelId: channel.id };
@@ -132,13 +137,13 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
       "[A link](https://example.com)",
     ].join("\n");
 
-    const encryptedSourceUrl = encryptSourceUrl(articleBody, productKey, productId);
+    const encryptedSource = encryptSourceUrl(articleBody, productKey, productId);
     const fingerprintHex = await sha256HexOfString(productKey);
 
     const { mediaId } = await seedMediaProduct({
       mediaType: "article",
       sourceUrl: articleBody,
-      encryptedSourceUrl,
+      encryptedSource,
       keyFingerprintHex: fingerprintHex,
       productId,
     });
@@ -163,7 +168,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     expect(res.status).toBe(200);
     expect(body.product_id).toBe(productId);
     expect(body.key).toBe(productKey);
-    expect(body.encrypted_blob).toBe(encryptedSourceUrl);
+    expect(body.encrypted_blob).toBe(encryptedSource);
     expect(body.remaining_seconds).toBe(3600);
 
     const recovered = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);
@@ -190,7 +195,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     const { mediaId } = await seedMediaProduct({
       mediaType: "photo",
       sourceUrl: "blob-id-placeholder",
-      encryptedSourceUrl: wrappedDek,
+      encryptedSource: wrappedDek,
       keyFingerprintHex: fingerprintHex,
       productId,
     });
@@ -242,7 +247,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     const { mediaId } = await seedMediaProduct({
       mediaType: "article",
       sourceUrl: articleBody,
-      encryptedSourceUrl: reEncryptedBlob,
+      encryptedSource: reEncryptedBlob,
       keyFingerprintHex: newFp,
       productId,
     });

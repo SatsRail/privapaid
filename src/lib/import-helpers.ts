@@ -1,7 +1,13 @@
+import { randomBytes } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { satsrail } from "@/lib/satsrail";
-import { encryptSourceUrl } from "@/lib/content-encryption";
+import {
+  encryptBytes,
+  encryptSourceUrl,
+  decryptBytes,
+} from "@/lib/content-encryption";
+import { wrapDek, unwrapDek, unwrapDekToBase64url } from "@/lib/content-dek";
 import { schemas } from "@/lib/validate";
 import {
   mediaBlobSchema,
@@ -36,6 +42,7 @@ export type StatusFn = (detail: string) => Promise<void>;
 // ─── Constants ─────────────────────────────────────────────────────
 
 export const MAX_MEDIA_ITEMS = 100;
+const ARTICLE_MIME = "text/markdown; charset=utf-8";
 
 // ─── Utility Functions ─────────────────────────────────────────────
 
@@ -100,16 +107,90 @@ export function createApiThrottle(minGapMs = 1100): ApiThrottle {
 
 // ─── Blob construction for import payloads ─────────────────────────
 
+function bytesToBase64url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /**
- * Build a Media.blob payload from an ImportMedia entry. Photos are never
- * imported via JSON (their bytes must be uploaded through /api/admin/photos),
- * so this function only handles url/markdown.
+ * Build the Media.blob payload and the per-product plaintext for an import
+ * entry. For articles this generates a fresh DEK on create and reuses the
+ * existing DEK on update (so per-product blobs don't need re-encryption when
+ * only the markdown body changes).
+ *
+ * Returns `productPlaintext` — what should be wrapped under each product key:
+ *   url:     the URL string itself
+ *   article: the raw DEK as base64url (post-product-decrypt, the viewer uses
+ *            it to decrypt the EncryptedEnvelope bytes)
+ *
+ * Photos can't be imported via JSON (no way to produce ciphertext + DEK
+ * server-side from a URL).
  */
-function buildBlobForImport(mData: ImportMedia): MediaBlob {
+export async function buildArtifactsForImport(
+  mData: ImportMedia,
+  existingBlob: unknown | null
+): Promise<{ blob: MediaBlob; productPlaintext: string }> {
   if (mData.media_type === "article") {
-    return { kind: "markdown", body: mData.source_url };
+    const existingArticle = (() => {
+      if (!existingBlob) return null;
+      try {
+        const parsed = parseMediaBlob(existingBlob);
+        return parsed.kind === "article" ? parsed : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (existingArticle) {
+      // Re-encrypt the envelope bytes under the existing DEK. The blob
+      // shape stays identical, so per-product blobs don't need touching
+      // and we still return the same `productPlaintext` (the raw DEK).
+      const dekBytes = unwrapDek(existingArticle.encryptedDek);
+      const ciphertext = encryptBytes(Buffer.from(mData.source_url, "utf8"), dekBytes);
+      await prisma.encryptedEnvelope.update({
+        where: { id: existingArticle.envelopeId },
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: ciphertext as any,
+          mimeType: ARTICLE_MIME,
+        },
+      });
+      return {
+        blob: existingArticle,
+        productPlaintext: bytesToBase64url(dekBytes),
+      };
+    }
+
+    // Fresh DEK + envelope row for a new article.
+    const dekBytes = randomBytes(32);
+    const ciphertext = encryptBytes(Buffer.from(mData.source_url, "utf8"), dekBytes);
+    const encryptedDek = wrapDek(dekBytes);
+    const envelope = await prisma.encryptedEnvelope.create({
+      data: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        bytes: ciphertext as any,
+        mimeType: ARTICLE_MIME,
+      },
+      select: { id: true },
+    });
+    return {
+      blob: {
+        kind: "article",
+        envelopeId: envelope.id,
+        encryptedDek,
+        mimeType: ARTICLE_MIME,
+      },
+      productPlaintext: bytesToBase64url(dekBytes),
+    };
   }
-  return { kind: "url", url: mData.source_url };
+
+  return {
+    blob: { kind: "url", url: mData.source_url },
+    productPlaintext: mData.source_url,
+  };
 }
 
 // ─── SatsRail Product Helpers ──────────────────────────────────────
@@ -213,8 +294,8 @@ export async function getProductKeySafe(
 
 /**
  * Create or update a media-scoped Product + its single MediaEncryptedBlob row.
- * `plaintext` is the value to encrypt: source URL for video/audio/podcast,
- * markdown body for article, or wrapped DEK for photo.
+ * `productPlaintext` is the value to encrypt under the product key: source
+ * URL for url-backed media, raw DEK (base64url) for envelope-encrypted media.
  */
 export async function createEncryptedMediaProduct(
   sk: string,
@@ -227,7 +308,7 @@ export async function createEncryptedMediaProduct(
     external_ref: string;
   },
   mediaId: string,
-  plaintext: string,
+  productPlaintext: string,
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
@@ -235,7 +316,7 @@ export async function createEncryptedMediaProduct(
   const keyResult = await getProductKeySafe(sk, satsrailProduct.id, productData, api, onStatus);
 
   await onStatus?.("Encrypting content...");
-  const encryptedSourceUrl = encryptSourceUrl(plaintext, keyResult.key, keyResult.productId);
+  const encryptedSource = encryptSourceUrl(productPlaintext, keyResult.key, keyResult.productId);
 
   const cachedFields = {
     keyFingerprint: keyResult.key_fingerprint,
@@ -268,11 +349,11 @@ export async function createEncryptedMediaProduct(
       create: {
         productId: product.id,
         mediaId,
-        encryptedSourceUrl,
+        encryptedSource,
         keyFingerprint: keyResult.key_fingerprint,
       },
       update: {
-        encryptedSourceUrl,
+        encryptedSource,
         keyFingerprint: keyResult.key_fingerprint,
       },
     });
@@ -329,12 +410,13 @@ export async function tryCreateProductType(
 
 /**
  * Update an existing media-scoped Product's cached metadata, and re-encrypt
- * the single MediaEncryptedBlob row when the source plaintext has changed.
+ * the single MediaEncryptedBlob row when the product plaintext has changed.
  */
 export async function updateExistingProduct(
   sk: string,
   existingProduct: { id: string; satsrailProductId: string },
   mData: ImportMediaWithProduct,
+  newProductPlaintext: string,
   plaintextChanged: boolean,
   channelDoc: { satsrailProductTypeId: string | null },
   externalRef: string,
@@ -375,8 +457,7 @@ export async function updateExistingProduct(
   }, api, onStatus);
 
   await onStatus?.("Re-encrypting content...");
-  const newPlaintext = mData.media_type === "article" ? mData.source_url : mData.source_url;
-  const encryptedSourceUrl = encryptSourceUrl(newPlaintext, keyResult.key, keyResult.productId);
+  const encryptedSource = encryptSourceUrl(newProductPlaintext, keyResult.key, keyResult.productId);
 
   await prisma.$transaction([
     prisma.product.update({
@@ -390,7 +471,7 @@ export async function updateExistingProduct(
     prisma.mediaEncryptedBlob.updateMany({
       where: { productId: existingProduct.id },
       data: {
-        encryptedSourceUrl,
+        encryptedSource,
         keyFingerprint: keyResult.key_fingerprint,
       },
     }),
@@ -402,6 +483,7 @@ export async function handleExistingMediaProduct(
   sk: string,
   mData: ImportMediaWithProduct,
   existingMedia: { id: string; ref: number },
+  productPlaintext: string,
   plaintextChanged: boolean,
   channelDoc: { id: string; satsrailProductTypeId: string | null },
   errors: ImportError[],
@@ -415,7 +497,7 @@ export async function handleExistingMediaProduct(
 
   if (existingProduct) {
     try {
-      await updateExistingProduct(sk, existingProduct, mData, plaintextChanged, channelDoc, externalRef, api, onStatus);
+      await updateExistingProduct(sk, existingProduct, mData, productPlaintext, plaintextChanged, channelDoc, externalRef, api, onStatus);
     } catch (err) {
       errors.push({ entity: "media_product", name: mData.name, error: `Product update failed: ${errorMsg(err)}` });
     }
@@ -429,15 +511,44 @@ export async function handleExistingMediaProduct(
       name: mData.product.name, price_cents: mData.product.price_cents,
       currency: mData.product.currency, access_duration_seconds: mData.product.access_duration_seconds,
       product_type_id: channelDoc.satsrailProductTypeId, external_ref: externalRef,
-    }, existingMedia.id, mData.source_url, api, onStatus);
+    }, existingMedia.id, productPlaintext, api, onStatus);
   } catch (err) {
     errors.push({ entity: "media_product", name: mData.name, error: `Product creation failed: ${errorMsg(err)}` });
   }
 }
 
-/** Read the plaintext stored in Media.blob (URL, body, or wrapped DEK). */
-function plaintextFromMediaRow(media: { blob: unknown }): string {
-  return plaintextForEncryption(parseMediaBlob(media.blob));
+/**
+ * Read the "source plaintext" stored on a Media row — the value that should
+ * match `mData.source_url` for change detection. For envelope-encrypted
+ * media we decrypt the envelope to recover the original markdown body.
+ */
+async function sourceFromMediaRow(media: { blob: unknown }): Promise<string> {
+  const blob = parseMediaBlob(media.blob);
+  if (blob.kind === "url") return blob.url;
+  if (blob.kind === "article") {
+    const envelope = await prisma.encryptedEnvelope.findUnique({
+      where: { id: blob.envelopeId },
+      select: { bytes: true },
+    });
+    if (!envelope) return "";
+    const dek = unwrapDek(blob.encryptedDek);
+    return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
+  }
+  // photo: opaque envelopeId; not import-supported but keep symmetry
+  return blob.envelopeId;
+}
+
+/**
+ * Read what should be encrypted under each product key for a Media row.
+ * Mirrors plaintextForEncryption but with the DEK unwrapped for envelope
+ * kinds.
+ */
+function productPlaintextFromMediaRow(media: { blob: unknown }): string {
+  const blob = parseMediaBlob(media.blob);
+  if (blob.kind === "photo" || blob.kind === "article") {
+    return unwrapDekToBase64url(blob.encryptedDek);
+  }
+  return plaintextForEncryption(blob);
 }
 
 // Find existing media by ref or name
@@ -463,9 +574,9 @@ export async function updateExistingMedia(
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  const oldPlaintext = plaintextFromMediaRow(existingMedia);
-  const plaintextChanged = Boolean(mData.source_url && mData.source_url !== oldPlaintext);
-  const newBlob = buildBlobForImport(mData);
+  const oldSource = await sourceFromMediaRow(existingMedia);
+  const sourceChanged = Boolean(mData.source_url && mData.source_url !== oldSource);
+  const { blob: newBlob, productPlaintext } = await buildArtifactsForImport(mData, existingMedia.blob);
 
   await onStatus?.("Updating media record...");
   await prisma.media.update({
@@ -482,7 +593,23 @@ export async function updateExistingMedia(
   });
 
   if (mData.product && sk) {
-    await handleExistingMediaProduct(sk, mData as ImportMediaWithProduct, existingMedia, plaintextChanged, channelDoc, errors, api, onStatus);
+    // For articles, the per-product blob's plaintext is the raw DEK — which
+    // doesn't change when the markdown body changes. For url media, the
+    // plaintext IS the URL. So per-product re-encryption is needed only when
+    // the productPlaintext itself changed.
+    const oldProductPlaintext = productPlaintextFromMediaRow(existingMedia);
+    const productPlaintextChanged = sourceChanged && oldProductPlaintext !== productPlaintext;
+    await handleExistingMediaProduct(
+      sk,
+      mData as ImportMediaWithProduct,
+      existingMedia,
+      productPlaintext,
+      productPlaintextChanged,
+      channelDoc,
+      errors,
+      api,
+      onStatus
+    );
   }
 }
 
@@ -496,10 +623,9 @@ export async function createNewMedia(
 ): Promise<void> {
   // Photo media is unsupported in JSON import flow: photos require uploading
   // raw bytes through /api/admin/photos (which generates the per-photo DEK
-  // and writes ciphertext to the EncryptedPhotoBlob table). A URL-based
+  // and writes ciphertext to the EncryptedEnvelope table). A URL-based
   // import has no way to produce the encrypted bytes or the DEK envelope, so
-  // the imported row would be unviewable. Throwing here surfaces as an entry
-  // in results.errors (route catches via try/catch).
+  // the imported row would be unviewable.
   if (mData.media_type === "photo") {
     throw new Error(
       "Photo media cannot be imported from JSON — upload via /api/admin/photos to encrypt the bytes."
@@ -513,6 +639,8 @@ export async function createNewMedia(
     select: { position: true },
   });
 
+  const { blob, productPlaintext } = await buildArtifactsForImport(mData, null);
+
   // If the import payload specifies a `ref`, honor it (preserves the source
   // identity on replay/restore). Otherwise Postgres's autoincrement assigns
   // one. Either way we read `media.ref` back for the SatsRail external_ref.
@@ -522,7 +650,7 @@ export async function createNewMedia(
       channelId: channelDoc.id,
       name: mData.name,
       description: mData.description || "",
-      blob: buildBlobForImport(mData),
+      blob,
       mediaType: mData.media_type || "video",
       thumbnailUrl: mData.thumbnail_url || "",
       previewImageUrls: mData.preview_image_urls || [],
@@ -537,7 +665,7 @@ export async function createNewMedia(
         currency: mData.product.currency, access_duration_seconds: mData.product.access_duration_seconds,
         product_type_id: channelDoc.satsrailProductTypeId,
         external_ref: mData.product.external_ref || `md_${media.ref}`,
-      }, media.id, mData.source_url, api, onStatus);
+      }, media.id, productPlaintext, api, onStatus);
     } catch (err) {
       errors.push({ entity: "media_product", name: mData.name, error: `Product creation failed: ${errorMsg(err)}` });
     }
@@ -599,8 +727,8 @@ export async function createEncryptedChannelProduct(
           data: {
             productId: existing.id,
             mediaId: m.id,
-            encryptedSourceUrl: encryptSourceUrl(
-              plaintextForEncryption(parseMediaBlob(m.blob)),
+            encryptedSource: encryptSourceUrl(
+              productPlaintextFromMediaRow(m),
               keyResult.key,
               keyResult.productId
             ),
@@ -651,8 +779,8 @@ export async function createEncryptedChannelProduct(
       mediaEncryptedBlobs: {
         create: mediaItems.map((m) => ({
           mediaId: m.id,
-          encryptedSourceUrl: encryptSourceUrl(
-            plaintextForEncryption(parseMediaBlob(m.blob)),
+          encryptedSource: encryptSourceUrl(
+            productPlaintextFromMediaRow(m),
             keyResult.key,
             keyResult.productId
           ),

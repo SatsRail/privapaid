@@ -5,26 +5,119 @@ import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import { encryptSourceUrl } from "@/lib/content-encryption";
+import { encryptBytes, encryptSourceUrl } from "@/lib/content-encryption";
+import { unwrapDek } from "@/lib/content-dek";
 import {
   parseMediaBlob,
-  plaintextForEncryption,
   type MediaBlob,
 } from "@/lib/schemas/media-blob";
 import type { Prisma } from "@prisma/client";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
+const ARTICLE_MIME = "text/markdown; charset=utf-8";
 
 /**
- * Build the updated blob payload when source_url changes. Photos don't go
- * through this path (their `blob` is set at upload time and shouldn't be
- * rewritten by a PATCH; the photo is identified by its EncryptedPhotoBlob id
- * and cannot be re-aimed at a different blob by an admin edit).
+ * Group MediaTypes by the underlying blob shape they require. Cross-class
+ * changes via PATCH are rejected (see PATCH handler) — they'd leave the
+ * Media.blob payload mismatched with Media.mediaType.
  */
-function buildBlobForUpdate(sourceUrl: string, mediaType: MediaType): MediaBlob | null {
-  if (mediaType === "photo") return null; // photos: blob is immutable on PATCH
-  if (mediaType === "article") return { kind: "markdown", body: sourceUrl };
-  return { kind: "url", url: sourceUrl };
+function kindClassFor(mediaType: MediaType): "url" | "photo" | "article" {
+  switch (mediaType) {
+    case "photo":
+      return "photo";
+    case "article":
+      return "article";
+    default:
+      return "url";
+  }
+}
+
+/**
+ * Plan returned by `prepareUpdatePlan` — pure (no DB writes). The PATCH
+ * handler executes the envelope row creation + Media.update in a single
+ * transaction so a partial failure can't orphan the new envelope.
+ */
+type UpdatePlan =
+  | { kind: "noop" }
+  | {
+      kind: "url";
+      blob: MediaBlob;
+      perProductPlaintext: string | null;
+    }
+  | {
+      kind: "article";
+      envelopeWrite: { bytes: Buffer; mimeType: string };
+      encryptedDek: string;
+      mimeType: string;
+    };
+
+/**
+ * Reconcile the Media row + envelope ciphertext for a source_url change.
+ *
+ * Article PATCH allocates a NEW EncryptedEnvelope row each time (content-
+ * addressed URLs) and points Media.blob.envelopeId at it. This keeps the
+ * `/api/envelopes/[id]` cache header `immutable` correct — a CDN that
+ * fetched the old id can keep serving stale bytes forever and that's fine
+ * because nothing references the old id anymore. The old row becomes
+ * orphan and is reaped by the envelope-cleanup cron.
+ *
+ * Photo blobs are immutable on PATCH — the photo is identified by its
+ * envelope id at upload time and a body re-upload requires re-running
+ * /api/admin/photos to mint a fresh DEK + envelope.
+ */
+function prepareUpdatePlan(
+  sourceUrl: string,
+  newType: MediaType,
+  existingBlob: MediaBlob | null
+): UpdatePlan | { error: string } {
+  if (newType === "photo") {
+    if (existingBlob && existingBlob.kind !== "photo") {
+      return {
+        error:
+          "Cannot change media_type to photo via PATCH; delete and recreate the media item",
+      };
+    }
+    return { kind: "noop" };
+  }
+
+  if (newType === "article") {
+    if (!existingBlob || existingBlob.kind !== "article") {
+      return {
+        error:
+          "Cannot change media_type to article via PATCH; delete and recreate the media item",
+      };
+    }
+    // Re-use the existing DEK so per-product blobs stay valid, but allocate
+    // a fresh envelope row so the public URL is content-addressed and any
+    // cached old ciphertext stays linked to the old (now orphan) id.
+    let dekBytes: Buffer;
+    try {
+      dekBytes = unwrapDek(existingBlob.encryptedDek);
+    } catch (err) {
+      return {
+        error: `Failed to unwrap article DEK: ${err instanceof Error ? err.message : "unknown"}`,
+      };
+    }
+    const ciphertext = encryptBytes(Buffer.from(sourceUrl, "utf8"), dekBytes);
+    return {
+      kind: "article",
+      envelopeWrite: { bytes: ciphertext, mimeType: ARTICLE_MIME },
+      encryptedDek: existingBlob.encryptedDek,
+      mimeType: ARTICLE_MIME,
+    };
+  }
+
+  // url-backed kinds (video/audio/podcast)
+  if (existingBlob && existingBlob.kind !== "url") {
+    return {
+      error: `Cannot change media_type to ${newType} via PATCH; delete and recreate the media item`,
+    };
+  }
+  return {
+    kind: "url",
+    blob: { kind: "url", url: sourceUrl },
+    perProductPlaintext: sourceUrl,
+  };
 }
 
 async function reEncryptBlobs(
@@ -57,7 +150,7 @@ async function reEncryptBlobs(
       const encrypted = encryptSourceUrl(newPlaintext, key, pid);
       await prisma.mediaEncryptedBlob.update({
         where: { id: b.id },
-        data: { encryptedSourceUrl: encrypted },
+        data: { encryptedSource: encrypted },
       });
     }
   } catch (err) {
@@ -116,6 +209,23 @@ export async function PATCH(
   const newType: MediaType =
     (validated.media_type as MediaType | undefined) ?? (existing.mediaType as MediaType);
 
+  // Cross-kind media_type changes (url ↔ photo ↔ article) would leave the
+  // Media.blob shape mismatched with Media.mediaType — and for envelope kinds
+  // they'd orphan or mis-reference the existing EncryptedEnvelope row. Reject
+  // them and tell the admin to delete + recreate.
+  if (validated.media_type !== undefined && newType !== existing.mediaType) {
+    const oldKindClass = kindClassFor(existing.mediaType as MediaType);
+    const newKindClass = kindClassFor(newType);
+    if (oldKindClass !== newKindClass) {
+      return NextResponse.json(
+        {
+          error: `Cannot change media_type from ${existing.mediaType} to ${newType} via PATCH; delete and recreate the media item`,
+        },
+        { status: 422 }
+      );
+    }
+  }
+
   const updates: Prisma.MediaUpdateInput = {};
   if (validated.name !== undefined) updates.name = validated.name;
   if (validated.description !== undefined) updates.description = validated.description;
@@ -123,31 +233,67 @@ export async function PATCH(
   if (validated.thumbnail_url !== undefined) updates.thumbnailUrl = validated.thumbnail_url;
   if (validated.position !== undefined) updates.position = validated.position;
 
-  let plaintextChanged = false;
+  let plan: UpdatePlan | null = null;
+  let existingBlob: MediaBlob | null = null;
   if (validated.source_url !== undefined) {
-    const newBlob = buildBlobForUpdate(validated.source_url, newType);
-    if (newBlob !== null) {
-      updates.blob = newBlob;
-      const oldPlaintext = (() => {
-        try {
-          return plaintextForEncryption(parseMediaBlob(existing.blob));
-        } catch {
-          return null;
-        }
-      })();
-      plaintextChanged = oldPlaintext !== validated.source_url;
+    existingBlob = (() => {
+      try {
+        return parseMediaBlob(existing.blob);
+      } catch {
+        return null;
+      }
+    })();
+    const result = prepareUpdatePlan(validated.source_url, newType, existingBlob);
+    if ("error" in result) {
+      return NextResponse.json({ error: result.error }, { status: 422 });
     }
+    plan = result;
+    if (plan.kind === "url") {
+      updates.blob = plan.blob;
+    }
+    // For "article", `updates.blob` is filled inside the transaction below
+    // once the new envelope id is known.
   }
 
   let media;
+  let perProductPlaintext: string | null = null;
   try {
-    media = await prisma.media.update({ where: { id }, data: updates });
-  } catch {
+    media = await prisma.$transaction(async (tx) => {
+      if (plan?.kind === "article") {
+        const envelope = await tx.encryptedEnvelope.create({
+          data: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bytes: plan.envelopeWrite.bytes as any,
+            mimeType: plan.envelopeWrite.mimeType,
+          },
+          select: { id: true },
+        });
+        updates.blob = {
+          kind: "article",
+          envelopeId: envelope.id,
+          encryptedDek: plan.encryptedDek,
+          mimeType: plan.mimeType,
+        };
+      }
+      return tx.media.update({ where: { id }, data: updates });
+    });
+  } catch (err) {
+    // Validation already passed; the most likely cause is a concurrent
+    // delete or a Prisma RecordNotFound. Map to 404; if it's anything else
+    // it'll surface in the server log.
+    console.error(`media.PATCH ${id} failed:`, err);
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (plaintextChanged && validated.source_url) {
-    await reEncryptBlobs(media.id, validated.source_url);
+  if (plan?.kind === "url" && plan.perProductPlaintext !== null) {
+    const oldPlaintext = existingBlob?.kind === "url" ? existingBlob.url : null;
+    if (oldPlaintext !== plan.perProductPlaintext) {
+      perProductPlaintext = plan.perProductPlaintext;
+    }
+  }
+
+  if (perProductPlaintext !== null) {
+    await reEncryptBlobs(media.id, perProductPlaintext);
   }
 
   return NextResponse.json({ data: media });
@@ -225,18 +371,19 @@ export async function DELETE(
     });
   }
 
-  // For photo media, clean up the EncryptedPhotoBlob so we don't leak storage.
-  // The bytes are useless without a DEK envelope (which we just deleted along
-  // with the Product rows), but they still occupy space.
-  if (media.mediaType === "photo") {
+  // For envelope-encrypted media (photo, article), clean up the
+  // EncryptedEnvelope row so we don't leak storage. The bytes are useless
+  // without a DEK (which we just deleted along with the Product rows), but
+  // they still occupy space.
+  if (media.mediaType === "photo" || media.mediaType === "article") {
     try {
       const blob = parseMediaBlob(media.blob);
-      if (blob.kind === "photo") {
-        await prisma.encryptedPhotoBlob.delete({ where: { id: blob.blobId } });
+      if (blob.kind === "photo" || blob.kind === "article") {
+        await prisma.encryptedEnvelope.delete({ where: { id: blob.envelopeId } });
       }
     } catch (err) {
       console.error(
-        `media.delete: failed to remove encrypted photo blob for media ${media.id}:`,
+        `media.delete: failed to remove encrypted envelope for media ${media.id}:`,
         err
       );
       // Continue — orphaned bytes are a soft failure, not a blocking one

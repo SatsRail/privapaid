@@ -79,7 +79,7 @@ export async function getProductsForMedia(
       ...archivedProductFilter,
     },
     select: {
-      encryptedSourceUrl: true,
+      encryptedSource: true,
       keyFingerprint: true,
       product: {
         select: {
@@ -92,10 +92,10 @@ export async function getProductsForMedia(
 
   const products: GatedProduct[] = [];
   for (const b of blobs) {
-    if (!b.encryptedSourceUrl) continue;
+    if (!b.encryptedSource) continue;
     products.push({
       productId: b.product.satsrailProductId,
-      encryptedBlob: b.encryptedSourceUrl,
+      encryptedBlob: b.encryptedSource,
       keyFingerprint: b.keyFingerprint ?? undefined,
       status: b.product.productStatus ?? undefined,
     });

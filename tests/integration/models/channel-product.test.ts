@@ -78,14 +78,14 @@ describe("Product (channel-scoped) + MediaEncryptedBlob", () => {
     const cp = await createChannelProduct({
       channelId: channel.id,
       satsrailProductId: "prod_media",
-      encryptedMedia: [{ mediaId: media.id, encryptedSourceUrl: "base64_encrypted_blob" }],
+      encryptedMedia: [{ mediaId: media.id, encryptedSource: "base64_encrypted_blob" }],
     });
     const blobs = await prisma.mediaEncryptedBlob.findMany({
       where: { productId: cp.id },
     });
     expect(blobs).toHaveLength(1);
     expect(blobs[0].mediaId).toBe(media.id);
-    expect(blobs[0].encryptedSourceUrl).toBe("base64_encrypted_blob");
+    expect(blobs[0].encryptedSource).toBe("base64_encrypted_blob");
   });
 
   it("stores cached product metadata", async () => {

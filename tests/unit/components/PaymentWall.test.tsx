@@ -974,7 +974,10 @@ describe("PaymentWall", () => {
         return { ok: false, status: 404, json: async () => ({}) };
       });
 
-      render(<StatefulPaymentWall {...defaultProps} mediaType="article" />);
+      // Use url-backed media (video) so this test focuses on the macaroon
+      // side-channel without needing an envelope-fetch mock for the
+      // decrypt step.
+      render(<StatefulPaymentWall {...defaultProps} mediaType="video" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);
       await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
@@ -989,7 +992,7 @@ describe("PaymentWall", () => {
             extra: expect.objectContaining({
               mediaId: "media-123",
               activeProductId: "prod-1",
-              mediaType: "article",
+              mediaType: "video",
               status: 503,
             }),
           })

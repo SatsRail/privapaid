@@ -22,16 +22,16 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
 
-import { GET } from "@/app/api/photos/[id]/route";
+import { GET } from "@/app/api/envelopes/[id]/route";
 
 function buildRequest(id: string): [NextRequest, { params: Promise<{ id: string }> }] {
-  const req = new NextRequest(new URL(`http://localhost:3000/api/photos/${id}`), {
+  const req = new NextRequest(new URL(`http://localhost:3000/api/envelopes/${id}`), {
     method: "GET",
   });
   return [req, { params: Promise.resolve({ id }) }];
 }
 
-describe("GET /api/photos/[id]", () => {
+describe("GET /api/envelopes/[id]", () => {
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -57,7 +57,7 @@ describe("GET /api/photos/[id]", () => {
     const res = await GET(req, ctx);
     const body = await res.json();
     expect(res.status).toBe(400);
-    expect(body.error).toMatch(/Invalid photo ID/i);
+    expect(body.error).toMatch(/Invalid envelope ID/i);
   });
 
   it("returns 404 when the encrypted photo is missing", async () => {
@@ -65,7 +65,7 @@ describe("GET /api/photos/[id]", () => {
     const res = await GET(req, ctx);
     const body = await res.json();
     expect(res.status).toBe(404);
-    expect(body.error).toBe("Photo not found");
+    expect(body.error).toBe("Envelope not found");
   });
 
   it("streams ciphertext with application/octet-stream — not an image MIME", async () => {
@@ -74,7 +74,7 @@ describe("GET /api/photos/[id]", () => {
     // `image/jpeg` would tempt browsers to try and render it (and could give
     // false confidence about what's being served).
     const ciphertext = Buffer.from([0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe]);
-    const blob = await prisma.encryptedPhotoBlob.create({
+    const blob = await prisma.encryptedEnvelope.create({
       data: { bytes: ciphertext, mimeType: "image/jpeg" },
       select: { id: true },
     });
@@ -97,7 +97,7 @@ describe("GET /api/photos/[id]", () => {
       Buffer.from([0x01, 0x02]),
       Buffer.from([0x03, 0x04, 0x05]),
     ]);
-    const blob = await prisma.encryptedPhotoBlob.create({
+    const blob = await prisma.encryptedEnvelope.create({
       data: { bytes: payload, mimeType: "image/png" },
       select: { id: true },
     });
@@ -114,7 +114,7 @@ describe("GET /api/photos/[id]", () => {
       NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 })
     );
     // Seed a row so a non-rate-limited request would otherwise succeed.
-    const blob = await prisma.encryptedPhotoBlob.create({
+    const blob = await prisma.encryptedEnvelope.create({
       data: { bytes: Buffer.from([0x00]), mimeType: "image/png" },
       select: { id: true },
     });
@@ -127,7 +127,7 @@ describe("GET /api/photos/[id]", () => {
     // Test the contract by simply NOT mocking auth: if the route required auth
     // it would 401 here. Confirm it returns the bytes.
     const ciphertext = Buffer.from([0xaa, 0xbb]);
-    const blob = await prisma.encryptedPhotoBlob.create({
+    const blob = await prisma.encryptedEnvelope.create({
       data: { bytes: ciphertext, mimeType: "image/jpeg" },
       select: { id: true },
     });
@@ -139,7 +139,7 @@ describe("GET /api/photos/[id]", () => {
 
   it("returns 500 with a structured error when the DB lookup throws", async () => {
     const spy = vi
-      .spyOn(prisma.encryptedPhotoBlob, "findUnique")
+      .spyOn(prisma.encryptedEnvelope, "findUnique")
       .mockRejectedValueOnce(new Error("db broke"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -147,7 +147,7 @@ describe("GET /api/photos/[id]", () => {
     const res = await GET(req, ctx);
     const body = await res.json();
     expect(res.status).toBe(500);
-    expect(body.error).toMatch(/Failed to serve photo/i);
+    expect(body.error).toMatch(/Failed to serve envelope/i);
 
     spy.mockRestore();
     errSpy.mockRestore();

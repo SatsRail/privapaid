@@ -95,7 +95,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_unlock",
-        encryptedSourceUrl: "encrypted_blob_123",
+        encryptedSource: "encrypted_blob_123",
         keyFingerprint: "fp_abc",
       });
 
@@ -126,7 +126,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         channelId: channel.id,
         satsrailProductId: "prod_ch_unlock",
         keyFingerprint: "fp_ch",
-        encryptedMedia: [{ mediaId: media.id, encryptedSourceUrl: "ch_encrypted_blob" }],
+        encryptedMedia: [{ mediaId: media.id, encryptedSource: "ch_encrypted_blob" }],
       });
 
     return { channelId: channel.id, mediaId: media.id };
@@ -218,7 +218,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived",
-        encryptedSourceUrl: "enc_blob_archived",
+        encryptedSource: "enc_blob_archived",
         keyFingerprint: "fp_archived",
         productStatus: "archived",
       });
@@ -269,7 +269,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived_no_mac",
-        encryptedSourceUrl: "enc_blob",
+        encryptedSource: "enc_blob",
         productStatus: "archived",
       });
 
@@ -418,7 +418,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         satsrailProductId: "prod_cp_archived",
         keyFingerprint: "fp_cp_arch",
         productStatus: "archived",
-        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "cp_enc_blob" }],
+        encryptedMedia: [{ mediaId: mid, encryptedSource: "cp_enc_blob" }],
       });
 
     mockCookieStore._set(
@@ -515,7 +515,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_media_individual",
-        encryptedSourceUrl: "media_encrypted_blob",
+        encryptedSource: "media_encrypted_blob",
         keyFingerprint: "fp_media",
         productStatus: "active",
       });
@@ -525,7 +525,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         satsrailProductId: "prod_channel_bundle",
         keyFingerprint: "fp_channel",
         productStatus: "active",
-        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "channel_encrypted_blob" }],
+        encryptedMedia: [{ mediaId: mid, encryptedSource: "channel_encrypted_blob" }],
       });
 
     return { channelId: channel.id, mediaId: mid };
@@ -603,7 +603,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
     await createMediaProduct({
         mediaId: mid,
         satsrailProductId: "prod_archived_media",
-        encryptedSourceUrl: "archived_blob",
+        encryptedSource: "archived_blob",
         keyFingerprint: "fp_archived",
         productStatus: "archived",
       });
@@ -613,7 +613,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         satsrailProductId: "prod_active_channel",
         keyFingerprint: "fp_active_ch",
         productStatus: "active",
-        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "active_ch_blob" }],
+        encryptedMedia: [{ mediaId: mid, encryptedSource: "active_ch_blob" }],
       });
 
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_active_channel: "mac_active" }));
@@ -673,7 +673,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         satsrailProductId: "prod_cp_weekly",
         keyFingerprint: "fp_weekly",
         productStatus: "active",
-        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "weekly_blob" }],
+        encryptedMedia: [{ mediaId: mid, encryptedSource: "weekly_blob" }],
       });
 
     await createChannelProduct({
@@ -681,7 +681,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         satsrailProductId: "prod_cp_monthly",
         keyFingerprint: "fp_monthly",
         productStatus: "active",
-        encryptedMedia: [{ mediaId: mid, encryptedSourceUrl: "monthly_blob" }],
+        encryptedMedia: [{ mediaId: mid, encryptedSource: "monthly_blob" }],
       });
 
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_cp_monthly: "mac_monthly" }));

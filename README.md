@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml/badge.svg)](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/SatsRail/privapaid/branch/main/graph/badge.svg)](https://codecov.io/gh/SatsRail/privapaid)
 
-Open-source, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
+Source-available, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
 
 The buyer-facing copy of every piece of content is encrypted at rest, and decryption happens entirely in the buyer's browser after payment — the server never decrypts content for a buyer. SatsRail manages encryption keys and payment verification but never sees your content. PrivaPaid never touches customer funds.
 
@@ -60,6 +60,10 @@ If you'd rather deploy your own fork manually:
 5. **Deploy:** Railway redeploys automatically when variables change. Once the healthcheck on `/api/health` passes, open the public URL and complete the setup wizard.
 
 > **Important:** always set `NEXTAUTH_SECRET` and `SK_ENCRYPTION_KEY` explicitly. Railway containers have ephemeral filesystems, so the entrypoint's auto-generated secrets would rotate on every restart — invalidating sessions and breaking decryption of existing content.
+
+> **Set `CONTENT_KEK`** (32-byte base64, e.g. `openssl rand -base64 32`). Wraps the per-content DEK on `Media.blob.encryptedDek` so envelope-encrypted content (photos, articles) can be rotated without SatsRail's old key. Lose this and you can't re-encrypt envelopes. Previous versions used `PHOTO_KEK`; if you're upgrading, rename the variable (same value).
+
+> **Slow-migration escape hatch:** if a migration ever times out against Railway's startup window and gets killed mid-run, `_prisma_migrations` will hold a row with `started_at` set but no `finished_at` — and every subsequent deploy will fail fast with a diagnostic. Repair by following the instructions in the entrypoint log (typically `DELETE FROM "_prisma_migrations" WHERE finished_at IS NULL;` on an empty schema, or `npx prisma migrate resolve --rolled-back <name>` otherwise). To skip auto-migration entirely and run `prisma migrate deploy` as a separate step instead, set `RUN_MIGRATIONS=false`.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for EC2, Docker, and other deployment options.
 
@@ -205,21 +209,21 @@ splits the IV from the ciphertext+tag and decrypts using the Web Crypto API
 after payment. The server plays no role in buyer-side decryption.
 
 PrivaPaid also persists a **plaintext recovery copy** of each item on the
-`Media` row — `Media.sourceUrl` for video/audio/article/podcast, and
-`Media.encryptedDek` (the per-photo DEK wrapped under the operator's
-`PHOTO_KEK`, decryptable server-side without SatsRail) for photos. This copy
-exists so admin-triggered key rotation can re-encrypt every product blob in a
-single in-DB operation, without depending on SatsRail still returning the old
-product key — that pipeline has failed in practice and used to brick rotations
-mid-way through.
+`Media` row — `Media.blob.url` for video/audio/podcast, and
+`Media.blob.encryptedDek` (the per-content DEK wrapped under the operator's
+`CONTENT_KEK`, decryptable server-side without SatsRail) for envelope-encrypted
+media (photos, articles). This copy exists so admin-triggered key rotation can
+re-encrypt every product blob in a single in-DB operation, without depending
+on SatsRail still returning the old product key — that pipeline has failed in
+practice and used to brick rotations mid-way through.
 
 The cost of that choice is that a full Postgres dump now exposes the plaintext
-source for non-photo media (and the wrapped DEK for photos, which stays opaque
-unless `PHOTO_KEK` is also leaked). Mitigations:
+URL for url-backed media (and the wrapped DEK for envelope-encrypted media,
+which stays opaque unless `CONTENT_KEK` is also leaked). Mitigations:
 
 - **No public route returns these fields.** The viewer page deliberately
-  forwards `sourceUrl` only when `mediaType === 'photo'`, and only as an
-  `EncryptedPhotoBlob.id` pointer to encrypted bytes. Regression test:
+  forwards only the `EncryptedEnvelope.id` pointer for envelope-encrypted
+  media, and only the URL ciphertext for url-backed media. Regression test:
   `tests/integration/pages/viewer-photo-page.test.ts`.
 - **Admin-only API surface.** Every endpoint that reads the plaintext fields
   lives under `/api/admin/*` and is gated by middleware + `requireOwnerApi()`
@@ -228,8 +232,13 @@ unless `PHOTO_KEK` is also leaked). Mitigations:
   `satsrail_api_key`, `macaroon`, `authorization`, `cookie`, and `sk_*`/`pk_*`
   keys from every captured event so a mid-rotation error doesn't ship
   plaintext to the error tracker. See `src/lib/sentry-scrub.ts`.
-- **`PHOTO_KEK` lives in env**, not the DB. Photo DEKs stay opaque under a
-  Postgres-only breach.
+- **`CONTENT_KEK` lives in env**, not the DB. Per-content DEKs stay opaque
+  under a Postgres-only breach.
+
+> **Migrating from `PHOTO_KEK`**: previous versions used a `PHOTO_KEK` env var
+> for the same purpose. Rename `PHOTO_KEK=<value>` to `CONTENT_KEK=<value>` in
+> your `.env` / secrets store before deploying — the value is unchanged, only
+> the variable name. The old name is no longer read.
 
 Full discussion lives in [docs/ENCRYPTION.md](docs/ENCRYPTION.md) § "Threat model".
 
@@ -325,5 +334,9 @@ Outputs a single JSON object summarising the run. Exits 0 on success, 2 if any i
 
 ## License
 
-[MIT](LICENSE)
+[FSL-1.1-ALv2](LICENSE) — Functional Source License, version 1.1, with Apache 2.0 as the future license.
+
+You can use, copy, modify, and redistribute PrivaPaid for any purpose other than a **Competing Use** (offering it as a hosted product or service that substitutes for SatsRail's offering). Two years after each release, that release also becomes available under [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+See [LICENSE](LICENSE) for the full text. The FSL is a [fair-source](https://fair.io/) license originally written by Sentry — it lets you self-host, fork, deploy for clients, and build commercial businesses on top, while reserving the narrow case of building a competing platform.
 

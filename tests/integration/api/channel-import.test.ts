@@ -287,7 +287,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
     expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
-    expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
+    expect(mediaProducts[0].encryptedSource).toBeDefined();
     expect(mediaProducts[0].keyFingerprint).toBe("fp_123");
   });
 
@@ -421,7 +421,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_re",
-        encryptedSourceUrl: "old_encrypted_blob",
+        encryptedSource: "old_encrypted_blob",
         keyFingerprint: "old_fp",
       });
 
@@ -446,7 +446,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
     // MediaProduct should be updated with new encrypted URL
     const mp = await findFirstMediaProduct({ mediaId: media.id });
-    expect(mp!.encryptedSourceUrl).not.toBe("old_encrypted_blob");
+    expect(mp!.encryptedSource).not.toBe("old_encrypted_blob");
     expect(mp!.keyFingerprint).toBe("new_fp");
   });
 

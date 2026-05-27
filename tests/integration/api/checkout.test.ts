@@ -101,7 +101,7 @@ describe("Checkout API — POST /api/checkout", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_1",
-      encryptedSourceUrl: "enc_blob",
+      encryptedSource: "enc_blob",
     });
 
     return { channelId: channel.id, mediaId: media.id };
@@ -130,7 +130,7 @@ describe("Checkout API — POST /api/checkout", () => {
     await createChannelProduct({
       channelId: channel.id,
       satsrailProductId: "prod_ch",
-      encryptedMedia: [{ mediaId: media.id, encryptedSourceUrl: "ch_enc_blob" }],
+      encryptedMedia: [{ mediaId: media.id, encryptedSource: "ch_enc_blob" }],
     });
 
     return { channelId: channel.id, mediaId: media.id };

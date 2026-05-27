@@ -23,7 +23,7 @@ export async function GET(
       mediaEncryptedBlobs: {
         select: {
           mediaId: true,
-          encryptedSourceUrl: true,
+          encryptedSource: true,
           keyFingerprint: true,
           createdAt: true,
         },
@@ -53,10 +53,10 @@ export async function GET(
       media_name: media?.name || "Unknown",
       media_type: media?.mediaType || "unknown",
       media_ref: media?.ref ?? null,
-      blob_preview: row.encryptedSourceUrl
-        ? `${row.encryptedSourceUrl.slice(0, 24)}...${row.encryptedSourceUrl.slice(-8)}`
+      blob_preview: row.encryptedSource
+        ? `${row.encryptedSource.slice(0, 24)}...${row.encryptedSource.slice(-8)}`
         : null,
-      blob_length: row.encryptedSourceUrl?.length ?? 0,
+      blob_length: row.encryptedSource?.length ?? 0,
       key_fingerprint: row.keyFingerprint ?? product.keyFingerprint ?? null,
       created_at: row.createdAt.toISOString(),
     };

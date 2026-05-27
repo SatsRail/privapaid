@@ -180,19 +180,19 @@ describe("Admin Channels [id] routes", () => {
       await createMediaProduct({
           mediaId: m1.id,
           satsrailProductId: "prod_media_1",
-          encryptedSourceUrl: "blob1",
+          encryptedSource: "blob1",
         });
       await createMediaProduct({
           mediaId: m2.id,
           satsrailProductId: "prod_media_2",
-          encryptedSourceUrl: "blob2",
+          encryptedSource: "blob2",
         });
       await createChannelProduct({
           channelId: channel.id,
           satsrailProductId: "prod_channel_1",
           encryptedMedia: [
-              { mediaId: m1.id, encryptedSourceUrl: "blob1" },
-              { mediaId: m2.id, encryptedSourceUrl: "blob2" },
+              { mediaId: m1.id, encryptedSource: "blob1" },
+              { mediaId: m2.id, encryptedSource: "blob2" },
             ],
         });
 
@@ -243,12 +243,12 @@ describe("Admin Channels [id] routes", () => {
       await createMediaProduct({
           mediaId: m1.id,
           satsrailProductId: "prod_ok",
-          encryptedSourceUrl: "blob",
+          encryptedSource: "blob",
         });
       await createMediaProduct({
           mediaId: m2.id,
           satsrailProductId: "prod_broken",
-          encryptedSourceUrl: "blob2",
+          encryptedSource: "blob2",
         });
 
       mockDeleteProduct.mockImplementation(async (_sk: string, productId: string) => {
@@ -287,7 +287,7 @@ describe("Admin Channels [id] routes", () => {
       await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: "prod_skip",
-          encryptedSourceUrl: "blob",
+          encryptedSource: "blob",
         });
 
       const merchantKey = await import("@/lib/merchant-key");
@@ -312,7 +312,7 @@ describe("Admin Channels [id] routes", () => {
       await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: "prod_string_err",
-          encryptedSourceUrl: "blob",
+          encryptedSource: "blob",
         });
 
       // Throw a non-Error so we hit the "Unknown error" fallback branch

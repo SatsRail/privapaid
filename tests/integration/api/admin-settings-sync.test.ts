@@ -123,7 +123,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     const mp = await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_1",
-      encryptedSourceUrl: "enc_url",
+      encryptedSource: "enc_url",
     });
 
     const cp = await createChannelProduct({
@@ -234,7 +234,7 @@ describe("Admin Settings Sync — POST /api/admin/settings/sync", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_orphan",
-      encryptedSourceUrl: "enc",
+      encryptedSource: "enc",
       productName: "Old Name",
     });
 

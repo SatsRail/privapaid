@@ -2,13 +2,24 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
+import { decryptBytes } from "@/lib/content-encryption";
+import { unwrapDek } from "@/lib/content-dek";
 
-function sourceUrlForExport(blob: unknown): string {
+async function sourceUrlForExport(blob: unknown): Promise<string> {
   try {
     const parsed = parseMediaBlob(blob);
     if (parsed.kind === "url") return parsed.url;
-    if (parsed.kind === "markdown") return parsed.body;
-    return parsed.blobId; // photo
+    if (parsed.kind === "photo") return parsed.envelopeId;
+    if (parsed.kind === "article") {
+      const envelope = await prisma.encryptedEnvelope.findUnique({
+        where: { id: parsed.envelopeId },
+        select: { bytes: true },
+      });
+      if (!envelope) return "";
+      const dek = unwrapDek(parsed.encryptedDek);
+      return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
+    }
+    return "";
   } catch {
     return "";
   }
@@ -45,13 +56,13 @@ export async function GET(
       .map((mp) => [mp.mediaId, mp])
   );
 
-  const exportMedia = media.map((m) => {
+  const exportMedia = await Promise.all(media.map(async (m) => {
     const mp = productByMediaId.get(m.id);
     const item: Record<string, unknown> = {
       ref: m.ref,
       name: m.name,
       description: m.description || "",
-      source_url: sourceUrlForExport(m.blob),
+      source_url: await sourceUrlForExport(m.blob),
       media_type: m.mediaType,
       thumbnail_url: m.thumbnailUrl || "",
       position: m.position,
@@ -69,7 +80,7 @@ export async function GET(
     }
 
     return item;
-  });
+  }));
 
   const payload = {
     version: "1.0" as const,

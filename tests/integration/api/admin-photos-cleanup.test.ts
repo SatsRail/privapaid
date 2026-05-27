@@ -12,8 +12,8 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("@/lib/auth-helpers", () => ({ requireOwnerApi: mockRequireOwnerApi }));
 vi.mock("@/lib/audit", () => ({ audit: mockAudit }));
-vi.mock("@/lib/photo-cleanup", () => ({
-  cleanupOrphanEncryptedPhotos: mockCleanup,
+vi.mock("@/lib/envelope-cleanup", () => ({
+  cleanupOrphanEnvelopes: mockCleanup,
   DEFAULT_ORPHAN_GRACE_MS: 60 * 60 * 1000,
 }));
 
@@ -102,7 +102,7 @@ describe("POST /api/admin/photos/cleanup", () => {
       orphaned: 2,
       deleted: 1,
       skippedYoung: 1,
-      errors: [{ blobId: "abc", error: "boom" }],
+      errors: [{ envelopeId: "abc", error: "boom" }],
     });
 
     const res = await POST(buildRequest({ graceSeconds: 120 }));
@@ -130,7 +130,7 @@ describe("POST /api/admin/photos/cleanup", () => {
     await POST(buildRequest({}));
     expect(mockAudit).toHaveBeenCalledTimes(1);
     const entry = mockAudit.mock.calls[0][0];
-    expect(entry.action).toBe("photos.cleanup");
+    expect(entry.action).toBe("envelopes.cleanup");
     expect(entry.actorId).toBe("admin-1");
     expect(entry.details.deleted).toBe(1);
   });

@@ -134,9 +134,9 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
   });
 
   // -------------------------------------------------------------------
-  // ARTICLE
+  // ARTICLE — envelope encryption (parallels photo)
   // -------------------------------------------------------------------
-  it("article: create-product encrypts sourceUrl with portal key; same key decrypts back to original markdown", async () => {
+  it("article: admin POST envelope-encrypts the markdown; create-product wraps the DEK; client flow recovers original body", async () => {
     const channel = await createChannel({
       slug: "showcase-article-e2e",
       satsrailProductTypeId: "pt_article",
@@ -150,62 +150,99 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       "- [link](https://example.com)",
     ].join("\n");
 
-    const media = await prisma.media.create({
-      data: {
-        ref: 1,
-        channelId: channel.id,
+    // POST through /api/admin/media so the server-side envelope-encryption path
+    // for articles fires (generates DEK, writes EncryptedEnvelope, wraps DEK
+    // under CONTENT_KEK).
+    const createReq = buildJsonRequest(
+      "http://localhost:3000/api/admin/media",
+      {
+        channel_id: channel.id,
         name: "Article",
-        blob: { kind: "markdown", body: articleBody },
-        mediaType: "article",
-      },
-    });
+        source_url: articleBody,
+        media_type: "article",
+      }
+    );
+    const createRes = await adminMediaPOST(createReq);
+    expect(createRes.status).toBe(201);
+    const createJson = (await createRes.json()) as { data: { _id: string } };
+    const mediaId = createJson.data._id;
 
+    // Verify envelope-shaped blob landed on Media.blob.
+    const media = await prisma.media.findUnique({ where: { id: mediaId } });
+    const blobShape = media!.blob as {
+      kind: string;
+      envelopeId: string;
+      encryptedDek: string;
+      mimeType: string;
+    };
+    expect(blobShape.kind).toBe("article");
+    expect(blobShape.envelopeId).toBeTruthy();
+    expect(blobShape.encryptedDek).toBeTruthy();
+
+    // Create the product over this article — the per-product blob wraps the
+    // raw DEK (recovered via CONTENT_KEK), not the markdown.
     const req = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
+      `http://localhost:3000/api/admin/media/${mediaId}/create-product`,
       { name: "Article Product", price_cents: 1, access_duration_seconds: 86400 }
     );
-    const res = await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
+    const res = await createProductPOST(req, { params: Promise.resolve({ id: mediaId }) });
     expect(res.status).toBe(201);
 
-    const stored = await findFirstMediaProduct({ mediaId: media.id });
+    const stored = await findFirstMediaProduct({ mediaId });
     expect(stored).not.toBeNull();
     expect(stored!.satsrailProductId).toBe(FAKE_PRODUCT_ID);
     expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
-    expect(stored!.encryptedSourceUrl).toBeTruthy();
+    expect(stored!.encryptedSource).toBeTruthy();
 
-    const recovered = await clientDecryptBlob(
-      stored!.encryptedSourceUrl,
+    // Step 1 of the viewer flow: decrypt encryptedSource with the portal key
+    // to recover the raw DEK (base64url-encoded).
+    const dekRecovered = await clientDecryptBlob(
+      stored!.encryptedSource,
       FAKE_PORTAL_KEY,
       FAKE_PRODUCT_ID
+    );
+    const dekBase64url = new TextDecoder().decode(dekRecovered);
+    const dekBytes = base64urlToBytes(dekBase64url);
+
+    // Step 2: fetch the envelope ciphertext, decrypt with the DEK, expect markdown.
+    const envelope = await prisma.encryptedEnvelope.findUnique({
+      where: { id: blobShape.envelopeId },
+      select: { bytes: true },
+    });
+    const recovered = await clientDecryptBytesWithKey(
+      new Uint8Array(envelope!.bytes as Buffer),
+      dekBytes
     );
     expect(new TextDecoder().decode(recovered)).toBe(articleBody);
   });
 
-  it("article: a wrong (different) key cannot decrypt what create-product stored", async () => {
+  it("article: a wrong (different) key cannot decrypt the DEK from create-product", async () => {
     const channel = await createChannel({
       slug: "showcase-article-wrongkey",
       satsrailProductTypeId: "pt_article2",
     });
-    const media = await prisma.media.create({
-      data: {
-        ref: 2,
-        channelId: channel.id,
+    const createReq = buildJsonRequest(
+      "http://localhost:3000/api/admin/media",
+      {
+        channel_id: channel.id,
         name: "Article 2",
-        blob: { kind: "url", url: "Secret article body." },
-        mediaType: "article",
-      },
-    });
+        source_url: "Secret article body.",
+        media_type: "article",
+      }
+    );
+    const createRes = await adminMediaPOST(createReq);
+    const { data } = (await createRes.json()) as { data: { _id: string } };
     const req = buildJsonRequest(
-      `http://localhost:3000/api/admin/media/${media.id}/create-product`,
+      `http://localhost:3000/api/admin/media/${data._id}/create-product`,
       { name: "Article 2", price_cents: 1, access_duration_seconds: 86400 }
     );
-    await createProductPOST(req, { params: Promise.resolve({ id: media.id }) });
+    await createProductPOST(req, { params: Promise.resolve({ id: data._id }) });
 
-    const stored = await findFirstMediaProduct({ mediaId: media.id });
+    const stored = await findFirstMediaProduct({ mediaId: data._id });
     const wrongKey = genProductKey();
 
     await expect(
-      clientDecryptBlob(stored!.encryptedSourceUrl, wrongKey, FAKE_PRODUCT_ID)
+      clientDecryptBlob(stored!.encryptedSource, wrongKey, FAKE_PRODUCT_ID)
     ).rejects.toBeTruthy();
   });
 
@@ -231,7 +268,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     expect(uploadBody.mime).toBe("image/png");
 
     // Find the blob that was created
-    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
+    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     expect(blob).not.toBeNull();
     const ciphertext = Buffer.from(blob!.bytes);
     expect(ciphertext.equals(originalPhoto)).toBe(false);
@@ -249,7 +286,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         name: "Photo",
         blob: {
           kind: "photo",
-          blobId: blob!.id,
+          envelopeId: blob!.id,
           encryptedDek: "test_kek_wrapped_dek",
           mimeType: "image/png",
         },
@@ -277,11 +314,11 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     expect(stored!.keyFingerprint).toBe(FAKE_KEY_FINGERPRINT);
 
     // Sanity: wrapped DEK length is small, NOT the photo size.
-    expect(stored!.encryptedSourceUrl.length).toBeLessThan(200);
+    expect(stored!.encryptedSource.length).toBeLessThan(200);
 
     // Step 4 — unwrap the DEK envelope with the fake portal key.
     const innerBytes = await clientDecryptBlob(
-      stored!.encryptedSourceUrl,
+      stored!.encryptedSource,
       FAKE_PORTAL_KEY,
       FAKE_PRODUCT_ID
     );
@@ -313,7 +350,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const uploadRes = await adminPhotosPOST(buildFormRequest(file));
     const uploadBody = await uploadRes.json();
 
-    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
+    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     const channel = await createChannel({
       slug: "showcase-photo-wrongkey",
       satsrailProductTypeId: "pt_photo2",
@@ -325,7 +362,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         name: "Photo Wrong Key",
         blob: {
           kind: "photo",
-          blobId: blob!.id,
+          envelopeId: blob!.id,
           encryptedDek: "test_kek_wrapped_dek",
           mimeType: "image/png",
         },
@@ -349,7 +386,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const wrongKey = genProductKey();
 
     await expect(
-      clientDecryptBlob(stored!.encryptedSourceUrl, wrongKey, FAKE_PRODUCT_ID)
+      clientDecryptBlob(stored!.encryptedSource, wrongKey, FAKE_PRODUCT_ID)
     ).rejects.toBeTruthy();
   });
 
@@ -363,7 +400,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const file = new File([originalPhoto], "photo.png", { type: "image/png" });
     await adminPhotosPOST(buildFormRequest(file));
 
-    const blob = await prisma.encryptedPhotoBlob.findFirst({ orderBy: { createdAt: "desc" } });
+    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     const ciphertext = Buffer.from(blob!.bytes);
     const wrongDek = randomBytes(32);
     await expect(

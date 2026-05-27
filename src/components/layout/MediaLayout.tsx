@@ -68,7 +68,7 @@ export default function MediaLayout({
         onAccessClaim={claim}
         thumbnailUrl={thumbSrc}
         mediaType={media.media_type}
-        photoGridFsId={media.photo_gridfs_id}
+        envelopeId={media.envelope_id}
         merchantLogo={instanceConfig.theme.logo}
         merchantName={instanceConfig.name}
       />

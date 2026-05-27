@@ -173,7 +173,7 @@ describe("PaymentWall with real crypto", () => {
   // POST-PAYMENT — handleCheckoutComplete → onAccessClaim → decrypt effect
   // -------------------------------------------------------------------
 
-  it("article post-payment: real decryptBlob recovers the EXACT original markdown", async () => {
+  it("article post-payment: real envelope unwrap recovers the EXACT original markdown", async () => {
     const user = userEvent.setup();
 
     const articleBody = [
@@ -185,14 +185,22 @@ describe("PaymentWall with real crypto", () => {
       "- [link](https://example.com)",
     ].join("\n");
 
+    // Envelope encryption parallels photos: server encrypts markdown under a
+    // per-article DEK into EncryptedEnvelope.bytes; the per-product blob is
+    // the DEK itself wrapped under the product key.
+    const dek = randomBytes(32);
+    const envelopeBytes = encryptBytes(Buffer.from(articleBody, "utf8"), dek);
+    const envelopeId = "env-real-crypto-article";
+    const dekBase64url = bytesToBase64url(dek);
+
     const productKey = genProductKey();
     const fingerprint = await sha256HexOfString(productKey);
-    const encryptedBlob = encryptSourceUrl(articleBody, productKey, PRODUCT_ID);
+    const wrappedDek = encryptSourceUrl(dekBase64url, productKey, PRODUCT_ID);
     const expectedBytes = new TextEncoder().encode(articleBody);
 
     const products = [{
       productId: PRODUCT_ID,
-      encryptedBlob,
+      encryptedBlob: wrappedDek,
       keyFingerprint: fingerprint,
       name: "Article",
       priceCents: 1,
@@ -207,6 +215,15 @@ describe("PaymentWall with real crypto", () => {
       }
       if (url === "/api/macaroons" && opts?.method === "POST") {
         return { ok: true, json: async () => ({}) };
+      }
+      if (url === `/api/envelopes/${envelopeId}`) {
+        return {
+          ok: true,
+          arrayBuffer: async () => envelopeBytes.buffer.slice(
+            envelopeBytes.byteOffset,
+            envelopeBytes.byteOffset + envelopeBytes.byteLength
+          ),
+        };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     });
@@ -224,6 +241,7 @@ describe("PaymentWall with real crypto", () => {
         mediaId="media-article-1"
         products={products}
         mediaType="article"
+        envelopeId={envelopeId}
       />
     );
 
@@ -287,7 +305,7 @@ describe("PaymentWall with real crypto", () => {
       if (url === "/api/macaroons" && opts?.method === "POST") {
         return { ok: true, json: async () => ({}) };
       }
-      if (url === `/api/photos/${gridFsId}`) {
+      if (url === `/api/envelopes/${gridFsId}`) {
         return {
           ok: true,
           arrayBuffer: async () => gridFsCiphertext.buffer.slice(
@@ -312,7 +330,7 @@ describe("PaymentWall with real crypto", () => {
         mediaId="media-photo-1"
         products={products}
         mediaType="photo"
-        photoGridFsId={gridFsId}
+        envelopeId={gridFsId}
       />
     );
 
@@ -336,16 +354,20 @@ describe("PaymentWall with real crypto", () => {
   // prop and just needs to decrypt. These tests pin that we correctly
   // decrypt under the most common "returning visitor" scenario.
 
-  it("article page reload after payment: active access prop → real decrypt recovers the article", async () => {
+  it("article page reload after payment: active access prop → envelope unwrap → real article markdown", async () => {
     const articleBody = "Article body after a page reload.";
+    const dek = randomBytes(32);
+    const envelopeBytes = encryptBytes(Buffer.from(articleBody, "utf8"), dek);
+    const envelopeId = "env-reload-article";
+    const dekBase64url = bytesToBase64url(dek);
     const productKey = genProductKey();
     const fingerprint = await sha256HexOfString(productKey);
-    const encryptedBlob = encryptSourceUrl(articleBody, productKey, PRODUCT_ID);
+    const wrappedDek = encryptSourceUrl(dekBase64url, productKey, PRODUCT_ID);
     const expectedBytes = new TextEncoder().encode(articleBody);
 
     const products = [{
       productId: PRODUCT_ID,
-      encryptedBlob,
+      encryptedBlob: wrappedDek,
       keyFingerprint: fingerprint,
       name: "Reloaded Article",
       priceCents: 1,
@@ -353,6 +375,19 @@ describe("PaymentWall with real crypto", () => {
       accessDurationSeconds: 86400,
       status: "active",
     }];
+
+    mockFetch((url) => {
+      if (url === `/api/envelopes/${envelopeId}`) {
+        return {
+          ok: true,
+          arrayBuffer: async () => envelopeBytes.buffer.slice(
+            envelopeBytes.byteOffset,
+            envelopeBytes.byteOffset + envelopeBytes.byteLength
+          ),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
 
     render(
       <PaymentWall
@@ -363,10 +398,11 @@ describe("PaymentWall with real crypto", () => {
           productId: PRODUCT_ID,
           key: productKey,
           remainingSeconds: 86400,
-          encryptedBlob,
+          encryptedBlob: wrappedDek,
         }}
         onAccessClaim={() => {}}
         mediaType="article"
+        envelopeId={envelopeId}
       />
     );
 
@@ -400,7 +436,7 @@ describe("PaymentWall with real crypto", () => {
     }];
 
     mockFetch((url) => {
-      if (url === `/api/photos/${gridFsId}`) {
+      if (url === `/api/envelopes/${gridFsId}`) {
         return {
           ok: true,
           arrayBuffer: async () => gridFsCiphertext.buffer.slice(
@@ -425,7 +461,7 @@ describe("PaymentWall with real crypto", () => {
         }}
         onAccessClaim={() => {}}
         mediaType="photo"
-        photoGridFsId={gridFsId}
+        envelopeId={gridFsId}
       />
     );
 

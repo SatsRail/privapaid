@@ -267,10 +267,10 @@ describe("Admin Media Create Product", () => {
       expect(mockEncryptSourceUrl).toHaveBeenCalledTimes(1);
       const [plaintext, key, productId] = mockEncryptSourceUrl.mock.calls[0];
       expect(plaintext).toBe(dekBase64url);
-      // For a photo, the blob's blobId points at EncryptedPhotoBlob — not at
+      // For a photo, the blob's envelopeId points at EncryptedEnvelope — not at
       // the encrypted DEK we just passed to encryptSourceUrl.
-      const mediaBlob = media.blob as { kind: string; blobId?: string };
-      expect(plaintext).not.toBe(mediaBlob.blobId);
+      const mediaBlob = media.blob as { kind: string; envelopeId?: string };
+      expect(plaintext).not.toBe(mediaBlob.envelopeId);
       expect(key).toBe("base64-product-key");
       expect(productId).toBe("prod_photo");
     });

@@ -36,7 +36,7 @@ vi.mock("@/lib/content-encryption", () => ({
 const { mockUnwrapDekToBase64url } = vi.hoisted(() => ({
   mockUnwrapDekToBase64url: vi.fn(),
 }));
-vi.mock("@/lib/photo-dek", () => ({
+vi.mock("@/lib/content-dek", () => ({
   unwrapDekToBase64url: mockUnwrapDekToBase64url,
 }));
 
@@ -189,45 +189,7 @@ describe("Admin Channel Create Product", () => {
   // Photo media — envelope encryption: DEK recovery + re-wrap
   // -------------------------------------------------------
   describe("photo media in channel product (envelope re-wrap)", () => {
-    it("returns 422 when a photo has no existing MediaProduct to recover the DEK from", async () => {
-      const channel = await createChannel({
-        slug: "ch-photo-no-mp",
-        satsrailProductTypeId: "pt_1",
-        ref: 999,
-      });
-      await createMedia(channel.id, {
-        mediaType: "photo",
-        blob: { kind: "url", url: "gridfs:photo-orphan" },
-      });
-
-      mockSatsrailClient.createProduct.mockResolvedValue({
-        id: "prod_channel",
-        name: "Channel",
-        price_cents: 1000,
-        slug: "channel",
-        access_duration_seconds: null,
-        status: "active",
-      });
-      mockSatsrailClient.getProductKey.mockResolvedValue({
-        key: "channel-product-key",
-        key_fingerprint: "fp_ch",
-      });
-
-      const [req, ctx] = buildRequest(channel.id, {
-        name: "Channel",
-        price_cents: 1000,
-      });
-      const res = await POST(req, ctx);
-      const body = await res.json();
-
-      expect(res.status).toBe(422);
-      expect(body.error).toContain("no encryptedDek on Media.blob");
-      // No decrypt or rewrap should have been attempted
-      expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
-      expect(mockUnwrapDekToBase64url).not.toHaveBeenCalled();
-    });
-
-    it("prefers Media.encryptedDek over the MediaProduct fallback (no SatsRail recovery call)", async () => {
+    it("uses Media.encryptedDek to recover the DEK (no SatsRail decrypt call)", async () => {
       const channel = await createChannel({
         slug: "ch-photo-kek",
         satsrailProductTypeId: "pt_1",
@@ -239,7 +201,7 @@ describe("Admin Channel Create Product", () => {
         mediaType: "photo",
         blob: {
           kind: "photo",
-          blobId: "gridfs:photo-with-kek",
+          envelopeId: "gridfs:photo-with-kek",
           encryptedDek: "kek-wrapped-blob",
           mimeType: "image/jpeg",
         },
@@ -247,7 +209,7 @@ describe("Admin Channel Create Product", () => {
       await createMediaProduct({
           mediaId: photoMedia.id,
           satsrailProductId: "prod_stale",
-          encryptedSourceUrl: "stale-blob",
+          encryptedSource: "stale-blob",
           keyFingerprint: "fp_stale",
         });
 
@@ -285,125 +247,6 @@ describe("Admin Channel Create Product", () => {
       );
     });
 
-    it("falls back to MediaProduct recovery when encryptedDek is corrupted", async () => {
-      const channel = await createChannel({
-        slug: "ch-photo-kek-bad",
-        satsrailProductTypeId: "pt_1",
-        ref: 2002,
-      });
-      const photoMedia = await createMedia(channel.id, {
-        mediaType: "photo",
-        blob: {
-          kind: "photo",
-          blobId: "gridfs:photo-broken-kek",
-          encryptedDek: "corrupted-blob",
-          mimeType: "image/jpeg",
-        },
-      });
-      await createMediaProduct({
-          mediaId: photoMedia.id,
-          satsrailProductId: "prod_backup",
-          encryptedSourceUrl: "encrypted-dek-blob",
-          keyFingerprint: "fp_backup",
-        });
-
-      mockSatsrailClient.createProduct.mockResolvedValue({
-        id: "prod_new_fallback",
-        name: "Channel",
-        price_cents: 1000,
-        slug: "channel",
-        access_duration_seconds: null,
-        status: "active",
-      });
-      mockSatsrailClient.getProductKey
-        .mockResolvedValueOnce({ key: "new-channel-key", key_fingerprint: "fp_new" })
-        .mockResolvedValueOnce({ key: "backup-key", key_fingerprint: "fp_backup" });
-
-      // KEK unwrap throws → route falls back to MediaProduct recovery.
-      mockUnwrapDekToBase64url.mockImplementationOnce(() => {
-        throw new Error("auth tag mismatch");
-      });
-      mockDecryptSourceUrl.mockReturnValueOnce("dek-from-fallback");
-      mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-via-fallback");
-
-      const [req, ctx] = buildRequest(channel.id, {
-        name: "Channel",
-        price_cents: 1000,
-      });
-      const res = await POST(req, ctx);
-      expect(res.status).toBe(201);
-
-      expect(mockUnwrapDekToBase64url).toHaveBeenCalledWith("corrupted-blob");
-      expect(mockDecryptSourceUrl).toHaveBeenCalledWith(
-        "encrypted-dek-blob",
-        "backup-key",
-        "prod_backup"
-      );
-      expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
-        "dek-from-fallback",
-        "new-channel-key",
-        "prod_new_fallback"
-      );
-    });
-
-    it("recovers the DEK from an existing MediaProduct and re-wraps under the new product key", async () => {
-      const channel = await createChannel({
-        slug: "ch-photo-rewrap",
-        satsrailProductTypeId: "pt_1",
-        ref: 1001,
-      });
-      const photoMedia = await createMedia(channel.id, {
-        mediaType: "photo",
-        blob: { kind: "url", url: "gridfs:photo-bytes-id" },
-      });
-
-      // Seed an existing MediaProduct so the server has a DEK envelope to unwrap.
-      await createMediaProduct({
-          mediaId: photoMedia.id,
-          satsrailProductId: "prod_existing",
-          encryptedSourceUrl: "encrypted-dek-for-prod_existing",
-          keyFingerprint: "fp_existing",
-        });
-
-      mockSatsrailClient.createProduct.mockResolvedValue({
-        id: "prod_new_channel",
-        name: "Channel",
-        price_cents: 1000,
-        slug: "channel",
-        access_duration_seconds: null,
-        status: "active",
-      });
-      mockSatsrailClient.getProductKey
-        // First call: fetch the new channel product's key
-        .mockResolvedValueOnce({ key: "new-channel-key", key_fingerprint: "fp_new" })
-        // Second call: fetch the OTHER product's key (so we can decrypt its DEK)
-        .mockResolvedValueOnce({ key: "existing-product-key", key_fingerprint: "fp_existing" });
-
-      mockDecryptSourceUrl.mockReturnValueOnce("photo-dek-base64url");
-      mockEncryptSourceUrl.mockReturnValueOnce("re-wrapped-dek-blob");
-
-      const [req, ctx] = buildRequest(channel.id, {
-        name: "Channel",
-        price_cents: 1000,
-      });
-      const res = await POST(req, ctx);
-      expect(res.status).toBe(201);
-
-      // The recovered DEK must be re-encrypted with the NEW channel key, not
-      // the existing product key. Otherwise viewers of the new channel product
-      // can't decrypt.
-      expect(mockDecryptSourceUrl).toHaveBeenCalledWith(
-        "encrypted-dek-for-prod_existing",
-        "existing-product-key",
-        "prod_existing"
-      );
-      expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
-        "photo-dek-base64url",
-        "new-channel-key",
-        "prod_new_channel"
-      );
-    });
-
     it("mixes photo and non-photo media in the same channel correctly", async () => {
       const channel = await createChannel({
         slug: "ch-mixed",
@@ -414,16 +257,15 @@ describe("Admin Channel Create Product", () => {
         mediaType: "video",
         blob: { kind: "url", url: "https://example.com/v.mp4" },
       });
-      const photoMedia = await createMedia(channel.id, {
+      await createMedia(channel.id, {
         mediaType: "photo",
-        blob: { kind: "url", url: "gridfs:photo-id" },
+        blob: {
+          kind: "photo",
+          envelopeId: "env_mixed_photo",
+          encryptedDek: "kek-wrapped-photo-dek",
+          mimeType: "image/jpeg",
+        },
       });
-      await createMediaProduct({
-          mediaId: photoMedia.id,
-          satsrailProductId: "prod_existing_mixed",
-          encryptedSourceUrl: "existing-dek-blob",
-          keyFingerprint: "fp_e",
-        });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_mixed_channel",
@@ -433,10 +275,11 @@ describe("Admin Channel Create Product", () => {
         access_duration_seconds: null,
         status: "active",
       });
-      mockSatsrailClient.getProductKey
-        .mockResolvedValueOnce({ key: "mixed-channel-key", key_fingerprint: "fp_m" })
-        .mockResolvedValueOnce({ key: "existing-product-key", key_fingerprint: "fp_e" });
-      mockDecryptSourceUrl.mockReturnValue("recovered-dek");
+      mockSatsrailClient.getProductKey.mockResolvedValueOnce({
+        key: "mixed-channel-key",
+        key_fingerprint: "fp_m",
+      });
+      mockUnwrapDekToBase64url.mockReturnValueOnce("photo-dek-recovered");
 
       const [req, ctx] = buildRequest(channel.id, {
         name: "Mixed",
@@ -445,18 +288,19 @@ describe("Admin Channel Create Product", () => {
       const res = await POST(req, ctx);
       expect(res.status).toBe(201);
 
-      // Video gets URL-encrypted; photo gets DEK-encrypted. Both go under
+      // Video encrypts the URL; photo encrypts the unwrapped DEK. Both go under
       // the same channel key + product ID.
       const calls = mockEncryptSourceUrl.mock.calls;
       const plaintexts = calls.map((c) => c[0]);
       const videoBlob = videoMedia.blob as { url: string };
-      expect(plaintexts).toContain(videoBlob.url); // URL
-      expect(plaintexts).toContain("recovered-dek"); // DEK
-      // All encrypt calls share the channel key + new product id
+      expect(plaintexts).toContain(videoBlob.url);
+      expect(plaintexts).toContain("photo-dek-recovered");
       for (const [, key, productId] of calls) {
         expect(key).toBe("mixed-channel-key");
         expect(productId).toBe("prod_mixed_channel");
       }
+      // No SatsRail decrypt round-trip for photo recovery.
+      expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
     });
   });
 });

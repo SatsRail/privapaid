@@ -84,7 +84,7 @@ describe("Like API — POST /api/media/[id]/like", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_like",
-      encryptedSourceUrl: "encrypted_blob",
+      encryptedSource: "encrypted_blob",
     });
     return { mediaId: media.id };
   }

@@ -10,7 +10,7 @@ import { encryptBytes } from "@/lib/content-encryption";
  * POST /api/admin/photos
  *
  * Uploads a photo, encrypts it under a fresh random DEK (data encryption key),
- * stores the ciphertext in the EncryptedPhotoBlob table, and returns the blob
+ * stores the ciphertext in the EncryptedEnvelope table, and returns the blob
  * id + the DEK.
  *
  * The DEK is NOT persisted server-side. The client must immediately use it to
@@ -89,10 +89,10 @@ export async function POST(req: NextRequest) {
     const dek = randomBytes(32);
     const ciphertext = encryptBytes(cleanBuffer, dek);
 
-    // Persist ciphertext as a row in the EncryptedPhotoBlob table. Cast
+    // Persist ciphertext as a row in the EncryptedEnvelope table. Cast
     // because Prisma's Bytes type wants Uint8Array<ArrayBuffer> while Node's
     // Buffer is Uint8Array<ArrayBufferLike> — they're byte-compatible at runtime.
-    const blob = await prisma.encryptedPhotoBlob.create({
+    const envelope = await prisma.encryptedEnvelope.create({
       data: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         bytes: ciphertext as any,
@@ -113,8 +113,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         // The legacy `gridFsId` name is preserved for client compatibility —
-        // it's just an opaque blob id from the client's perspective.
-        gridFsId: blob.id,
+        // it's just an opaque envelope id from the client's perspective.
+        gridFsId: envelope.id,
         dek: dekBase64url,
         mime: detected.mime,
       },

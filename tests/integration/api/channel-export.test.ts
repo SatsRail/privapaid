@@ -152,7 +152,7 @@ describe("GET /api/admin/channels/[id]/export", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_123",
-        encryptedSourceUrl: "encrypted-blob",
+        encryptedSource: "encrypted-blob",
         keyFingerprint: "fp_abc",
         productName: "Premium Access",
         productPriceCents: 500,

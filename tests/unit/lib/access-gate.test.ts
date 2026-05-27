@@ -86,7 +86,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_media",
-        encryptedSourceUrl: "enc_blob_media",
+        encryptedSource: "enc_blob_media",
         keyFingerprint: "fp_media",
         productStatus: "active",
       });
@@ -107,7 +107,7 @@ describe("access-gate", () => {
         satsrailProductId: "prod_channel",
         keyFingerprint: "fp_channel",
         productStatus: "active",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_blob_channel" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "enc_blob_channel" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -123,7 +123,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_m",
-        encryptedSourceUrl: "enc_m",
+        encryptedSource: "enc_m",
         productStatus: "active",
       });
 
@@ -132,7 +132,7 @@ describe("access-gate", () => {
         satsrailProductId: "prod_c",
         keyFingerprint: "fp_c",
         productStatus: "active",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_c" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "enc_c" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -149,7 +149,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_archived",
-        encryptedSourceUrl: "enc_archived",
+        encryptedSource: "enc_archived",
         productStatus: "archived",
       });
 
@@ -165,7 +165,7 @@ describe("access-gate", () => {
         satsrailProductId: "prod_ch_archived",
         keyFingerprint: "fp",
         productStatus: "archived",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "enc" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -187,7 +187,7 @@ describe("access-gate", () => {
         satsrailProductId: "prod_weekly",
         keyFingerprint: "fp_w",
         productStatus: "active",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_weekly" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "enc_weekly" }],
       });
 
       await createChannelProduct({
@@ -195,7 +195,7 @@ describe("access-gate", () => {
         satsrailProductId: "prod_monthly",
         keyFingerprint: "fp_m",
         productStatus: "active",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "enc_monthly" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "enc_monthly" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);
@@ -212,7 +212,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_retired",
-        encryptedSourceUrl: "enc_retired",
+        encryptedSource: "enc_retired",
         productStatus: "archived",
       });
 
@@ -233,7 +233,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_active",
-        encryptedSourceUrl: "enc_active",
+        encryptedSource: "enc_active",
         productStatus: "active",
       });
 
@@ -241,13 +241,13 @@ describe("access-gate", () => {
       expect(product.status).toBe("active");
     });
 
-    it("skips media products without an encryptedSourceUrl", async () => {
+    it("skips media products without an encryptedSource", async () => {
       const { mediaId, channelId } = await seedChannelAndMedia();
-      // Empty encryptedSourceUrl is filtered out at the read layer.
+      // Empty encryptedSource is filtered out at the read layer.
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_empty",
-        encryptedSourceUrl: "",
+        encryptedSource: "",
         productStatus: "active",
       });
 
@@ -261,7 +261,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_no_fp",
-        encryptedSourceUrl: "enc_blob",
+        encryptedSource: "enc_blob",
         productStatus: "active",
       });
       const products = await getProductsForMedia(mediaId, channelId);
@@ -274,7 +274,7 @@ describe("access-gate", () => {
       await createMediaProduct({
         mediaId,
         satsrailProductId: "prod_no_status",
-        encryptedSourceUrl: "enc",
+        encryptedSource: "enc",
       });
       await prisma.$executeRaw`UPDATE "Product" SET "productStatus" = NULL WHERE "satsrailProductId" = 'prod_no_status'`;
       const products = await getProductsForMedia(mediaId, channelId, { includeArchived: true });
@@ -288,7 +288,7 @@ describe("access-gate", () => {
         channelId,
         satsrailProductId: "prod_cp_empty",
         productStatus: "active",
-        encryptedMedia: [{ mediaId, encryptedSourceUrl: "" }],
+        encryptedMedia: [{ mediaId, encryptedSource: "" }],
       });
 
       const products = await getProductsForMedia(mediaId, channelId);

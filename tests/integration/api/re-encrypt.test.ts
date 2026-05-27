@@ -6,7 +6,7 @@ import { createMediaProduct, createChannelProduct, findFirstMediaProduct } from 
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 import { decryptSourceUrl } from "@/lib/content-encryption";
-import { wrapDekFromBase64url, _resetKekCache } from "@/lib/photo-dek";
+import { wrapDekFromBase64url, _resetKekCache } from "@/lib/content-dek";
 
 function generateProductKey(): string {
   return randomBytes(32)
@@ -65,12 +65,12 @@ function createReEncryptRequest(productId: string): NextRequest {
 describe("POST /api/admin/products/[id]/re-encrypt", () => {
   const newKey = generateProductKey();
   const productId = "prod_test_rotation";
-  // PHOTO_KEK for the photo path test — 32 bytes base64.
-  const PHOTO_KEK = randomBytes(32).toString("base64");
+  // CONTENT_KEK for the photo path test — 32 bytes base64.
+  const CONTENT_KEK = randomBytes(32).toString("base64");
 
   beforeAll(async () => {
     await setupTestDB();
-    process.env.PHOTO_KEK = PHOTO_KEK;
+    process.env.CONTENT_KEK = CONTENT_KEK;
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", name: "Admin", type: "admin", role: "owner" },
     });
@@ -78,7 +78,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
 
   afterAll(async () => {
     await teardownTestDB();
-    delete process.env.PHOTO_KEK;
+    delete process.env.CONTENT_KEK;
     _resetKekCache();
   });
 
@@ -108,7 +108,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
       await createMediaProduct({
           mediaId: media.id,
           satsrailProductId: `${productId}_${i}`,
-          encryptedSourceUrl: "stale-base64-from-pre-rotation",
+          encryptedSource: "stale-base64-from-pre-rotation",
         });
       i++;
     }
@@ -128,7 +128,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
       satsrailProductId: productId,
       encryptedMedia: medias.map((m) => ({
         mediaId: m.id,
-        encryptedSourceUrl: "stale-base64-from-pre-rotation",
+        encryptedSource: "stale-base64-from-pre-rotation",
       })),
     });
 
@@ -148,7 +148,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
       include: { mediaEncryptedBlobs: true },
     });
     for (const entry of cp!.mediaEncryptedBlobs) {
-      const decrypted = decryptSourceUrl(entry.encryptedSourceUrl, newKey, productId);
+      const decrypted = decryptSourceUrl(entry.encryptedSource, newKey, productId);
       expect(urls).toContain(decrypted);
     }
 
@@ -157,7 +157,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     expect(mockGetProduct).not.toHaveBeenCalled();
   });
 
-  it("re-encrypts photo media by unwrapping encryptedDek with PHOTO_KEK", async () => {
+  it("re-encrypts photo media by unwrapping encryptedDek with CONTENT_KEK", async () => {
     const channel = await createChannel();
     const dekBase64url = generateProductKey(); // reused as a 32-byte DEK
     const encryptedDek = wrapDekFromBase64url(dekBase64url);
@@ -166,7 +166,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
       name: "Photo",
       blob: {
         kind: "photo",
-        blobId: "blob_pointer_id",
+        envelopeId: "blob_pointer_id",
         encryptedDek,
         mimeType: "image/jpeg",
       },
@@ -176,7 +176,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     await createMediaProduct({
         mediaId: media.id,
         satsrailProductId: productId,
-        encryptedSourceUrl: "stale",
+        encryptedSource: "stale",
       });
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
@@ -190,7 +190,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     expect(events.at(-1)).toMatchObject({ done: true });
 
     const reloaded = await findFirstMediaProduct({ satsrailProductId: productId });
-    const decrypted = decryptSourceUrl(reloaded!.encryptedSourceUrl, newKey, productId);
+    const decrypted = decryptSourceUrl(reloaded!.encryptedSource, newKey, productId);
     expect(decrypted).toBe(dekBase64url);
   });
 
@@ -203,8 +203,8 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
         channelId: channel.id,
         satsrailProductId: productId,
         encryptedMedia: [
-            { mediaId: m1.id, encryptedSourceUrl: "stale1" },
-            { mediaId: m2.id, encryptedSourceUrl: "stale2" },
+            { mediaId: m1.id, encryptedSource: "stale1" },
+            { mediaId: m2.id, encryptedSource: "stale2" },
           ],
       });
 
@@ -224,7 +224,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     });
     expect(cp!.mediaEncryptedBlobs).toHaveLength(2);
     const urls = cp!.mediaEncryptedBlobs.map((e) =>
-      decryptSourceUrl(e.encryptedSourceUrl, newKey, productId)
+      decryptSourceUrl(e.encryptedSource, newKey, productId)
     );
     expect(urls).toEqual(
       expect.arrayContaining(["https://a.example/v.mp4", "https://b.example/v.mp4"])

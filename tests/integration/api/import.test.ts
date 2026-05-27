@@ -309,7 +309,7 @@ describe("POST /api/admin/import", () => {
     const mediaProducts = await findMediaProducts();
     expect(mediaProducts).toHaveLength(1);
     expect(mediaProducts[0].satsrailProductId).toBe("prod_abc");
-    expect(mediaProducts[0].encryptedSourceUrl).toBeDefined();
+    expect(mediaProducts[0].encryptedSource).toBeDefined();
     expect(mediaProducts[0].keyFingerprint).toBe("fp_123");
 
     expect(mockCreateProduct).toHaveBeenCalledWith("sk_live_test_key", expect.objectContaining({

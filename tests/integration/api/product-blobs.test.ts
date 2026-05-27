@@ -68,7 +68,7 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod-456",
-      encryptedSourceUrl: "aes256gcm:abcdefghijklmnopqrstuvwxyz1234567890abcdef",
+      encryptedSource: "aes256gcm:abcdefghijklmnopqrstuvwxyz1234567890abcdef",
       keyFingerprint: "sha256:abc123",
     });
 
@@ -98,12 +98,12 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     await createMediaProduct({
       mediaId: media1.id,
       satsrailProductId: "prod-multi-A",
-      encryptedSourceUrl: "blob1-encrypted-content-here",
+      encryptedSource: "blob1-encrypted-content-here",
     });
     await createMediaProduct({
       mediaId: media2.id,
       satsrailProductId: "prod-multi-B",
-      encryptedSourceUrl: "blob2-encrypted-content-here",
+      encryptedSource: "blob2-encrypted-content-here",
     });
     // Need a product with two blob rows to exercise the "multiple blobs per
     // product" path. A media-scoped Product is 1:1 with Media; channel-scoped
@@ -112,8 +112,8 @@ describe("GET /api/admin/products/[id]/blobs", () => {
       channelId: channel.id,
       satsrailProductId: "prod-multi",
       encryptedMedia: [
-        { mediaId: media1.id, encryptedSourceUrl: "blob1-encrypted-content-here" },
-        { mediaId: media2.id, encryptedSourceUrl: "blob2-encrypted-content-here" },
+        { mediaId: media1.id, encryptedSource: "blob1-encrypted-content-here" },
+        { mediaId: media2.id, encryptedSource: "blob2-encrypted-content-here" },
       ],
     });
 
@@ -144,7 +144,7 @@ describe("GET /api/admin/products/[id]/blobs", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod-preview",
-      encryptedSourceUrl: longBlob,
+      encryptedSource: longBlob,
     });
 
     const [req, ctx] = buildRequest("prod-preview");

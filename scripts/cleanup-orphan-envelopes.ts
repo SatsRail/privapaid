@@ -1,11 +1,11 @@
 /**
- * Delete encrypted photo blobs that no Media row references.
+ * Delete encrypted envelope rows that no Media row references.
  *
  * Usage:
- *   npx tsx scripts/cleanup-orphan-photos.ts                # default: 1h grace
- *   npx tsx scripts/cleanup-orphan-photos.ts --grace 0      # delete all orphans
- *   npx tsx scripts/cleanup-orphan-photos.ts --dry-run      # report only
- *   npx tsx scripts/cleanup-orphan-photos.ts --grace 86400 --dry-run
+ *   npx tsx scripts/cleanup-orphan-envelopes.ts                # default: 1h grace
+ *   npx tsx scripts/cleanup-orphan-envelopes.ts --grace 0      # delete all orphans
+ *   npx tsx scripts/cleanup-orphan-envelopes.ts --dry-run      # report only
+ *   npx tsx scripts/cleanup-orphan-envelopes.ts --grace 86400 --dry-run
  *
  * Suitable for a daily cron. Exits 0 on success (including "nothing to do"),
  * 1 if DATABASE_URL is missing, 2 if any individual delete failed (the rest of
@@ -19,9 +19,9 @@ config({ path: ".env.local" });
 
 import { prisma } from "@/lib/prisma";
 import {
-  cleanupOrphanEncryptedPhotos,
+  cleanupOrphanEnvelopes,
   DEFAULT_ORPHAN_GRACE_MS,
-} from "@/lib/photo-cleanup";
+} from "@/lib/envelope-cleanup";
 
 function parseArgs(argv: string[]) {
   let graceMs = DEFAULT_ORPHAN_GRACE_MS;
@@ -55,7 +55,7 @@ async function main() {
 
   try {
     const start = Date.now();
-    const result = await cleanupOrphanEncryptedPhotos({ graceMs, dryRun });
+    const result = await cleanupOrphanEnvelopes({ graceMs, dryRun });
     const elapsedMs = Date.now() - start;
 
     console.log(
@@ -81,6 +81,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("cleanup-orphan-photos failed:", err);
+  console.error("cleanup-orphan-envelopes failed:", err);
   process.exit(1);
 });

@@ -59,11 +59,16 @@ export async function createMedia(
   const finalBlob =
     blob ??
     (finalType === "article"
-      ? { kind: "markdown", body: sourceUrl ?? "Test article body" }
+      ? {
+          kind: "article",
+          envelopeId: sourceUrl ?? "envelope_test",
+          encryptedDek: "test_encrypted_dek",
+          mimeType: "text/markdown; charset=utf-8",
+        }
       : finalType === "photo"
         ? {
             kind: "photo",
-            blobId: sourceUrl ?? "blob_test",
+            envelopeId: sourceUrl ?? "envelope_test",
             encryptedDek: "test_encrypted_dek",
             mimeType: "image/jpeg",
           }
@@ -124,7 +129,7 @@ export async function createWebhookEvent(
 /**
  * Tests written against the legacy `MediaProduct` model expect a single row
  * carrying both the cached product fields (productName, satsrailProductId,
- * etc.) and the ciphertext (encryptedSourceUrl, keyFingerprint). This helper
+ * etc.) and the ciphertext (encryptedSource, keyFingerprint). This helper
  * joins `Product` + its `MediaEncryptedBlob` and returns the combined shape
  * so those expectations keep reading naturally.
  */
@@ -132,7 +137,7 @@ type MediaProductRowView = {
   id: string;
   mediaId: string;
   satsrailProductId: string;
-  encryptedSourceUrl: string;
+  encryptedSource: string;
   keyFingerprint: string | null;
   productName: string | null;
   productPriceCents: number | null;
@@ -163,7 +168,7 @@ function flatten(
     createdAt: Date;
     updatedAt: Date;
     mediaEncryptedBlobs?: Array<{
-      encryptedSourceUrl: string;
+      encryptedSource: string;
       keyFingerprint: string | null;
     }>;
   } | null
@@ -174,7 +179,7 @@ function flatten(
     id: product.id,
     mediaId: product.mediaId,
     satsrailProductId: product.satsrailProductId,
-    encryptedSourceUrl: blob?.encryptedSourceUrl ?? "",
+    encryptedSource: blob?.encryptedSource ?? "",
     keyFingerprint: blob?.keyFingerprint ?? product.keyFingerprint,
     productName: product.productName,
     productPriceCents: product.productPriceCents,
@@ -244,19 +249,19 @@ interface CachedProductFields {
 /**
  * Create a media-scoped Product (mediaId set) + its single MediaEncryptedBlob.
  * Matches the old `prisma.mediaProduct.create` call signature where the
- * cached fields lived alongside the encryptedSourceUrl on one row.
+ * cached fields lived alongside the encryptedSource on one row.
  */
 export async function createMediaProduct(
   opts: {
     mediaId: string;
     satsrailProductId: string;
-    encryptedSourceUrl: string;
+    encryptedSource: string;
   } & CachedProductFields
 ) {
   const {
     mediaId,
     satsrailProductId,
-    encryptedSourceUrl,
+    encryptedSource,
     keyFingerprint,
     ...cached
   } = opts;
@@ -274,7 +279,7 @@ export async function createMediaProduct(
       data: {
         productId: product.id,
         mediaId,
-        encryptedSourceUrl,
+        encryptedSource,
         keyFingerprint: keyFingerprint ?? null,
       },
     });
@@ -293,7 +298,7 @@ export async function createChannelProduct(
     satsrailProductId: string;
     encryptedMedia?: Array<{
       mediaId: string;
-      encryptedSourceUrl: string;
+      encryptedSource: string;
       keyFingerprint?: string | null;
     }>;
   } & CachedProductFields
@@ -315,7 +320,7 @@ export async function createChannelProduct(
       mediaEncryptedBlobs: {
         create: encryptedMedia.map((em) => ({
           mediaId: em.mediaId,
-          encryptedSourceUrl: em.encryptedSourceUrl,
+          encryptedSource: em.encryptedSource,
           keyFingerprint: em.keyFingerprint ?? keyFingerprint ?? null,
         })),
       },

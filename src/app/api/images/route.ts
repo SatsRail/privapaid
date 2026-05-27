@@ -8,8 +8,8 @@ import { rateLimit } from "@/lib/rate-limit";
  * POST /api/images
  *
  * Generic image upload endpoint. The bytes go into the `PreviewImage` table —
- * the only standalone image store after the GridFS migration — and the row
- * id is returned to the caller so it can be embedded via /api/images/{id}.
+ * the standalone image store for free-standing uploads — and the row id is
+ * returned to the caller so it can be embedded via /api/images/{id}.
  *
  * Owner-specific images (channel avatar, media thumbnail, logo) have
  * dedicated POST endpoints that write directly to the owning row's Bytes
@@ -104,20 +104,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Standalone images use the PreviewImage table as the generic blob
-    // store. `mediaId` is a non-null FK; we don't know the owning media at
-    // upload time, so this route can only be used in contexts where the
-    // upload is paired with a PATCH that wires the id into a Bytes column.
-    // For PreviewImage gallery uploads (the original use case), the caller
-    // immediately PATCHes a Media to attach it.
-    //
-    // TEMPORARY SHIM: until owner-specific routes are wired up, fall back
-    // to a "context only" path. The bytes are kept in EncryptedPhotoBlob —
-    // which is a blob table without FKs — but served unencrypted (the table
-    // simply stores arbitrary bytes here; the encryption story lives in
-    // /api/admin/photos). The id returned is therefore an opaque blob id
-    // that the legacy GET /api/images/[id] route resolves.
-    const blob = await prisma.encryptedPhotoBlob.create({
+    // Standalone images live in the PreviewImage table — a generic blob
+    // store with no FKs, separate from the EncryptedEnvelope table that
+    // holds ciphertext for paid content. The caller embeds the returned id
+    // via /api/images/{id}.
+    const image = await prisma.previewImage.create({
       data: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         bytes: strippedBuffer as any,
@@ -127,7 +118,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { image_id: blob.id },
+      { image_id: image.id },
       { status: 201 }
     );
   } catch (err) {

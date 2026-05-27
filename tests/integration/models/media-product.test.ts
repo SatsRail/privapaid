@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma";
  * MediaEncryptedBlob row, written via the `createMediaProduct` helper.
  *
  * These tests exercise the same invariants the legacy `MediaProduct` model
- * carried — mediaId uniqueness, encryptedSourceUrl persistence, the
+ * carried — mediaId uniqueness, encryptedSource persistence, the
  * keyFingerprint field — but against the new split shape.
  */
 describe("Product + MediaEncryptedBlob (media-scoped)", () => {
@@ -31,7 +31,7 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
     const product = await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_test_123",
-      encryptedSourceUrl: "base64encryptedblob==",
+      encryptedSource: "base64encryptedblob==",
     });
 
     expect(product.mediaId).toBe(media.id);
@@ -42,7 +42,7 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
       where: { productId: product.id, mediaId: media.id },
     });
     expect(blob).not.toBeNull();
-    expect(blob!.encryptedSourceUrl).toBe("base64encryptedblob==");
+    expect(blob!.encryptedSource).toBe("base64encryptedblob==");
   });
 
   it("stores keyFingerprint on Product and blob", async () => {
@@ -52,7 +52,7 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
     const product = await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_fp_123",
-      encryptedSourceUrl: "blob==",
+      encryptedSource: "blob==",
       keyFingerprint: "sha256hexfingerprint",
     });
 
@@ -70,38 +70,38 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
     await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_1",
-      encryptedSourceUrl: "blob1==",
+      encryptedSource: "blob1==",
     });
 
     await expect(
       createMediaProduct({
         mediaId: media.id,
         satsrailProductId: "prod_2",
-        encryptedSourceUrl: "blob2==",
+        encryptedSource: "blob2==",
       })
     ).rejects.toThrow();
   });
 
-  it("updates encryptedSourceUrl on the blob (re-encryption simulation)", async () => {
+  it("updates encryptedSource on the blob (re-encryption simulation)", async () => {
     const channel = await createChannel();
     const media = await createMedia(channel.id);
 
     const product = await createMediaProduct({
       mediaId: media.id,
       satsrailProductId: "prod_reencrypt",
-      encryptedSourceUrl: "old_blob==",
+      encryptedSource: "old_blob==",
       keyFingerprint: "old_fp",
     });
 
     await prisma.mediaEncryptedBlob.updateMany({
       where: { productId: product.id },
-      data: { encryptedSourceUrl: "new_blob==", keyFingerprint: "new_fp" },
+      data: { encryptedSource: "new_blob==", keyFingerprint: "new_fp" },
     });
 
     const blob = await prisma.mediaEncryptedBlob.findFirst({
       where: { productId: product.id },
     });
-    expect(blob!.encryptedSourceUrl).toBe("new_blob==");
+    expect(blob!.encryptedSource).toBe("new_blob==");
     expect(blob!.keyFingerprint).toBe("new_fp");
   });
 });

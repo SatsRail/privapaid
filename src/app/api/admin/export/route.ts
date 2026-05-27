@@ -3,20 +3,31 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
+import { decryptBytes } from "@/lib/content-encryption";
+import { unwrapDek } from "@/lib/content-dek";
 
 /**
  * Recover the on-the-wire `source_url` field from Media.blob for export.
- * For photos this is the EncryptedPhotoBlob.id pointer (matching the legacy
+ * Photos surface the EncryptedEnvelope.id pointer (matching the legacy
  * shape — admins can re-link by uploading bytes through /api/admin/photos
- * and matching ids in a re-import). For everything else it's the URL or
- * markdown body.
+ * and matching ids in a re-import). Articles decrypt their envelope on the
+ * fly to recover the markdown body so the export round-trips.
  */
-function sourceUrlForExport(blob: unknown): string {
+async function sourceUrlForExport(blob: unknown): Promise<string> {
   try {
     const parsed = parseMediaBlob(blob);
     if (parsed.kind === "url") return parsed.url;
-    if (parsed.kind === "markdown") return parsed.body;
-    return parsed.blobId; // photo
+    if (parsed.kind === "photo") return parsed.envelopeId;
+    if (parsed.kind === "article") {
+      const envelope = await prisma.encryptedEnvelope.findUnique({
+        where: { id: parsed.envelopeId },
+        select: { bytes: true },
+      });
+      if (!envelope) return "";
+      const dek = unwrapDek(parsed.encryptedDek);
+      return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
+    }
+    return "";
   } catch {
     return "";
   }
@@ -84,7 +95,7 @@ export async function GET() {
       position: cat.position,
       active: cat.active,
     })),
-    channels: channels.map((ch) => {
+    channels: await Promise.all(channels.map(async (ch) => {
       const channelMedia = mediaByChannel.get(ch.id) || [];
       const categorySlug = ch.category?.slug ?? null;
 
@@ -112,14 +123,14 @@ export async function GET() {
               },
             }
           : {}),
-        media: channelMedia.map((m) => {
+        media: await Promise.all(channelMedia.map(async (m) => {
           const mp = mediaProductMap.get(m.id);
 
           return {
             ref: m.ref,
             name: m.name,
             description: m.description || "",
-            source_url: sourceUrlForExport(m.blob),
+            source_url: await sourceUrlForExport(m.blob),
             media_type: m.mediaType,
             thumbnail_url: m.thumbnailUrl || "",
             preview_image_urls: m.previewImageUrls || [],
@@ -136,9 +147,9 @@ export async function GET() {
                 }
               : {}),
           };
-        }),
+        })),
       };
-    }),
+    })),
   };
 
   audit({

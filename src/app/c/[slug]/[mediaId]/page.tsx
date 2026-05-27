@@ -104,12 +104,12 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
-  // We fetch the full Media row (including `blob`) because for photos we
-  // need blob.blobId to surface as `photo_gridfs_id` on the client (it points
-  // to EncryptedPhotoBlob and is safe to expose — bytes are useless without
-  // the DEK). For non-photo media `blob` holds the plaintext URL/markdown
-  // body, which we DO NOT surface to the client; we filter the page payload
-  // explicitly below.
+  // We fetch the full Media row (including `blob`) because for envelope-
+  // encrypted media (photo, article) we need blob.envelopeId to surface as
+  // `envelope_id` on the client (it points to EncryptedEnvelope and is safe
+  // to expose — bytes are useless without the DEK). For url-backed media,
+  // `blob` holds the plaintext URL which we DO NOT surface; the page
+  // payload is filtered explicitly below.
   const media = await prisma.media.findFirst({
     where: { id: mediaId, channelId: channel.id },
   });
@@ -123,7 +123,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   const productBlobs = await prisma.mediaEncryptedBlob.findMany({
     where: { mediaId: media.id },
     select: {
-      encryptedSourceUrl: true,
+      encryptedSource: true,
       keyFingerprint: true,
       product: {
         select: {
@@ -140,10 +140,10 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   });
 
   const allProducts = productBlobs
-    .filter((b) => b.encryptedSourceUrl)
+    .filter((b) => b.encryptedSource)
     .map((b) => ({
       productId: b.product.satsrailProductId,
-      encryptedBlob: b.encryptedSourceUrl,
+      encryptedBlob: b.encryptedSource,
       keyFingerprint: b.keyFingerprint ?? b.product.keyFingerprint,
       name: b.product.productName,
       priceCents: b.product.productPriceCents,
@@ -169,8 +169,10 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   );
 
   // Admin preview: validate session server-side. We re-derive the source from
-  // Media.blob (URL or markdown body) so a logged-in admin can preview the
-  // unencrypted content without going through the paywall.
+  // Media.blob (URL only) so a logged-in admin can preview without going
+  // through the paywall. For envelope-encrypted media (photo, article) the
+  // admin preview goes through the dedicated /api/admin/media/[id]/preview
+  // endpoint, which decrypts on the fly.
   let adminPreviewSourceUrl: string | null = null;
   if (preview === "admin") {
     try {
@@ -180,9 +182,6 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
         try {
           const parsed = parseMediaBlob(media.blob);
           if (parsed.kind === "url") adminPreviewSourceUrl = parsed.url;
-          else if (parsed.kind === "markdown") adminPreviewSourceUrl = parsed.body;
-          // For photos, admin preview goes through the photo route; we don't
-          // expose the EncryptedPhotoBlob.id here.
         } catch {
           adminPreviewSourceUrl = null;
         }
@@ -193,8 +192,8 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   }
 
   // Preview images: direct URLs stored on Media.previewImageUrls. Uploaded
-  // images live as bytes in EncryptedPhotoBlob and are referenced here via
-  // `/api/images/<id>` URLs. Cap-of-6 enforced on read.
+  // images live as bytes in the PreviewImage table and are referenced here
+  // via `/api/images/<id>` URLs. Cap-of-6 enforced on read.
   const previewImages = (media.previewImageUrls || []).slice(0, 6);
 
   const thumbSrc = resolveMediaThumb(media);
@@ -271,15 +270,15 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       comments_count: media.commentsCount,
       likes_count: media.likesCount ?? 0,
       shares_count: media.sharesCount ?? 0,
-      // For photo media, surface the EncryptedPhotoBlob id to the client so
-      // it can fetch the encrypted bytes after unwrapping the DEK. The id
-      // lives in Media.blob.blobId for photo-typed rows.
-      photo_gridfs_id:
-        media.mediaType === "photo"
+      // For envelope-encrypted media (photo, article), surface the
+      // EncryptedEnvelope id to the client so it can fetch the ciphertext
+      // after unwrapping the DEK. The id lives in Media.blob.envelopeId.
+      envelope_id:
+        media.mediaType === "photo" || media.mediaType === "article"
           ? (() => {
               try {
-                const parsed = (media.blob as { kind?: string; blobId?: string });
-                return parsed.kind === "photo" ? parsed.blobId : undefined;
+                const parsed = (media.blob as { kind?: string; envelopeId?: string });
+                return parsed.kind === media.mediaType ? parsed.envelopeId : undefined;
               } catch {
                 return undefined;
               }

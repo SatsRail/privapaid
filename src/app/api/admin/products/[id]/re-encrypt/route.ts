@@ -4,18 +4,18 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { prisma } from "@/lib/prisma";
 import { encryptSourceUrl } from "@/lib/content-encryption";
-import { unwrapDekToBase64url } from "@/lib/photo-dek";
+import { unwrapDekToBase64url } from "@/lib/content-dek";
 import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
 
 /**
  * POST /api/admin/products/[id]/re-encrypt
  *
  * Re-encrypts every MediaEncryptedBlob attached to this product after a key
- * rotation. Plaintext is sourced from the local DB (Media.blob — URL,
- * markdown body, or PHOTO_KEK-wrapped DEK), not by decrypting the old
- * ciphertext with SatsRail's old_key. That pre-rotation key has proven
- * unreliable in practice: the portal can clear it independently, and any
- * temporary fetch failure used to mean unrecoverable rotation.
+ * rotation. Plaintext is sourced from the local DB (Media.blob — URL string
+ * or CONTENT_KEK-wrapped DEK), not by decrypting the old ciphertext with
+ * SatsRail's old_key. That pre-rotation key has proven unreliable in
+ * practice: the portal can clear it independently, and any temporary fetch
+ * failure used to mean unrecoverable rotation.
  *
  * Streams progress back to the client as newline-delimited JSON.
  *
@@ -27,8 +27,8 @@ import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob
  *
  * Failure modes (still surfaced as `errors`):
  *   - Media not found (was deleted before rotation completed).
- *   - Photo media missing `encryptedDek` (legacy upload, no KEK copy).
- *   - PHOTO_KEK not configured and we have photos to rotate.
+ *   - Envelope media missing `encryptedDek`.
+ *   - CONTENT_KEK not configured and we have envelope-encrypted media.
  */
 export async function POST(
   _req: NextRequest,
@@ -99,7 +99,7 @@ export async function POST(
       throw new Error(`Media ${mediaId} not found — was it deleted?`);
     }
     const blob = parseMediaBlob(media.blob);
-    if (blob.kind === "photo") {
+    if (blob.kind === "photo" || blob.kind === "article") {
       return unwrapDekToBase64url(blob.encryptedDek);
     }
     return plaintextForEncryption(blob);
@@ -118,7 +118,7 @@ export async function POST(
           const encrypted = encryptSourceUrl(plaintext, newKey, satsrailProductId);
           await prisma.mediaEncryptedBlob.update({
             where: { id: entry.id },
-            data: { encryptedSourceUrl: encrypted },
+            data: { encryptedSource: encrypted },
           });
         } catch (err) {
           errors++;
