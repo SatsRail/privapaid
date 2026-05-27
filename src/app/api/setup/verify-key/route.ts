@@ -36,6 +36,9 @@ export async function POST(request: Request) {
       } else if (error.message.includes("403")) {
         message =
           "Merchant account is not yet active. Complete setup in the SatsRail portal first.";
+      } else if (error.message.includes("404")) {
+        message =
+          "SatsRail endpoint not found. Check that SATSRAIL_API_URL includes the /api/v1 suffix.";
       }
     }
     return NextResponse.json({ error: message }, { status: 400 });
