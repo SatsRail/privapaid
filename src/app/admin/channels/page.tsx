@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import Badge from "@/components/ui/Badge";
+import { buttonClasses } from "@/components/ui/buttonStyles";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
 
@@ -17,10 +18,7 @@ export default async function ChannelsPage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t(locale, "admin.channels.title")}</h1>
-        <Link
-          href="/admin/channels/new"
-          className="rounded-md bg-[var(--theme-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-        >
+        <Link href="/admin/channels/new" className={buttonClasses()}>
           {t(locale, "admin.channels.new")}
         </Link>
       </div>

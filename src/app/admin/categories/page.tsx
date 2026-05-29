@@ -4,6 +4,7 @@ import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
 import AdultContentSettings from "./AdultContentSettings";
 import CategoryList from "./CategoryList";
+import { buttonClasses } from "@/components/ui/buttonStyles";
 
 export const dynamic = "force-dynamic";
 
@@ -34,10 +35,7 @@ export default async function CategoriesPage() {
 
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t(locale, "admin.categories.title")}</h1>
-        <Link
-          href="/admin/categories/new"
-          className="rounded-md bg-[var(--theme-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-        >
+        <Link href="/admin/categories/new" className={buttonClasses()}>
           {t(locale, "admin.categories.new")}
         </Link>
       </div>

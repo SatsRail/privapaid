@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Button from "@/components/ui/Button";
 
 interface LogEntry {
   item: string;
@@ -123,12 +124,9 @@ export default function ChannelSamplerPreview({ channelId }: { channelId: string
             </p>
           </div>
         </div>
-        <button
-          onClick={() => router.refresh()}
-          className="rounded-md bg-[var(--theme-primary)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
+        <Button size="sm" onClick={() => router.refresh()}>
           Refresh Page
-        </button>
+        </Button>
       </div>
     );
   }

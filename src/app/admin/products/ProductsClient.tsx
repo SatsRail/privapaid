@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
 import { useLocale } from "@/i18n/useLocale";
 import Modal from "@/components/ui/Modal";
+import Button from "@/components/ui/Button";
 
 interface Blob {
   media_id: string;
@@ -340,13 +341,9 @@ export default function ProductsClient({ currency = "USD" }: { currency?: string
               className="flex-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-1.5 text-sm"
               required
             />
-            <button
-              type="submit"
-              disabled={typeFormLoading}
-              className="rounded-md bg-[var(--theme-primary)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
+            <Button type="submit" size="sm" disabled={typeFormLoading}>
               {typeFormLoading ? "..." : t("admin.products.types_create")}
-            </button>
+            </Button>
           </form>
         )}
         {typeFormError && (
@@ -485,17 +482,13 @@ export default function ProductsClient({ currency = "USD" }: { currency?: string
               )}
             </div>
             <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={formLoading}
-                className="rounded-md bg-[var(--theme-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-              >
+              <Button type="submit" disabled={formLoading}>
                 {formLoading
                   ? t("admin.products.saving")
                   : editingProduct
                     ? t("admin.products.update")
                     : t("admin.products.create")}
-              </button>
+              </Button>
               <button
                 type="button"
                 onClick={() => {

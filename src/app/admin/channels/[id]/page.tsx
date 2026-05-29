@@ -10,6 +10,7 @@ import ChannelProductSection from "./ChannelProductSection";
 import ChannelImportSection from "./ChannelImportSection";
 import ChannelSamplerPreview from "./ChannelSamplerPreview";
 import DeleteChannelButton from "./DeleteChannelButton";
+import { buttonClasses } from "@/components/ui/buttonStyles";
 
 export const dynamic = "force-dynamic";
 
@@ -124,7 +125,7 @@ export default async function ChannelDetailPage({
         <div className="flex gap-2">
           <Link
             href={`/admin/channels/${id}/edit`}
-            className="rounded-md bg-[var(--theme-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            className={buttonClasses()}
           >
             {t(locale, "admin.channels.edit")}
           </Link>

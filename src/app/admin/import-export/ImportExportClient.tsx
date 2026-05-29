@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import Button from "@/components/ui/Button";
 
 interface ImportError {
   entity: string;
@@ -453,13 +454,9 @@ export default function ImportExportClient() {
           Download all categories, channels, and media as a JSON file. Edit it
           externally and re-import to update your content.
         </p>
-        <button
-          onClick={handleExport}
-          disabled={exporting}
-          className="rounded-md bg-[var(--theme-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
+        <Button onClick={handleExport} disabled={exporting}>
           {exporting ? "Exporting..." : "Export All Content"}
-        </button>
+        </Button>
       </section>
 
       {/* --- Import --- */}

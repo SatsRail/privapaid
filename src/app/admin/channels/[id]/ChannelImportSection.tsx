@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Button from "@/components/ui/Button";
 
 interface ImportError {
   entity: string;
@@ -415,15 +416,15 @@ export default function ChannelImportSection({
           )}
 
           <div className="flex gap-2">
-            <button
+            <Button
+              size="sm"
               onClick={() => {
                 reset();
                 router.refresh();
               }}
-              className="rounded-md bg-[var(--theme-primary)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
             >
               Refresh Page
-            </button>
+            </Button>
             <button
               onClick={reset}
               className="rounded-md border border-[var(--theme-border)] px-3 py-1.5 text-sm hover:opacity-80"
