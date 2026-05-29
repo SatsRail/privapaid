@@ -167,12 +167,15 @@ describe("MediaLayout", () => {
     expect(screen.queryByText("A great video")).not.toBeInTheDocument();
   });
 
-  it("renders the preview gallery under the content when preview images exist", () => {
+  it("renders the preview gallery in both the mobile column and the desktop rail when preview images exist", () => {
+    // Previews live in two places now: a md:hidden copy in the left column
+    // (phones never see the rail) and the desktop rail aside (hidden md:block).
+    // jsdom renders both regardless of the CSS breakpoint, so we expect two.
     const data = { ...baseData, previewImages: ["/img1.jpg", "/img2.jpg"] };
     render(<MediaLayout {...data} />);
     const galleries = screen.getAllByTestId("preview-gallery");
-    expect(galleries.length).toBe(1);
-    expect(galleries[0]).toHaveTextContent("2 images");
+    expect(galleries.length).toBe(2);
+    galleries.forEach((g) => expect(g).toHaveTextContent("2 images"));
   });
 
   it("does not render preview gallery when no preview images", () => {

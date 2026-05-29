@@ -24,7 +24,7 @@ describe("UnavailableWall", () => {
       const { container } = render(<UnavailableWall variant="card" mediaName="Test" locale="en" />);
       const svg = container.querySelector("svg");
       expect(svg).toBeInTheDocument();
-      expect(svg?.getAttribute("width")).toBe("20");
+      expect(svg?.getAttribute("width")).toBe("22");
     });
   });
 
@@ -47,10 +47,10 @@ describe("UnavailableWall", () => {
       expect(screen.getByText("viewer.media.not_available")).toBeInTheDocument();
     });
 
-    it("renders a large lock icon", () => {
+    it("renders a lock icon in a chip", () => {
       const { container } = render(<UnavailableWall variant="overlay" thumbnailUrl="/thumb.jpg" mediaName="My Media" locale="en" />);
       const svg = container.querySelector("svg");
-      expect(svg?.getAttribute("width")).toBe("48");
+      expect(svg?.getAttribute("width")).toBe("22");
     });
   });
 
@@ -69,7 +69,7 @@ describe("UnavailableWall", () => {
       const { container } = render(<UnavailableWall variant="overlay" mediaName="My Media" locale="en" />);
       const svg = container.querySelector("svg");
       expect(svg).toBeInTheDocument();
-      expect(svg?.getAttribute("width")).toBe("48");
+      expect(svg?.getAttribute("width")).toBe("22");
     });
   });
 });
