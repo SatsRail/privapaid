@@ -45,11 +45,20 @@ describe("Button", () => {
 
     rerender(<Button variant="ghost">Ghost</Button>);
     expect(screen.getByRole("button").className).toContain("bg-transparent");
+
+    rerender(<Button variant="outline">Outline</Button>);
+    expect(screen.getByRole("button").className).toContain(
+      "border-[var(--theme-border)]"
+    );
   });
 
   it("applies size classes", () => {
-    render(<Button size="lg">Large</Button>);
+    const { rerender } = render(<Button size="lg">Large</Button>);
     expect(screen.getByRole("button").className).toContain("px-6");
+
+    rerender(<Button size="xs">Tiny</Button>);
+    expect(screen.getByRole("button").className).toContain("py-1");
+    expect(screen.getByRole("button").className).toContain("text-xs");
   });
 
   it("applies custom className", () => {

@@ -149,13 +149,14 @@ export default function ChannelSamplerPreview({ channelId }: { channelId: string
         >
           {importing ? "Importing..." : "Import Sampler"}
         </button>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={loadSamplerJson}
           disabled={importing}
-          className="rounded-md border border-[var(--theme-border)] px-3 py-1.5 text-sm hover:opacity-80 disabled:opacity-50"
         >
           {showJson ? "Hide JSON" : "View JSON"}
-        </button>
+        </Button>
         <a
           href="/channel-sampler.json"
           download="channel-sampler.json"

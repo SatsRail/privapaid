@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Modal from "@/components/ui/Modal";
+import Button from "@/components/ui/Button";
 import { useLocale } from "@/i18n/useLocale";
 
 interface Props {
@@ -79,14 +80,14 @@ export default function DeleteChannelButton({
         )}
 
         <div className="flex justify-end gap-2">
-          <button
+          <Button
+            variant="outline"
             type="button"
             onClick={() => setOpen(false)}
             disabled={loading}
-            className="rounded-md border border-[var(--theme-border)] px-4 py-2 text-sm font-medium text-[var(--theme-text)] hover:bg-[var(--theme-bg-secondary)] disabled:opacity-50"
           >
             {t("admin.channels.cancel")}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={handleConfirm}

@@ -489,16 +489,16 @@ export default function ProductsClient({ currency = "USD" }: { currency?: string
                     ? t("admin.products.update")
                     : t("admin.products.create")}
               </Button>
-              <button
+              <Button
+                variant="outline"
                 type="button"
                 onClick={() => {
                   setShowProductForm(false);
                   resetProductForm();
                 }}
-                className="rounded-md border border-[var(--theme-border)] px-4 py-2 text-sm hover:bg-[var(--theme-bg)]"
               >
                 {t("admin.products.cancel")}
-              </button>
+              </Button>
             </div>
           </form>
         </div>

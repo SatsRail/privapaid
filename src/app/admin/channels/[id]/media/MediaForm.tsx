@@ -192,19 +192,16 @@ function ProductCard({
           </div>
           {editError && <p className="text-xs text-red-500">{editError}</p>}
           <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="rounded-md bg-[var(--theme-primary)] px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
+            <Button size="xs" onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save"}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
+              size="xs"
               onClick={() => setEditing(false)}
-              className="rounded-md border border-[var(--theme-border)] px-3 py-1 text-xs font-medium text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg)]"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}

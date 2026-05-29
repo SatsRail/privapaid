@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import Link from "next/link";
+import { buttonClasses } from "@/components/ui/buttonStyles";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,7 @@ export default async function ChannelEarningsPage({
         </div>
         <Link
           href={`/admin/channels/${id}`}
-          className="rounded-md border border-[var(--theme-border)] px-4 py-2 text-sm hover:bg-[var(--theme-bg-secondary)]"
+          className={buttonClasses({ variant: "outline" })}
         >
           Back to Channel
         </Link>

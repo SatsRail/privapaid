@@ -425,12 +425,9 @@ export default function ChannelImportSection({
             >
               Refresh Page
             </Button>
-            <button
-              onClick={reset}
-              className="rounded-md border border-[var(--theme-border)] px-3 py-1.5 text-sm hover:opacity-80"
-            >
+            <Button variant="outline" size="sm" onClick={reset}>
               Import More
-            </button>
+            </Button>
           </div>
         </div>
       )}

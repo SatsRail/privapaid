@@ -12,9 +12,16 @@ export const buttonVariants = {
   danger: "bg-red-600 text-white hover:bg-red-700 disabled:opacity-50",
   ghost:
     "bg-transparent text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-secondary)]",
+  // Bordered secondary action (Cancel / Back). Normalizes the hand-rolled
+  // bordered buttons that previously used either an invisible white-on-white
+  // hover (hover:bg-[var(--theme-bg)]) or hover:opacity-80 — both now resolve
+  // to a visible surface tint.
+  outline:
+    "border border-[var(--theme-border)] bg-transparent text-[var(--theme-text)] hover:bg-[var(--theme-bg-secondary)] disabled:opacity-50",
 } as const;
 
 export const buttonSizes = {
+  xs: "px-3 py-1 text-xs",
   sm: "px-3 py-1.5 text-sm",
   md: "px-4 py-2 text-sm",
   lg: "px-6 py-3 text-base",
