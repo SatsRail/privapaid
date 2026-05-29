@@ -291,6 +291,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       // Avatar for the under-video ChannelBlock. Falls back gracefully to
       // an initial when both fields are absent.
       profileImageUrl: resolveChannelAvatar(channel),
+      mediaCount: channel.mediaCount,
     },
     products: products.map((p) => ({
       productId: p.productId,

@@ -469,15 +469,16 @@ function ContentRendererDOM({
   //                              letterbox gap from object-contain — black
   //                              bars next to a photo look unfinished)
   //   • audio                  → black tile, no aspect constraint
-  //   • video / iframe / other → black + max-w-[1280px] centered. YouTube's
-  //                              standard watch-page video tops out at
-  //                              ~1280px on desktop; the rail-collapsed
-  //                              layout gives us the horizontal room to
-  //                              match it. The iframe is already
-  //                              `aspect-video w-full` and the native
-  //                              <video> intrinsic ratio fills inside the
-  //                              cap, so the box is always 16:9 in practice
-  //                              for embeds.
+  //   • video / iframe / other → black + max-w-[1280px], left-aligned.
+  //                              YouTube's standard watch-page video tops out
+  //                              at ~1280px on desktop; we cap to match but
+  //                              hug the left edge of the column so the player
+  //                              lines up with the title/meta block beneath it
+  //                              rather than floating centered. The iframe is
+  //                              already `aspect-video w-full` and the native
+  //                              <video> intrinsic ratio fills inside the cap,
+  //                              so the box is always 16:9 in practice for
+  //                              embeds.
   const isText = mediaType === "article" || mediaType === "podcast";
   const isPhoto = mediaType === "photo";
   const isAudio = mediaType === "audio";
@@ -491,7 +492,7 @@ function ContentRendererDOM({
     containerClass = "min-h-[80px] rounded-lg bg-black p-4";
   } else {
     containerClass =
-      "min-h-[200px] mx-auto max-w-[1280px] overflow-hidden rounded-lg bg-black";
+      "min-h-[200px] max-w-[1280px] overflow-hidden rounded-lg bg-black";
   }
 
   return <div ref={containerRef} className={containerClass} />;

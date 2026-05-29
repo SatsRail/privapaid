@@ -117,7 +117,7 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
           <button
             key={i}
             onClick={() => handleTileClick(i)}
-            className={`group relative overflow-hidden rounded-lg border bg-[var(--theme-bg-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] ${compact ? "aspect-[4/3]" : "aspect-square"} ${locked ? "cursor-default" : ""} ${compact && selectedIndex === i ? "border-[var(--theme-primary)] ring-2 ring-[var(--theme-primary)]" : "border-[var(--theme-border)]"}`}
+            className={`group relative overflow-hidden rounded-lg border bg-[var(--theme-bg-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)] ${compact ? "aspect-[4/3]" : "aspect-square"} ${locked ? "cursor-default" : ""} ${compact && selectedIndex === i ? "border-[var(--theme-primary)] ring-2 ring-[var(--theme-primary)]" : "border-[var(--theme-border)]"}`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

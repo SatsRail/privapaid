@@ -162,6 +162,7 @@ export default async function ChannelDetailPage({
           <thead className="bg-[var(--theme-bg-secondary)]">
             <tr>
               <th className="px-4 py-3 text-left font-medium text-[var(--theme-text-secondary)]">#</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--theme-text-secondary)]" aria-label="Thumbnail" />
               <th className="px-4 py-3 text-left font-medium text-[var(--theme-text-secondary)]">Ref</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--theme-text-secondary)]">{t(locale, "admin.channels.name")}</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--theme-text-secondary)]">{t(locale, "admin.channels.type")}</th>
@@ -177,6 +178,22 @@ export default async function ChannelDetailPage({
               return (
                 <tr key={m.id} className="hover:bg-[var(--theme-bg-secondary)]">
                   <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{m.position}</td>
+                  <td className="px-4 py-3">
+                    {m.thumbnailBytes || m.thumbnailUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={
+                          m.thumbnailBytes
+                            ? `/api/images/media-thumbnail/${m.id}`
+                            : m.thumbnailUrl
+                        }
+                        alt=""
+                        className="h-10 w-16 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="h-10 w-16 rounded bg-[var(--theme-bg-secondary)]" />
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--theme-text-secondary)]">
                     {m.ref != null ? `md_${m.ref}` : "—"}
                   </td>
@@ -210,7 +227,7 @@ export default async function ChannelDetailPage({
             })}
             {media.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-4 text-center text-[var(--theme-text-secondary)]">
+                <td colSpan={7} className="px-4 py-4 text-center text-[var(--theme-text-secondary)]">
                   {t(locale, "admin.channels.media_empty")}
                 </td>
               </tr>

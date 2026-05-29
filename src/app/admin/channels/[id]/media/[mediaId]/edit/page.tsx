@@ -200,7 +200,6 @@ export default async function EditMediaPage({
 
   return (
     <div>
-      <DeleteMediaButton mediaId={mediaId} name={media.name} channelId={channelId} />
       <MediaForm
         channelId={channelId}
         channelSlug={channel?.slug}
@@ -209,6 +208,9 @@ export default async function EditMediaPage({
         products={productDetails}
         encryptedBlobs={encryptedBlobs}
       />
+      <div className="mt-10">
+        <DeleteMediaButton mediaId={mediaId} name={media.name} channelId={channelId} />
+      </div>
     </div>
   );
 }

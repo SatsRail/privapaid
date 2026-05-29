@@ -16,6 +16,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import AdminPreviewBanner from "@/components/AdminPreviewBanner";
 import AdminPreviewContent from "@/components/AdminPreviewContent";
 import { useMediaAccess } from "@/lib/use-media-access";
+import { useLocale } from "@/i18n/useLocale";
 
 export default function MediaLayout({
   media,
@@ -29,6 +30,7 @@ export default function MediaLayout({
   adminPreviewSourceUrl,
   siblingMedia,
 }: MediaPageData) {
+  const { t } = useLocale();
   const hasPreview = previewImages.length > 0;
 
   // Single source of truth for "does the viewer have paid access?" All
@@ -53,6 +55,11 @@ export default function MediaLayout({
   // no rail. siblingMedia is server-decided (page.tsx fetches all-but-current
   // media in the channel, capped at 20, sorted by views desc).
   const hasSidebar = siblingMedia.length > 0;
+
+  // The right rail hosts preview images (top) and the sibling-media list.
+  // Either one is enough to warrant the two-column grid — previews alone
+  // should pull the layout into two columns rather than stack full-width.
+  const hasRail = hasPreview || hasSidebar;
 
   const mainContent = adminPreviewSourceUrl ? (
     <>
@@ -102,7 +109,7 @@ export default function MediaLayout({
       */}
       <div
         className={
-          hasSidebar
+          hasRail
             ? "md:grid md:grid-cols-[1fr_320px] md:gap-6 lg:grid-cols-[1fr_360px] lg:gap-8"
             : ""
         }
@@ -112,10 +119,17 @@ export default function MediaLayout({
             sibling-media rail. min-w-0 keeps long titles / wide videos from
             blowing out the grid track.
 
-            Reading order: video → title → meta (views + price/clock) →
-            description → preview gallery → comments. Video-first matches
-            the YouTube watch page; user sees the content before any
-            framing chrome. */}
+            Reading order: video → title → meta (views) → actions → channel →
+            description → (mobile previews) → comments. Video-first matches
+            the YouTube watch page; user sees the content before any framing
+            chrome.
+
+            Vertical rhythm (each gap lives on the child's own root margin):
+            the identity cluster (title + price pills + views) is bound tight
+            at mt-2 so it reads as one unit; the engagement/attribution/detail
+            sections (actions, channel, description) each break at mt-4; the
+            comments zone is set apart by a hairline divider with mt-6/pt-6.
+            Two gap sizes (8px within, 16px between) create the grouping. */}
         <div className="min-w-0">
           {mainContent}
 
@@ -147,13 +161,14 @@ export default function MediaLayout({
             hasAccess={hasActiveAccess}
           />
 
-          {/* Channel attribution — avatar + name link to the channel
-              page, which is also where viewers discover and re-engage
+          {/* Channel attribution — avatar + name + media-count link to the
+              channel page, which is also where viewers discover and re-engage
               with the channel's content. */}
           <ChannelBlock
             name={channel.name}
             slug={channel.slug}
             profileImageUrl={channel.profileImageUrl}
+            mediaCount={channel.mediaCount}
           />
 
           {/* Description — auto-collapses to 2 lines with a "...more"
@@ -161,29 +176,60 @@ export default function MediaLayout({
               block above the comments. */}
           {media.description && <ExpandableDescription text={media.description} />}
 
-          {/* Preview images */}
+          {/* Preview images — mobile only. On md+ these live in the right
+              rail (the aside is hidden below md), so this inline copy serves
+              phone viewers who never see the rail. */}
           {hasPreview && (
-            <div className="mt-6">
+            <div className="mt-6 md:hidden">
               <PreviewGallery images={previewImages} />
             </div>
           )}
 
-          {/* Comments — anonymous, macaroon-gated form. */}
-          <ErrorBoundary>
-            <CommentSection
-              mediaId={media._id}
-              hasAccess={hasActiveAccess}
-              onUnauthorized={refresh}
-            />
-          </ErrorBoundary>
+          {/* Comments — anonymous, macaroon-gated form. A single hairline
+              divider sets the discussion apart from the info block above it;
+              the generous mt-6/pt-6 gives the seam room to breathe so the
+              page reads as "content, then conversation" rather than one
+              undifferentiated stack. */}
+          <div className="mt-6 border-t border-[var(--theme-border)] pt-6">
+            <ErrorBoundary>
+              <CommentSection
+                mediaId={media._id}
+                hasAccess={hasActiveAccess}
+                onUnauthorized={refresh}
+              />
+            </ErrorBoundary>
+          </div>
         </div>
 
-        {/* Right column — md+ only. Sticky so the rail follows the viewer
-            as they scroll through long descriptions / comment threads. */}
-        {hasSidebar && (
+        {/* Right rail — md+ only. Sticky so it follows the viewer as they
+            scroll through long descriptions / comment threads. Preview images
+            sit at the top, the sibling-media list below.
+
+            Both rail sections share one flat treatment: a small section
+            label, then content, separated by a hairline divider. No
+            background card — that matches the page's "content sits inline,
+            not in form-like boxes" rule (see ExpandableDescription) and keeps
+            the previews and the sibling list reading as one organized panel
+            rather than two mismatched widgets. */}
+        {hasRail && (
           <aside className="hidden md:block">
-            <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
-              <ChannelSidebar items={siblingMedia} locale={locale} />
+            <div className="sticky top-20 max-h-[calc(100vh-6rem)] divide-y divide-[var(--theme-border)] overflow-y-auto">
+              {hasPreview && (
+                <section className="pb-6">
+                  <h2
+                    className="mb-3 text-sm font-medium"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    {t("viewer.sidebar.previews")}
+                  </h2>
+                  <PreviewGallery images={previewImages} />
+                </section>
+              )}
+              {hasSidebar && (
+                <section className={hasPreview ? "pt-6" : undefined}>
+                  <ChannelSidebar items={siblingMedia} locale={locale} />
+                </section>
+              )}
             </div>
           </aside>
         )}

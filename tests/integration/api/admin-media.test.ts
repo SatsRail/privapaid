@@ -159,6 +159,28 @@ describe("Admin Media API", () => {
       expect(channel!.mediaCount).toBe(1);
     });
 
+    it("persists thumbnail_id and preview_image_ids as /api/images/ URLs", async () => {
+      const chId = await seedChannel();
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "With Assets",
+        source_url: "https://example.com/a.mp4",
+        media_type: "video",
+        thumbnail_id: "img_thumb_1",
+        preview_image_ids: ["img_a", "img_b"],
+      });
+      const res = await createMediaRoute(req);
+      const body = await res.json();
+      expect(res.status).toBe(201);
+
+      const m = await prisma.media.findUnique({ where: { id: body.data._id } });
+      expect(m!.thumbnailUrl).toBe("/api/images/img_thumb_1");
+      expect(m!.previewImageUrls).toEqual([
+        "/api/images/img_a",
+        "/api/images/img_b",
+      ]);
+    });
+
     it("returns 400 for invalid data (missing name)", async () => {
       const chId = await seedChannel();
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
@@ -433,6 +455,51 @@ describe("Admin Media API", () => {
       expect(m!.position).toBe(42);
       const updatedBlob = m!.blob as { kind: string; url?: string };
       expect(updatedBlob.url).toBe("https://example.com/different.mp4");
+    });
+
+    it("persists an uploaded thumbnail_id as a /api/images/ URL", async () => {
+      const chId = await seedChannel();
+      const mediaId = await seedMedia(chId);
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
+        thumbnail_id: "img_uploaded_1",
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
+      expect(res.status).toBe(200);
+      const m = await prisma.media.findUnique({ where: { id: mediaId } });
+      expect(m!.thumbnailUrl).toBe("/api/images/img_uploaded_1");
+    });
+
+    it("does NOT clobber thumbnailUrl when thumbnail_id equals the media id (byte-flag case)", async () => {
+      const chId = await seedChannel();
+      // The edit page sends thumbnail_id === media.id as a flag meaning a
+      // byte-backed thumbnail already exists — it is not a PreviewImage id and
+      // must be ignored so the stored URL is preserved.
+      const mediaId = await seedMedia(chId, {
+        thumbnailUrl: "/api/images/media-thumbnail/keep-me",
+      });
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
+        thumbnail_id: mediaId,
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
+      expect(res.status).toBe(200);
+      const m = await prisma.media.findUnique({ where: { id: mediaId } });
+      expect(m!.thumbnailUrl).toBe("/api/images/media-thumbnail/keep-me");
+    });
+
+    it("persists preview_image_ids as /api/images/ URLs", async () => {
+      const chId = await seedChannel();
+      const mediaId = await seedMedia(chId);
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
+        preview_image_ids: ["p1", "p2", "p3"],
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
+      expect(res.status).toBe(200);
+      const m = await prisma.media.findUnique({ where: { id: mediaId } });
+      expect(m!.previewImageUrls).toEqual([
+        "/api/images/p1",
+        "/api/images/p2",
+        "/api/images/p3",
+      ]);
     });
 
     it("re-encrypts MediaProduct + ChannelProduct blobs when sourceUrl changes", async () => {

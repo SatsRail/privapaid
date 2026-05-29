@@ -14,17 +14,22 @@ export default function MediaBreadcrumb({
   mediaName,
   locale,
 }: MediaBreadcrumbProps) {
+  const link =
+    "rounded transition-colors hover:text-[var(--theme-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]";
   return (
-    <div className="mb-4 text-sm text-zinc-400">
-      <Link href="/" className="hover:text-zinc-200">
+    <div
+      className="mb-4 text-sm"
+      style={{ color: "var(--theme-text-secondary)" }}
+    >
+      <Link href="/" className={link}>
         {t(locale, "viewer.media.home")}
       </Link>
       {" / "}
-      <Link href={`/c/${channelSlug}`} className="hover:text-zinc-200">
+      <Link href={`/c/${channelSlug}`} className={link}>
         {channelName}
       </Link>
       {" / "}
-      <span className="text-zinc-200">{mediaName}</span>
+      <span style={{ color: "var(--theme-text)" }}>{mediaName}</span>
     </div>
   );
 }

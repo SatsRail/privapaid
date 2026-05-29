@@ -45,7 +45,10 @@ export function t(
 
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      value = value.replace(`{${k}}`, String(v));
+      // Numbers render with locale grouping ("12,480" / "12.480") so large
+      // counts read as polished rather than as a raw digit run.
+      const rendered = typeof v === "number" ? v.toLocaleString(locale) : String(v);
+      value = value.replace(`{${k}}`, rendered);
     }
   }
 

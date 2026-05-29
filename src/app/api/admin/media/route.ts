@@ -256,7 +256,12 @@ export async function POST(req: NextRequest) {
         description: result.description || "",
         blob,
         mediaType,
-        thumbnailUrl: result.thumbnail_url || "",
+        // thumbnail_id is a PreviewImage row id served via /api/images/<id>.
+        thumbnailUrl: result.thumbnail_id
+          ? `/api/images/${result.thumbnail_id}`
+          : result.thumbnail_url || "",
+        previewImageUrls:
+          result.preview_image_ids?.map((pid) => `/api/images/${pid}`) ?? [],
         position: result.position ?? (maxPos?.position ?? 0) + 1,
       },
     });

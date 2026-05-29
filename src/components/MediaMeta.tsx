@@ -19,7 +19,7 @@ export default function MediaMeta({ viewsCount, locale }: MediaMetaProps) {
   if (viewsCount <= 0) return null;
   return (
     <div
-      className="mt-3 flex gap-3 text-sm"
+      className="mt-2 flex gap-3 text-sm"
       style={{ color: "var(--theme-text-secondary)" }}
     >
       <span>{t(locale, "viewer.media.views", { count: viewsCount })}</span>

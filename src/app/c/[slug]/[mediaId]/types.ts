@@ -31,6 +31,9 @@ export interface MediaPageData {
     /** Resolved avatar URL — either /api/images/<gridfs_id> or a raw URL.
      *  Used by the YouTube-style ChannelBlock under the video. */
     profileImageUrl?: string;
+    /** Denormalized count of media in the channel. Drives the secondary
+     *  "N items" line under the channel name in ChannelBlock. */
+    mediaCount?: number;
   };
   products: SerializedProduct[];
   storedProductIds: string[];

@@ -66,16 +66,25 @@ export default function MediaHeader({
   const hasActiveTimedAccess = hasTimeGated && hasActiveAccess;
   const showPricePill = !hasActiveAccess;
 
+  // Only render the pills row when something actually lands in it. For free /
+  // product-less media all three pills resolve to null; an empty flex div
+  // would still claim its `mt-2`, opening a phantom gap between the title and
+  // the views meta below. Gating it keeps the identity cluster tight.
+  const hasPills =
+    hasActiveTimedAccess || hasLifetime || !!(showPricePill && pricePill);
+
   return (
-    // Title now lives UNDER the video (YouTube reading order). mt-4 gives
-    // it breathing room from the player; mb-2 keeps the meta row close
-    // since they form a coherent info block together.
-    <div className="mt-4 mb-2">
-      {/* YouTube's watch-page title: 20px (text-xl) at Roboto weight 600
-          (semibold). Heavier than `medium` so the title actually anchors
-          the info block — but not as loud as `bold`, which would feel
-          shouty under a 1280px video. */}
-      <h1 className="text-xl font-semibold">{name}</h1>
+    // Title sits UNDER the video (YouTube reading order). mt-4 gives it
+    // breathing room from the player. No bottom margin — the views meta
+    // owns the title→meta gap so the identity cluster (title + pills +
+    // views) reads as one tightly-spaced unit.
+    <div className="mt-4">
+      {/* Watch-page title at Roboto weight 600 (semibold) — heavy enough to
+          anchor the info block, not as loud as bold. 20px on phones, 24px
+          (text-2xl) from md up where the wider video wants a larger anchor;
+          tracking-tight keeps the larger size from feeling loose. */}
+      <h1 className="text-xl md:text-2xl font-semibold tracking-tight">{name}</h1>
+      {hasPills && (
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {hasActiveTimedAccess && (
           <AccessTimerPill serverSeconds={remainingSeconds!} locale={locale} />
@@ -102,6 +111,7 @@ export default function MediaHeader({
         )}
         {showPricePill && pricePill}
       </div>
+      )}
     </div>
   );
 }

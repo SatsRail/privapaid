@@ -191,7 +191,7 @@ export default function ActionRow({
   return (
     <div
       data-testid="action-row"
-      className="mt-3 flex flex-wrap items-center gap-2"
+      className="mt-4 flex flex-wrap items-center gap-2"
     >
       {/* Segmented Like / Dislike pill — single rounded container with a
           divider between the two halves. YouTube's exact pattern. */}
@@ -202,7 +202,7 @@ export default function ActionRow({
         <button
           onClick={handleLike}
           data-testid="like-button"
-          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium transition-colors hover:opacity-80 focus-visible:bg-white/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={liked}
           disabled={!hasAccess}
@@ -229,7 +229,7 @@ export default function ActionRow({
           onClick={handleDislike}
           data-testid="dislike-button"
           aria-label={t("viewer.actions.dislike")}
-          className="inline-flex h-full items-center px-3 hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+          className="inline-flex h-full items-center px-3 transition-colors hover:opacity-80 focus-visible:bg-white/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={disliked}
           disabled={!hasAccess}
@@ -244,7 +244,7 @@ export default function ActionRow({
       <button
         onClick={handleShare}
         data-testid="share-button"
-        className={`${pillBase} rounded-full hover:opacity-80`}
+        className={`${pillBase} rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]`}
         style={{ ...pillBg, color: "var(--theme-text)" }}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

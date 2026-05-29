@@ -230,7 +230,23 @@ export async function PATCH(
   if (validated.name !== undefined) updates.name = validated.name;
   if (validated.description !== undefined) updates.description = validated.description;
   if (validated.media_type !== undefined) updates.mediaType = validated.media_type;
-  if (validated.thumbnail_url !== undefined) updates.thumbnailUrl = validated.thumbnail_url;
+  // thumbnail_id is a PreviewImage row id served via /api/images/<id>. The edit
+  // page reuses `thumbnail_id === media.id` as a flag meaning "byte-backed
+  // thumbnail already exists" — that's not a PreviewImage id, so skip it and
+  // leave the stored URL untouched.
+  if (validated.thumbnail_id && validated.thumbnail_id !== id) {
+    updates.thumbnailUrl = `/api/images/${validated.thumbnail_id}`;
+  } else if (validated.thumbnail_url !== undefined) {
+    updates.thumbnailUrl = validated.thumbnail_url;
+  }
+  // The form only round-trips /api/images/<id> previews (edit page filters out
+  // external URLs on load), so this overwrite drops any imported non-uploaded
+  // preview URL on a subsequent edit-save. Acceptable for the upload-driven flow.
+  if (validated.preview_image_ids !== undefined) {
+    updates.previewImageUrls = validated.preview_image_ids.map(
+      (pid) => `/api/images/${pid}`
+    );
+  }
   if (validated.position !== undefined) updates.position = validated.position;
 
   let plan: UpdatePlan | null = null;

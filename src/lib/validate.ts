@@ -110,6 +110,7 @@ export const schemas = {
     media_type: z.enum(["video", "audio", "article", "photo", "podcast"]).optional(),
     thumbnail_url: z.string().optional(),
     thumbnail_id: z.string().optional(),
+    preview_image_ids: z.array(z.string()).max(6).optional(),
     position: z.number().int().nonnegative().optional(),
     // For photo media (envelope encryption): the per-photo DEK from the
     // /api/admin/photos upload response. Required when channel already has

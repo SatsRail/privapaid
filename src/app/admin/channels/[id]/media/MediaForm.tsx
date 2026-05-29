@@ -480,7 +480,10 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
 
   return (
     <>
-      <form onSubmit={handleSubmit} className="max-w-4xl space-y-4">
+      <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
+        {/* Primary content details, grouped in a card so the form reads as
+            distinct sections (details → product → actions). */}
+        <section className="space-y-4 rounded-xl border border-[var(--theme-border)] p-5">
         {/* Media type controls which fields render below — pin it to the top
             so it's the first thing the editor picks. */}
         <Select
@@ -563,7 +566,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
               <p className="text-xs text-[var(--theme-text-secondary)]">
                 Static preview images visible to all viewers. Not encrypted.
               </p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-3">
                 {previewImageIds.map((imgId, idx) => (
                   <div key={imgId} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--theme-border)]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -592,6 +595,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
             </div>
           </div>
         </div>
+        </section>
 
         {/* Inline product creation on new media */}
         {!isEditing && (
@@ -620,7 +624,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
 
         {error && <p className="text-sm text-red-500">{error}</p>}
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 border-t border-[var(--theme-border)] pt-5">
           <Button type="submit" loading={loading}>
             {isEditing ? "Update" : "Create"} Media
           </Button>
