@@ -302,6 +302,7 @@
   "viewer.payment.verify_failed.title": "No pudimos verificar tu acceso",
   "viewer.payment.verify_failed.body": "Tenemos registro de tu pago para este contenido, pero no pudimos verificar tu acceso en este momento. Intenta recargar la página. Si el problema persiste, contacta al comerciante.",
 
+  "viewer.checkout.title": "Completar pago",
   "viewer.checkout.load_error": "Error al cargar el pago. Inténtalo de nuevo.",
   "viewer.checkout.expired": "Factura expirada. Inténtalo de nuevo.",
   "viewer.checkout.close": "Cerrar",

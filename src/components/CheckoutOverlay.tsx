@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useLocale } from "@/i18n/useLocale";
+import { useDialog } from "@/components/ui/useDialog";
 
 interface CheckoutOverlayProps {
   checkoutToken: string;
@@ -59,6 +60,15 @@ export default function CheckoutOverlay({
     if (pollRef.current) clearInterval(pollRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
   }, []);
+
+  const handleClose = useCallback(() => {
+    cleanup();
+    onClose();
+  }, [cleanup, onClose]);
+
+  // Dialog a11y (focus trap, scroll lock, Escape-to-close, focus restore).
+  // The overlay is only mounted while active, so it is always "open".
+  const dialogRef = useDialog({ open: true, onClose: handleClose });
 
   // Fetch QR code on mount
   useEffect(() => {
@@ -172,7 +182,12 @@ export default function CheckoutOverlay({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
       <div
-        className="relative w-full max-w-sm rounded-2xl border p-6"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("viewer.checkout.title")}
+        tabIndex={-1}
+        className="relative w-full max-w-sm rounded-2xl border p-6 outline-none"
         style={{
           backgroundColor: "var(--theme-bg)",
           borderColor: "var(--theme-border)",
@@ -183,7 +198,7 @@ export default function CheckoutOverlay({
           <div className="flex flex-col items-center py-12">
             <p className="text-sm text-red-400">{t("viewer.checkout.load_error")}</p>
             <button
-              onClick={() => { cleanup(); onClose(); }}
+              onClick={handleClose}
               className="mt-4 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
               style={{ backgroundColor: "var(--theme-bg-secondary)", color: "var(--theme-text)" }}
             >
@@ -196,7 +211,7 @@ export default function CheckoutOverlay({
           <div className="flex flex-col items-center py-12">
             <p className="text-sm text-yellow-400">{t("viewer.checkout.expired")}</p>
             <button
-              onClick={() => { cleanup(); onClose(); }}
+              onClick={handleClose}
               className="mt-4 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
               style={{ backgroundColor: "var(--theme-bg-secondary)", color: "var(--theme-text)" }}
             >
@@ -298,7 +313,7 @@ export default function CheckoutOverlay({
 
             {/* Cancel */}
             <button
-              onClick={() => { cleanup(); onClose(); }}
+              onClick={handleClose}
               className="mt-4 text-sm transition-colors"
               style={{ color: "var(--theme-text-secondary)" }}
             >

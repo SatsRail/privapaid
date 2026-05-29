@@ -302,6 +302,7 @@
   "viewer.payment.verify_failed.title": "Couldn't verify your access",
   "viewer.payment.verify_failed.body": "We see you've paid for this content, but we couldn't verify your access right now. Try reloading the page. If the problem persists, contact the merchant.",
 
+  "viewer.checkout.title": "Complete payment",
   "viewer.checkout.load_error": "Failed to load payment. Please try again.",
   "viewer.checkout.expired": "Invoice expired. Please try again.",
   "viewer.checkout.close": "Close",

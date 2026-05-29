@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useId } from "react";
+import { useId, useRef } from "react";
+import { useDialog } from "./useDialog";
 
 interface ModalProps {
   open: boolean;
@@ -9,71 +10,10 @@ interface ModalProps {
   children: React.ReactNode;
 }
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 export default function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<Element | null>(null);
-  const onCloseRef = useRef(onClose);
+  const dialogRef = useDialog({ open, onClose });
   const titleId = useId();
-
-  // Keep onClose ref current without triggering effect re-runs
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  });
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        onCloseRef.current();
-        return;
-      }
-
-      if (e.key !== "Tab" || !dialogRef.current) return;
-
-      const focusable = dialogRef.current.querySelectorAll(FOCUSABLE);
-      if (focusable.length === 0) return;
-
-      const first = focusable[0] as HTMLElement;
-      const last = focusable[focusable.length - 1] as HTMLElement;
-
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-
-    // Remember the element that triggered the modal
-    triggerRef.current = document.activeElement;
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", handleKeyDown);
-
-    // Focus the first focusable element inside the dialog
-    requestAnimationFrame(() => {
-      if (dialogRef.current) {
-        const first = dialogRef.current.querySelector(FOCUSABLE) as HTMLElement;
-        if (first) first.focus();
-        else dialogRef.current.focus();
-      }
-    });
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
-
-      // Restore focus to the trigger element
-      if (triggerRef.current && triggerRef.current instanceof HTMLElement) {
-        triggerRef.current.focus();
-      }
-    };
-  }, [open]);
 
   if (!open) return null;
 

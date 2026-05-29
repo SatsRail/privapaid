@@ -74,9 +74,11 @@ describe("AboutModal", () => {
   it("calls onClose when backdrop clicked", () => {
     const onClose = vi.fn();
     render(<AboutModal {...defaultProps} onClose={onClose} />);
-    // The backdrop is the outermost fixed div
-    const backdrop = document.querySelector(".fixed.inset-0");
-    fireEvent.click(backdrop!);
+    // The backdrop is the outermost fixed div. Modal dismisses on mousedown
+    // (not click) so a drag-select that releases outside the dialog doesn't
+    // accidentally close it.
+    const backdrop = document.querySelector(".fixed.inset-0") as HTMLElement;
+    fireEvent.mouseDown(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

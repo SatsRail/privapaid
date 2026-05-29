@@ -214,6 +214,27 @@ describe("CheckoutOverlay", () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
+    it("exposes a labelled modal dialog", async () => {
+      render(<CheckoutOverlay {...defaultProps} />);
+      await waitFor(() => {
+        expect(screen.getByText("Waiting for payment...")).toBeInTheDocument();
+      });
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(dialog).toHaveAttribute("aria-label", "Complete payment");
+    });
+
+    it("closes on Escape", async () => {
+      render(<CheckoutOverlay {...defaultProps} />);
+      await waitFor(() => {
+        expect(screen.getByText("Waiting for payment...")).toBeInTheDocument();
+      });
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      });
+      expect(defaultProps.onClose).toHaveBeenCalled();
+    });
+
     it("shows powered by SatsRail link", async () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useId } from "react";
 import { useLocale } from "@/i18n/useLocale";
+import { useDialog } from "@/components/ui/useDialog";
 
 const STORAGE_KEY = "privapaid_age_verified";
 const emptySubscribe = () => () => {};
@@ -19,8 +20,16 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
     () => false,
   );
   const [verified, setVerified] = useState(false);
+  const titleId = useId();
+  const descId = useId();
 
-  if (!mounted || verified || alreadyVerified) return null;
+  // The gate must be answered, not dismissed: focus trap and scroll lock
+  // apply, but Escape does not close it. Keying the hook off isOpen (rather
+  // than a constant) lets the scroll lock release once the gate is passed.
+  const isOpen = mounted && !verified && !alreadyVerified;
+  const dialogRef = useDialog({ open: isOpen, dismissible: false });
+
+  if (!isOpen) return null;
 
   function handleConfirm() {
     sessionStorage.setItem(STORAGE_KEY, "true");
@@ -49,10 +58,17 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descId}
+        tabIndex={-1}
         style={{
           width: "100%",
           maxWidth: 400,
           textAlign: "center",
+          outline: "none",
         }}
       >
         {/* Warning icon */}
@@ -86,6 +102,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
         </div>
 
         <h2
+          id={titleId}
           style={{
             fontSize: 20,
             fontWeight: 700,
@@ -97,6 +114,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
         </h2>
 
         <p
+          id={descId}
           style={{
             fontSize: 14,
             color: "#a1a1aa",
@@ -116,7 +134,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
               fontSize: 14,
               fontWeight: 600,
               color: "#ffffff",
-              background: "var(--theme-primary, #3b82f6)",
+              background: "var(--theme-primary)",
               border: "none",
               borderRadius: 980,
               cursor: "pointer",
