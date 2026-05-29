@@ -1,13 +1,19 @@
 "use client";
 
+// Status badges use a translucent tint of a semantic hue + a mid-tone text
+// color so they read on ANY theme surface — the light admin and the dark
+// viewer alike. The previous `dark:` variants were a trap: `<html>` carries a
+// permanent `.dark` class app-wide (layout.tsx), so the dark variants fired
+// even inside the light admin, rendering dark chips on white. Tints driven by
+// alpha need no surface assumption. The neutral/default routes through theme
+// tokens so it always matches whatever surface it sits on.
 const colorMap = {
-  green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  red: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  yellow:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  blue: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  zinc: "bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200",
-  pink: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200",
+  green: "bg-green-500/15 text-green-600",
+  red: "bg-red-500/15 text-red-600",
+  yellow: "bg-yellow-500/20 text-yellow-700",
+  blue: "bg-blue-500/15 text-blue-600",
+  pink: "bg-pink-500/15 text-pink-600",
+  zinc: "bg-[var(--theme-bg-secondary)] text-[var(--theme-text-secondary)]",
 };
 
 interface BadgeProps {
