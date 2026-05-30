@@ -5,6 +5,7 @@ import {
   parseMacaroonCookie,
   serializeMacaroonCookie,
   insertWithCap,
+  pruneExpiredMacaroons,
   getMacaroon,
   COOKIE_NAME,
   COOKIE_MAX_AGE,
@@ -60,7 +61,14 @@ export async function POST(req: NextRequest) {
   }
 
   const cookieStore = await cookies();
-  const existing = parseMacaroonCookie(cookieStore.get(COOKIE_NAME)?.value);
+  // Opportunistic cleanup on every write: drop entries whose macaroon expired
+  // more than the grace window ago. They can't grant access and are already
+  // skipped at verify time; removing them here frees cookie budget so a fresh
+  // purchase doesn't have to evict a still-valid macaroon to fit. Recently-
+  // expired entries are kept so the "expired on X, pay to renew" banner works.
+  const { map: existing } = pruneExpiredMacaroons(
+    parseMacaroonCookie(cookieStore.get(COOKIE_NAME)?.value)
+  );
   const wasNewProduct = !(product_id in existing);
 
   let next;

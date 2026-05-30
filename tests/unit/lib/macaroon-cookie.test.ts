@@ -3,6 +3,8 @@ import {
   parseMacaroonCookie,
   parseMacaroonExp,
   findMostRecentExpiry,
+  isMacaroonExpired,
+  pruneExpiredMacaroons,
   getStoredProductIds,
   getMacaroon,
   serializeMacaroonCookie,
@@ -11,6 +13,7 @@ import {
   COOKIE_MAX_AGE,
   MAX_BYTES,
   MAX_ENTRIES,
+  EXPIRY_GRACE_MS,
 } from "@/lib/macaroon-cookie";
 
 /**
@@ -402,6 +405,142 @@ describe("macaroon-cookie", () => {
     it("ignores malformed macaroon values without throwing", () => {
       const cookie = JSON.stringify({ p1: "totally-bogus--value" });
       expect(findMostRecentExpiry(cookie, ["p1"])).toBeNull();
+    });
+  });
+
+  describe("isMacaroonExpired", () => {
+    const NOW = new Date("2026-05-23T21:00:00.000Z");
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("returns true when the macaroon's signed exp is in the past", () => {
+      const mac = makeMacaroon({
+        productId: "p1",
+        outerExp: new Date("2026-05-22T00:00:00Z"),
+      });
+      expect(isMacaroonExpired(mac)).toBe(true);
+    });
+
+    it("returns false when the exp is in the future", () => {
+      const mac = makeMacaroon({
+        productId: "p1",
+        outerExp: new Date("2026-06-01T00:00:00Z"),
+      });
+      expect(isMacaroonExpired(mac)).toBe(false);
+    });
+
+    it("treats the exact expiry instant as expired (<=)", () => {
+      const mac = makeMacaroon({ productId: "p1", outerExp: NOW });
+      expect(isMacaroonExpired(mac)).toBe(true);
+    });
+
+    it("returns false (unknown freshness) when the exp can't be parsed", () => {
+      // An opaque/legacy macaroon must NOT be assumed dead — the portal is
+      // the judge. Both a bogus token and an empty string read as unknown.
+      expect(isMacaroonExpired("totally-bogus--value")).toBe(false);
+      expect(isMacaroonExpired("")).toBe(false);
+    });
+
+    it("honors an explicit `now` argument over the system clock", () => {
+      const mac = makeMacaroon({
+        productId: "p1",
+        outerExp: new Date("2026-05-22T00:00:00Z"),
+      });
+      // `now` before exp → still valid.
+      expect(
+        isMacaroonExpired(mac, new Date("2026-05-21T00:00:00Z").getTime())
+      ).toBe(false);
+      // `now` after exp → expired.
+      expect(
+        isMacaroonExpired(mac, new Date("2026-05-23T00:00:00Z").getTime())
+      ).toBe(true);
+    });
+  });
+
+  describe("pruneExpiredMacaroons", () => {
+    const NOW = new Date("2026-05-23T21:00:00.000Z");
+
+    function entry(productId: string, outerExp: Date, t = 1) {
+      return { m: makeMacaroon({ productId, outerExp }), t };
+    }
+
+    it("exports a 7-day grace window", () => {
+      expect(EXPIRY_GRACE_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    });
+
+    it("drops entries expired beyond the grace window", () => {
+      // ~13 days before NOW → well past the 7-day grace → pruned.
+      const map = { old: entry("old", new Date("2026-05-10T00:00:00Z")) };
+      const { map: out, pruned } = pruneExpiredMacaroons(map, NOW.getTime());
+      expect(pruned).toBe(1);
+      expect(out.old).toBeUndefined();
+    });
+
+    it("keeps entries expired WITHIN the grace window (renewal banner needs them)", () => {
+      // ~3 days before NOW → inside the 7-day grace → kept so the paywall can
+      // still surface "your access expired on X".
+      const map = { recent: entry("recent", new Date("2026-05-20T00:00:00Z")) };
+      const { map: out, pruned } = pruneExpiredMacaroons(map, NOW.getTime());
+      expect(pruned).toBe(0);
+      expect(out.recent).toBeDefined();
+    });
+
+    it("keeps still-valid entries", () => {
+      const map = { valid: entry("valid", new Date("2026-06-10T00:00:00Z")) };
+      const { map: out, pruned } = pruneExpiredMacaroons(map, NOW.getTime());
+      expect(pruned).toBe(0);
+      expect(out.valid).toBeDefined();
+    });
+
+    it("keeps entries whose exp can't be parsed (unknown freshness)", () => {
+      const map = {
+        bogus: { m: "totally-bogus--value", t: 1 },
+        legacy: { m: "legacy-no-exp", t: 0 },
+      };
+      const { map: out, pruned } = pruneExpiredMacaroons(map, NOW.getTime());
+      expect(pruned).toBe(0);
+      expect(out.bogus).toBeDefined();
+      expect(out.legacy).toBeDefined();
+    });
+
+    it("prunes only the long-expired entries from a mixed map", () => {
+      const map = {
+        valid: entry("valid", new Date("2026-06-10T00:00:00Z")),
+        recent: entry("recent", new Date("2026-05-20T00:00:00Z")),
+        old: entry("old", new Date("2026-05-01T00:00:00Z")),
+        older: entry("older", new Date("2026-04-01T00:00:00Z")),
+      };
+      const { map: out, pruned } = pruneExpiredMacaroons(map, NOW.getTime());
+      expect(pruned).toBe(2);
+      expect(Object.keys(out).sort()).toEqual(["recent", "valid"]);
+    });
+
+    it("defaults `now` to Date.now() and grace to EXPIRY_GRACE_MS", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+      const map = {
+        old: entry("old", new Date("2026-05-01T00:00:00Z")),
+        recent: entry("recent", new Date("2026-05-20T00:00:00Z")),
+      };
+      const { map: out, pruned } = pruneExpiredMacaroons(map);
+      expect(pruned).toBe(1);
+      expect(out.old).toBeUndefined();
+      expect(out.recent).toBeDefined();
+      vi.useRealTimers();
+    });
+
+    it("returns an empty map unchanged", () => {
+      expect(pruneExpiredMacaroons({}, NOW.getTime())).toEqual({
+        map: {},
+        pruned: 0,
+      });
     });
   });
 });

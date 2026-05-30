@@ -569,4 +569,99 @@ describe("access-gate", () => {
       expect(result.granted).toBe(false);
     });
   });
+
+  // ── verifyMacaroonAccess: locally-expired skip + re-buy ──────────
+  describe("verifyMacaroonAccess — locally-expired macaroons (skip + re-buy)", () => {
+    // Pin "now" between the PAST (expired) and FUTURE (valid) fixtures.
+    const NOW = new Date("2026-05-23T21:00:00.000Z");
+    const PAST = new Date("2026-05-01T00:00:00.000Z");
+    const FUTURE = new Date("2026-06-18T00:00:00.000Z");
+
+    beforeAll(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+    });
+    afterAll(() => {
+      vi.useRealTimers();
+    });
+
+    it("does NOT call the portal for a macaroon whose own exp is already past", async () => {
+      // The portal would 402 it anyway (MacaroonService.verify enforces the
+      // same exp), so we skip the round-trip entirely and report no access.
+      // This is the iteration the founder wants to stop paying for.
+      mockCookieStore._set(
+        "satsrail_macaroons",
+        JSON.stringify({ prod_1: makeMacaroon("prod_1", PAST) })
+      );
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("lets a returning viewer re-buy: a fresh valid macaroon for the same product grants", async () => {
+      // After re-purchase the cookie entry for prod_1 is overwritten with a
+      // fresh (future-exp) macaroon. No stale-expired entry interferes, and
+      // the grant never depends on a live verify for a dead token.
+      mockCookieStore._set(
+        "satsrail_macaroons",
+        JSON.stringify({ prod_1: makeMacaroon("prod_1", FUTURE) })
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, key: "fresh_key", remaining_seconds: 3600 }),
+      });
+
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(true);
+      expect(result.productId).toBe("prod_1");
+      expect(result.key).toBe("fresh_key");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("verifies ONLY the non-expired macaroon when expired + valid coexist", async () => {
+      const validMac = makeMacaroon("prod_valid", FUTURE);
+      mockCookieStore._set(
+        "satsrail_macaroons",
+        JSON.stringify({
+          prod_expired: makeMacaroon("prod_expired", PAST),
+          prod_valid: validMac,
+        })
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+      });
+
+      const result = await verifyMacaroonAccess(["prod_expired", "prod_valid"]);
+      expect(result.granted).toBe(true);
+      expect(result.productId).toBe("prod_valid");
+      // The expired macaroon was skipped — exactly one portal call, for the
+      // valid token only.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://satsrail.test/api/v1/m/access/verify",
+        expect.objectContaining({
+          body: JSON.stringify({ access_token: validMac }),
+        })
+      );
+    });
+
+    it("still verifies a macaroon whose exp can't be parsed (unknown freshness → portal decides)", async () => {
+      mockCookieStore._set(
+        "satsrail_macaroons",
+        JSON.stringify({ prod_1: "opaque-token-no-exp" })
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+      });
+
+      const result = await verifyMacaroonAccess(["prod_1"]);
+      expect(result.granted).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

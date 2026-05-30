@@ -12,6 +12,7 @@ import { getInstanceConfig } from "@/config/instance";
 import {
   parseMacaroonCookie,
   findMostRecentExpiry,
+  isMacaroonExpired,
   COOKIE_NAME,
 } from "@/lib/macaroon-cookie";
 import { getMerchantKey } from "@/lib/merchant-key";
@@ -232,9 +233,19 @@ export async function verifyMacaroonAccess(
   // when a user has macaroons for multiple products that all gate the
   // same media, the earliest one in `productIds` wins (matches the
   // serial behavior).
+  // Skip macaroons we can prove are expired by reading their own signed exp.
+  // The portal enforces the same exp (MacaroonService.verify → 402), so
+  // verifying a locally-dead macaroon is a wasted round-trip — and it keeps a
+  // portal hiccup on a dead macaroon from wedging the paywall: a returning
+  // viewer whose access lapsed resolves straight to "no access" (→ buy
+  // buttons + the "expired on X" banner) instead of depending on a live verify
+  // for a token that can't grant anyway. Unparseable exp is NOT skipped:
+  // unknown freshness still goes to the portal.
+  const now = Date.now();
   const present = productIds
     .map((pid) => ({ pid, m: macaroons[pid]?.m }))
-    .filter((x): x is { pid: string; m: string } => !!x.m);
+    .filter((x): x is { pid: string; m: string } => !!x.m)
+    .filter(({ m }) => !isMacaroonExpired(m, now));
 
   if (present.length === 0) return { granted: false };
 

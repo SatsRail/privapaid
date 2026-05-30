@@ -48,6 +48,24 @@ function jsonRequest(method: string, body: Record<string, unknown>): NextRequest
   });
 }
 
+/**
+ * Build a fake Rails MessageVerifier macaroon with a parseable outer exp.
+ * The POST route prunes entries whose exp is past the grace window, so tests
+ * need real-shaped tokens (a plain string reads as "unknown exp" and is kept).
+ */
+function makeMac(outerExp: Date): string {
+  const body = {
+    _rails: {
+      data: { product_id: "x", exp: Math.floor(outerExp.getTime() / 1000) },
+      exp: outerExp.toISOString(),
+      pur: "access_token",
+    },
+  };
+  return `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 describe("Macaroons API — POST /api/macaroons", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -80,6 +98,46 @@ describe("Macaroons API — POST /api/macaroons", () => {
     const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
     // Legacy entry migrated to {m, t: 0} on re-serialize.
     expect(parsed.prod_old.m).toBe("mac_old");
+    expect(parsed.prod_new.m).toBe("mac_new");
+  });
+
+  it("prunes entries expired beyond the 7-day grace window before storing", async () => {
+    // A returning buyer's cookie carries dead weight: one macaroon expired
+    // long ago, one expired just recently, one still valid. The write should
+    // drop only the long-expired one — keeping the recently-expired entry so
+    // the "expired on X, pay to renew" banner still works — and store the new
+    // purchase. This is the cleanup that stops us iterating dead macaroons.
+    const now = Date.now();
+    mockCookieStore._set(
+      "satsrail_macaroons",
+      JSON.stringify({
+        prod_long_expired: makeMac(new Date(now - 30 * DAY_MS)),
+        prod_recent_expired: makeMac(new Date(now - 2 * DAY_MS)),
+        prod_valid: makeMac(new Date(now + 30 * DAY_MS)),
+      })
+    );
+
+    const req = jsonRequest("POST", { product_id: "prod_new", macaroon: "mac_new" });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
+    expect(parsed.prod_long_expired).toBeUndefined(); // pruned
+    expect(parsed.prod_recent_expired).toBeDefined(); // within grace → kept
+    expect(parsed.prod_valid).toBeDefined(); // still valid → kept
+    expect(parsed.prod_new.m).toBe("mac_new"); // the new purchase landed
+  });
+
+  it("keeps opaque (unparseable-exp) entries on write — only the portal may judge those", async () => {
+    mockCookieStore._set(
+      "satsrail_macaroons",
+      JSON.stringify({ prod_opaque: "legacy-no-parseable-exp" })
+    );
+    const req = jsonRequest("POST", { product_id: "prod_new", macaroon: "mac_new" });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const parsed = JSON.parse(res.cookies.get("satsrail_macaroons")!.value);
+    expect(parsed.prod_opaque.m).toBe("legacy-no-parseable-exp");
     expect(parsed.prod_new.m).toBe("mac_new");
   });
 

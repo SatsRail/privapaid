@@ -43,6 +43,17 @@ export const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
 export const MAX_ENTRIES = 100;
 export const MAX_BYTES = 2500;
 
+/**
+ * Grace period after a macaroon's own signed expiry before we physically
+ * evict it from the cookie. We keep recently-expired entries around so the
+ * paywall can still render "your access expired on <date>, pay to renew"
+ * (findMostRecentExpiry needs the entry present to read its exp). Past the
+ * grace window the entry is dead weight: verifyMacaroonAccess already skips
+ * it locally so it never reaches the portal, and there's no UX left to serve
+ * — so drop it rather than carrying it for the cookie's full 1-year life.
+ */
+export const EXPIRY_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
 const EntrySchema = z.union([
   z.string(),
   z.object({ m: z.string(), t: z.number() }),
@@ -201,6 +212,49 @@ export function parseMacaroonExp(macaroon: string): Date | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a stored macaroon's own signed expiry is at or before `now`.
+ *
+ * Reads the encoded `exp` locally (no portal call). The portal enforces the
+ * SAME exp on its side — MacaroonService.verify rejects an expired token with
+ * HTTP 402 — so a `true` here is provably equivalent to "the portal would
+ * reject this." Returns `false` when the exp can't be parsed: an unknown
+ * expiry must be left for the portal to judge, never assumed dead.
+ */
+export function isMacaroonExpired(
+  macaroon: string,
+  now: number = Date.now()
+): boolean {
+  const exp = parseMacaroonExp(macaroon);
+  return exp !== null && exp.getTime() <= now;
+}
+
+/**
+ * Drop entries whose macaroon expired more than `graceMs` ago. Entries that
+ * are still valid, expired within the grace window, or have an unparseable
+ * exp are KEPT — the first two still serve the renewal banner, and unknown
+ * freshness is left for the portal to judge. Returns the pruned map and a
+ * count of removed entries. Pure; never throws.
+ */
+export function pruneExpiredMacaroons(
+  map: MacaroonMap,
+  now: number = Date.now(),
+  graceMs: number = EXPIRY_GRACE_MS
+): { map: MacaroonMap; pruned: number } {
+  const cutoff = now - graceMs;
+  const out: MacaroonMap = {};
+  let pruned = 0;
+  for (const [pid, entry] of Object.entries(map)) {
+    const exp = parseMacaroonExp(entry.m);
+    if (exp !== null && exp.getTime() <= cutoff) {
+      pruned++;
+      continue;
+    }
+    out[pid] = entry;
+  }
+  return { map: out, pruned };
 }
 
 /**
