@@ -1,0 +1,5 @@
+# Type-check the whole project before pushing. lint-staged (pre-commit) only
+# runs eslint on changed files, so a tsc error can land in a commit and only
+# surface in CI after the push. This gates types at the push boundary — the
+# same check CI runs (`npx tsc --noEmit`) — so CI never goes red on a type error.
+npm run typecheck

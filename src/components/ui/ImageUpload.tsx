@@ -98,6 +98,8 @@ export default function ImageUpload({
       <div className="flex items-center gap-4">
         {displaySrc && (
           <img
+            /* displaySrc is URL-scheme-guarded above (blob:/http(s)/relative only). */
+            /* codeql[js/xss-through-dom] */
             src={displaySrc}
             alt={label}
             className="h-20 w-20 rounded-md border border-[var(--theme-border)] object-cover"

@@ -3,6 +3,9 @@ import { createHash } from "crypto";
 import { checkBreachedPassword } from "@/lib/breached-password";
 
 function sha1Upper(s: string): string {
+  // Mirrors the HIBP k-anonymity hash in src/lib/breached-password.ts. SHA-1
+  // is mandated by the HIBP range protocol, not used for password storage.
+  // codeql[js/insufficient-password-hash]
   return createHash("sha1").update(s, "utf8").digest("hex").toUpperCase();
 }
 

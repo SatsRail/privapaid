@@ -31,6 +31,11 @@ const HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range";
 const HIBP_TIMEOUT_MS = 3000;
 
 function sha1HexUpper(s: string): string {
+  // HIBP k-anonymity is defined over SHA-1: the range API only accepts a
+  // 5-hex-char SHA-1 prefix, and only that prefix ever leaves this process.
+  // This is not password storage (passwords at rest use bcrypt cost-12), so
+  // the "insufficient computational effort" finding does not apply here.
+  // codeql[js/insufficient-password-hash]
   return createHash("sha1").update(s, "utf8").digest("hex").toUpperCase();
 }
 

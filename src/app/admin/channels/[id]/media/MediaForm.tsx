@@ -787,6 +787,8 @@ export function PhotoUploadField({
       {previewUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          /* previewUrl is only ever null or a verified blob: URL (guarded at creation). */
+          /* codeql[js/xss-through-dom] */
           src={previewUrl}
           alt="Photo preview"
           className="max-h-80 rounded-md border border-[var(--theme-border)]"

@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       security-events: write
+      packages: read
+      actions: read
+      contents: read
 
     steps:
       - name: Checkout
@@ -22,6 +25,25 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
+          # Runs the alert-suppression query so inline `// codeql[rule-id]`
+          # markers populate the SARIF `suppressions` field. Additive to the
+          # default security suite — it does not replace the default queries.
+          packs: codeql/javascript-queries:AlertSuppression.ql
 
       - name: Perform CodeQL Analysis
+        id: analyze
         uses: github/codeql-action/analyze@v3
+        with:
+          output: sarif-results
+
+      # Auto-dismisses alerts carrying an inline `// codeql[rule-id]` marker
+      # (documented in-source false positives). Runs only on main, since a
+      # code-scanning alert's dismissal state is global to the default branch.
+      - name: Dismiss suppressed alerts
+        if: github.ref == 'refs/heads/main'
+        uses: advanced-security/dismiss-alerts@v2.0.2
+        with:
+          sarif-id: ${{ steps.analyze.outputs.sarif-id }}
+          sarif-file: sarif-results
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
