@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getProductsForMedia, verifyMacaroonAccess } from "@/lib/access-gate";
 import { decryptSourceUrl, decryptBytes } from "@/lib/content-encryption";
-import { parseMediaBlob } from "@/lib/schemas/media-blob";
 import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import * as Sentry from "@sentry/nextjs";
@@ -54,59 +53,33 @@ function base64urlToBuffer(s: string): Buffer {
 
 /**
  * Re-run, server-side, the decryption the client attempted — using the same
- * content-encryption primitives. Returns true only when the server ALSO
- * cannot decrypt (integrity failure confirmed). Returns false when the server
- * succeeds (client failure was local/transient) or when we hit a condition we
- * don't want to over-flag on (a missing envelope ROW, which can be a transient
- * data state rather than corrupt content).
+ * content-encryption primitives. Returns true only when the server ALSO cannot
+ * decrypt (integrity failure confirmed). Returns false when the server succeeds
+ * (client failure was local/transient) or on a missing envelope ROW (a possibly
+ * transient data state rather than corrupt content).
  *
- * Mirrors PaymentWall.resolveContent:
- *   url media        → single product-key decrypt
- *   photo / article  → product-key unwrap of the DEK, then DEK-decrypt of the
- *                      envelope bytes
+ * Mirrors PaymentWall.resolveContent's uniform two-step flow for ALL media:
+ *   1. product-key unwrap of the DEK (decryptSourceUrl)
+ *   2. DEK-decrypt of the envelope bytes (decryptBytes)
  */
 async function serverDecryptFails(
-  mediaType: string,
-  rawBlob: unknown,
-  encryptedSource: string,
+  mediaId: string,
+  encryptedDek: string,
   key: string,
   productId: string
 ): Promise<boolean> {
-  // url-backed media (video / audio / podcast): one product-key decrypt.
-  if (mediaType !== "photo" && mediaType !== "article") {
-    try {
-      decryptSourceUrl(encryptedSource, key, productId);
-      return false;
-    } catch {
-      return true;
-    }
-  }
-
-  // Envelope-backed media (photo / article).
-  let envelopeId: string;
-  try {
-    const blob = parseMediaBlob(rawBlob);
-    if (blob.kind !== "photo" && blob.kind !== "article") {
-      // Blob shape contradicts the media type — broken content.
-      return true;
-    }
-    envelopeId = blob.envelopeId;
-  } catch {
-    // Blob fails to parse (e.g. missing envelopeId) — confirmed, matches the
-    // client's missing_envelope_id path.
-    return true;
-  }
-
+  // Step 1: unwrap the DEK with the product key (AAD = productId).
   let dekBytes: Buffer;
   try {
-    const dekBase64url = decryptSourceUrl(encryptedSource, key, productId);
+    const dekBase64url = decryptSourceUrl(encryptedDek, key, productId);
     dekBytes = base64urlToBuffer(dekBase64url);
   } catch {
     return true;
   }
 
-  const envelope = await prisma.encryptedEnvelope.findUnique({
-    where: { id: envelopeId },
+  // Step 2: fetch the media's one envelope and decrypt its bytes with the DEK.
+  const envelope = await prisma.mediaEnvelope.findUnique({
+    where: { mediaId },
     select: { bytes: true },
   });
   if (!envelope) {
@@ -153,7 +126,6 @@ export async function POST(req: Request, context: RouteContext) {
         id: true,
         channelId: true,
         mediaType: true,
-        blob: true,
         status: true,
       },
     });
@@ -201,8 +173,7 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const confirmed = await serverDecryptFails(
-      media.mediaType,
-      media.blob,
+      media.id,
       product.encryptedBlob,
       access.key,
       access.productId

@@ -26,13 +26,20 @@ vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: mockGetMerchantKey }));
 const { mockEncryptSourceUrl } = vi.hoisted(() => ({
   mockEncryptSourceUrl: vi.fn().mockReturnValue("encrypted_blob_456"),
 }));
-vi.mock("@/lib/content-encryption", () => ({
+// Keep the real encryptBytes/decryptBytes so the createMedia factory (which
+// mints a real MediaEnvelope) still works; only spy on encryptSourceUrl. The
+// route's dekBase64urlFromEnvelope uses the real CONTENT_KEK unwrap, so the test
+// can recompute the expected DEK.
+vi.mock("@/lib/content-encryption", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/content-encryption")>()),
   encryptSourceUrl: mockEncryptSourceUrl,
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/admin/media/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
+import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
+import { prisma } from "@/lib/prisma";
 
 function buildRequest(
   mediaId: string,
@@ -205,10 +212,12 @@ describe("Admin Media Create Product", () => {
   });
 
   // -------------------------------------------------------
-  // Photo media — envelope encryption (DEK wrapping)
+  // Envelope encryption — the DEK is recovered from the media's
+  // MediaEnvelope (uniform for ALL media kinds) and wrapped under the
+  // product key. The request body no longer carries a `dek`.
   // -------------------------------------------------------
   describe("photo media (envelope encryption)", () => {
-    it("requires the DEK in the body for photo media — 422 otherwise", async () => {
+    it("creates a photo product WITHOUT a body dek (DEK comes from the envelope)", async () => {
       const channel = await createChannel({
         slug: "ch-photo-nodek",
         satsrailProductTypeId: "pt_photo",
@@ -218,20 +227,29 @@ describe("Admin Media Create Product", () => {
         sourceUrl: "gridfs:abc123",
       });
 
+      mockSatsrailClient.createProduct.mockResolvedValue({
+        id: "prod_photo_nodek",
+        name: "Photo Access",
+        price_cents: 500,
+        slug: "photo-access",
+      });
+      mockSatsrailClient.getProductKey.mockResolvedValue({
+        key: "base64-product-key",
+        key_fingerprint: "fp_photo",
+      });
+
+      // No `dek` in the body — the route recovers it from MediaEnvelope.wrappedDek.
       const [req, ctx] = buildRequest(media.id, {
         name: "Photo Access",
         price_cents: 500,
       });
       const res = await POST(req, ctx);
-      const body = await res.json();
-
-      expect(res.status).toBe(422);
-      expect(body.error).toContain("dek");
-      // SatsRail must not be touched if the request is invalid
-      expect(mockSatsrailClient.createProduct).not.toHaveBeenCalled();
+      expect(res.status).toBe(201);
+      expect(mockSatsrailClient.createProduct).toHaveBeenCalledTimes(1);
+      expect(mockEncryptSourceUrl).toHaveBeenCalledTimes(1);
     });
 
-    it("wraps the DEK (not sourceUrl) under the product key for photo media", async () => {
+    it("wraps the envelope DEK (not sourceUrl) under the product key for photo media", async () => {
       const channel = await createChannel({
         slug: "ch-photo-dek",
         satsrailProductTypeId: "pt_photo",
@@ -240,6 +258,10 @@ describe("Admin Media Create Product", () => {
         mediaType: "photo",
         sourceUrl: "gridfs:photo-bytes-id-xyz",
       });
+      // The plaintext the route must wrap is the envelope's DEK, recovered from
+      // its CONTENT_KEK-wrapped copy (uniform across media kinds).
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+      const expectedDek = dekBase64urlFromEnvelope(envelope!);
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_photo",
@@ -252,30 +274,25 @@ describe("Admin Media Create Product", () => {
         key_fingerprint: "fp_photo",
       });
 
-      const dekBase64url = "DEKbase64url-fake-32-bytes-encoded-xyz";
       const [req, ctx] = buildRequest(media.id, {
         name: "Photo Access",
         price_cents: 500,
         currency: "USD",
-        dek: dekBase64url,
       });
       const res = await POST(req, ctx);
       expect(res.status).toBe(201);
 
-      // The crucial assertion: the plaintext passed to encryptSourceUrl must be
-      // the DEK, not the sourceUrl. Otherwise envelope encryption is broken.
+      // The crucial assertion: the plaintext passed to encryptSourceUrl is the
+      // envelope DEK, not the sourceUrl. Otherwise envelope encryption is broken.
       expect(mockEncryptSourceUrl).toHaveBeenCalledTimes(1);
       const [plaintext, key, productId] = mockEncryptSourceUrl.mock.calls[0];
-      expect(plaintext).toBe(dekBase64url);
-      // For a photo, the blob's envelopeId points at EncryptedEnvelope — not at
-      // the encrypted DEK we just passed to encryptSourceUrl.
-      const mediaBlob = media.blob as { kind: string; envelopeId?: string };
-      expect(plaintext).not.toBe(mediaBlob.envelopeId);
+      expect(plaintext).toBe(expectedDek);
+      expect(plaintext).not.toBe("gridfs:photo-bytes-id-xyz");
       expect(key).toBe("base64-product-key");
       expect(productId).toBe("prod_photo");
     });
 
-    it("non-photo media continues to wrap sourceUrl unchanged", async () => {
+    it("non-photo media ALSO wraps the envelope DEK (uniform two-step)", async () => {
       const channel = await createChannel({
         slug: "ch-video-baseline",
         satsrailProductTypeId: "pt_video",
@@ -284,6 +301,8 @@ describe("Admin Media Create Product", () => {
         mediaType: "video",
         sourceUrl: "https://example.com/video.mp4",
       });
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+      const expectedDek = dekBase64urlFromEnvelope(envelope!);
 
       mockSatsrailClient.createProduct.mockResolvedValue({
         id: "prod_video",
@@ -299,17 +318,15 @@ describe("Admin Media Create Product", () => {
       const [req, ctx] = buildRequest(media.id, {
         name: "Video",
         price_cents: 500,
-        // dek ignored when media is not a photo
-        dek: "ignored-dek",
       });
       const res = await POST(req, ctx);
       expect(res.status).toBe(201);
 
-      // For non-photo, encryptSourceUrl receives the URL, not the DEK.
+      // url media now uses the same two-step: encryptSourceUrl receives the DEK,
+      // NOT the URL. The URL itself lives encrypted inside the envelope bytes.
       const [plaintext] = mockEncryptSourceUrl.mock.calls[0];
-      expect(plaintext).toBe("https://example.com/video.mp4");
-      // Avoid unused expectation; sourceUrl is exercised above
-      expect(media.id).toBeDefined();
+      expect(plaintext).toBe(expectedDek);
+      expect(plaintext).not.toBe("https://example.com/video.mp4");
     });
   });
 });

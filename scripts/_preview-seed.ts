@@ -3,8 +3,24 @@
 // inspected in the browser. No products → player shows UnavailableWall, but
 // the full info block + right rail render.
 import { PrismaClient } from "@prisma/client";
+import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
 
 const prisma = new PrismaClient();
+
+// Every media has exactly one MediaEnvelope holding its encrypted payload (the
+// source URL for url media). Needs CONTENT_KEK in the env to wrap the DEK.
+async function seedEnvelope(mediaId: string, url: string): Promise<void> {
+  const art = createEnvelopeArtifacts(Buffer.from(url, "utf8"));
+  await prisma.mediaEnvelope.create({
+    data: {
+      mediaId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bytes: art.bytes as any,
+      mimeType: URL_ENVELOPE_MIME,
+      wrappedDek: art.wrappedDek,
+    },
+  });
+}
 
 function tile(color: string, label: string): string {
   const svg =
@@ -49,13 +65,13 @@ async function main() {
         "decryption key only after payment clears. Long enough to trip the two-line clamp so " +
         "the show-more toggle appears.",
       mediaType: "video",
-      blob: { kind: "url", url: "https://example.com/video.mp4" },
       viewsCount: 12480,
       likesCount: 342,
       sharesCount: 58,
       position: 1,
     },
   });
+  await seedEnvelope(main.id, "https://example.com/video.mp4");
   await prisma.mediaImage.create({
     data: { mediaId: main.id, kind: "thumbnail", externalUrl: tile("#1e293b", "▶"), position: 0 },
   });
@@ -78,11 +94,11 @@ async function main() {
         channelId: channel.id,
         name: s.name,
         mediaType: "video",
-        blob: { kind: "url", url: "https://example.com/video.mp4" },
         viewsCount: s.views,
         position: pos++,
       },
     });
+    await seedEnvelope(sib.id, "https://example.com/video.mp4");
     await prisma.mediaImage.create({
       data: { mediaId: sib.id, kind: "thumbnail", externalUrl: tile(s.color, "▶"), position: 0 },
     });

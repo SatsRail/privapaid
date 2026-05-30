@@ -97,18 +97,16 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
 
-  // We fetch the full Media row (including `blob`) because for envelope-
-  // encrypted media (photo, article) we need blob.envelopeId to surface as
-  // `envelope_id` on the client (it points to EncryptedEnvelope and is safe
-  // to expose — bytes are useless without the DEK). For url-backed media,
-  // `blob` holds the plaintext URL which we DO NOT surface; the page
-  // payload is filtered explicitly below.
+  // Fetch the Media row plus its one MediaEnvelope id — surfaced to the client
+  // as `envelope_id` so it can fetch the ciphertext after unwrapping the DEK.
+  // The envelope id is safe to expose: its bytes are useless without the DEK.
   const media = await prisma.media.findFirst({
     where: { id: mediaId, channelId: channel.id },
     include: {
       images: {
         select: { id: true, kind: true, externalUrl: true, position: true },
       },
+      envelope: { select: { id: true } },
     },
   });
   if (!media) notFound();
@@ -145,14 +143,14 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   }
 
   // Every product (active + archived) that covers this media — channel-scoped
-  // and media-scoped collapse into the same shape via MediaEncryptedBlob.
+  // and media-scoped collapse into the same shape via MediaProduct.
   // Archived products must still be verifiable for users who already paid
   // (archiving means "stop selling new", not "revoke existing access"). We
   // filter archived OUT below, only for the purchase UI.
-  const productBlobs = await prisma.mediaEncryptedBlob.findMany({
+  const productBlobs = await prisma.mediaProduct.findMany({
     where: { mediaId: media.id },
     select: {
-      encryptedSource: true,
+      encryptedDek: true,
       keyFingerprint: true,
       product: {
         select: {
@@ -169,10 +167,10 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   });
 
   const allProducts = productBlobs
-    .filter((b) => b.encryptedSource)
+    .filter((b) => b.encryptedDek)
     .map((b) => ({
       productId: b.product.satsrailProductId,
-      encryptedBlob: b.encryptedSource,
+      encryptedBlob: b.encryptedDek,
       keyFingerprint: b.keyFingerprint ?? b.product.keyFingerprint,
       name: b.product.productName,
       priceCents: b.product.productPriceCents,
@@ -197,22 +195,30 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     allProducts.map((p) => p.productId)
   );
 
-  // Admin preview: validate session server-side. We re-derive the source from
-  // Media.blob (URL only) so a logged-in admin can preview without going
-  // through the paywall. For envelope-encrypted media (photo, article) the
-  // admin preview goes through the dedicated /api/admin/media/[id]/preview
-  // endpoint, which decrypts on the fly.
+  // Admin preview: validate session server-side. For url media we recover the
+  // source URL by decrypting the envelope server-side (admin-only — never a
+  // buyer path) so a logged-in admin can preview without the paywall. Photo/
+  // article admin preview goes through /api/admin/media/[id]/preview instead.
   let adminPreviewSourceUrl: string | null = null;
   if (preview === "admin") {
     try {
       const session = await auth();
-      if (session?.user?.type === "admin") {
-        const { parseMediaBlob } = await import("@/lib/schemas/media-blob");
-        try {
-          const parsed = parseMediaBlob(media.blob);
-          if (parsed.kind === "url") adminPreviewSourceUrl = parsed.url;
-        } catch {
-          adminPreviewSourceUrl = null;
+      if (
+        session?.user?.type === "admin" &&
+        media.mediaType !== "photo" &&
+        media.mediaType !== "article"
+      ) {
+        const env = await prisma.mediaEnvelope.findUnique({
+          where: { mediaId: media.id },
+          select: { bytes: true, wrappedDek: true },
+        });
+        if (env) {
+          try {
+            const { decryptEnvelopePayload } = await import("@/lib/media-envelope");
+            adminPreviewSourceUrl = decryptEnvelopePayload(env).toString("utf8");
+          } catch {
+            adminPreviewSourceUrl = null;
+          }
         }
       }
     } catch {
@@ -297,20 +303,10 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       comments_count: media.commentsCount,
       likes_count: media.likesCount ?? 0,
       shares_count: media.sharesCount ?? 0,
-      // For envelope-encrypted media (photo, article), surface the
-      // EncryptedEnvelope id to the client so it can fetch the ciphertext
-      // after unwrapping the DEK. The id lives in Media.blob.envelopeId.
-      envelope_id:
-        media.mediaType === "photo" || media.mediaType === "article"
-          ? (() => {
-              try {
-                const parsed = (media.blob as { kind?: string; envelopeId?: string });
-                return parsed.kind === media.mediaType ? parsed.envelopeId : undefined;
-              } catch {
-                return undefined;
-              }
-            })()
-          : undefined,
+      // Every media has exactly one MediaEnvelope; surface its id so the client
+      // can fetch the ciphertext after unwrapping the DEK. Safe to expose — the
+      // bytes are useless without the DEK.
+      envelope_id: media.envelope?.id,
     },
     channel: {
       name: channel.name,

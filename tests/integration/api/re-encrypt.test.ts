@@ -6,7 +6,18 @@ import { createMediaProduct, createChannelProduct, findFirstMediaProduct } from 
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 import { decryptSourceUrl } from "@/lib/content-encryption";
-import { wrapDekFromBase64url, _resetKekCache } from "@/lib/content-dek";
+import { _resetKekCache } from "@/lib/content-dek";
+import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
+
+/** Recover a media's envelope DEK (base64url) — the per-product plaintext. */
+async function envelopeDekFor(mediaId: string): Promise<string> {
+  const env = await prisma.mediaEnvelope.findUnique({
+    where: { mediaId },
+    select: { wrappedDek: true },
+  });
+  return dekBase64urlFromEnvelope(env!);
+}
 
 function generateProductKey(): string {
   return randomBytes(32)
@@ -91,32 +102,15 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     });
   });
 
-  it("re-encrypts MediaProducts from local Media.sourceUrl under the new key", async () => {
-    const channel = await createChannel();
+  it("re-wraps each media's envelope DEK under the new key", async () => {
     const urls = [
       "https://cdn.example.com/video1.mp4",
       "https://cdn.example.com/video2.mp4",
       "https://cdn.example.com/video3.mp4",
     ];
 
-    let i = 0;
-    for (const url of urls) {
-      const media = await createMedia(channel.id, {
-        name: `Video ${i}`,
-        sourceUrl: url,
-      });
-      await createMediaProduct({
-          mediaId: media.id,
-          satsrailProductId: `${productId}_${i}`,
-          encryptedSource: "stale-base64-from-pre-rotation",
-        });
-      i++;
-    }
-    // The route iterates all products with the same satsrailProductId.
-    // The schema enforces unique mediaId on MediaProduct AND unique
-    // satsrailProductId — meaning each MediaProduct has a 1:1 with both.
-    // To preserve test intent (one productId, multiple medias), use a
-    // ChannelProduct instead.
+    // One product covering multiple medias → a ChannelProduct (MediaProduct
+    // enforces a unique mediaId AND the Product a unique satsrailProductId).
     const ch2 = await createChannel({ slug: "ch-reencrypt" });
     const medias = [];
     for (let j = 0; j < urls.length; j++) {
@@ -131,6 +125,8 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
         encryptedSource: "stale-base64-from-pre-rotation",
       })),
     });
+    // The per-product plaintext is each media's envelope DEK (uniform), not the URL.
+    const expectedDeks = await Promise.all(medias.map((m) => envelopeDekFor(m.id)));
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "new_fp" });
     mockClearOldKey.mockResolvedValue({});
@@ -145,11 +141,12 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
 
     const cp = await prisma.product.findFirst({
       where: { satsrailProductId: productId },
-      include: { mediaEncryptedBlobs: true },
+      include: { mediaProducts: true },
     });
-    for (const entry of cp!.mediaEncryptedBlobs) {
-      const decrypted = decryptSourceUrl(entry.encryptedSource, newKey, productId);
-      expect(urls).toContain(decrypted);
+    // Each re-encrypted blob now decrypts to its media's envelope DEK.
+    for (const entry of cp!.mediaProducts) {
+      const decrypted = decryptSourceUrl(entry.encryptedDek, newKey, productId);
+      expect(expectedDeks).toContain(decrypted);
     }
 
     expect(mockClearOldKey).toHaveBeenCalledWith("sk_live_test_merchant_key", productId);
@@ -157,21 +154,15 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     expect(mockGetProduct).not.toHaveBeenCalled();
   });
 
-  it("re-encrypts photo media by unwrapping encryptedDek with CONTENT_KEK", async () => {
+  it("re-encrypts photo media by recovering the DEK from its envelope (CONTENT_KEK)", async () => {
     const channel = await createChannel();
-    const dekBase64url = generateProductKey(); // reused as a 32-byte DEK
-    const encryptedDek = wrapDekFromBase64url(dekBase64url);
-
     const media = await createMedia(channel.id, {
       name: "Photo",
-      blob: {
-        kind: "photo",
-        envelopeId: "blob_pointer_id",
-        encryptedDek,
-        mimeType: "image/jpeg",
-      },
       mediaType: "photo",
+      sourceUrl: "gridfs:photo-bytes",
     });
+    // The DEK the route must re-wrap is the one stored in the media's envelope.
+    const dekBase64url = await envelopeDekFor(media.id);
 
     await createMediaProduct({
         mediaId: media.id,
@@ -207,6 +198,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
             { mediaId: m2.id, encryptedSource: "stale2" },
           ],
       });
+    const expectedDeks = [await envelopeDekFor(m1.id), await envelopeDekFor(m2.id)];
 
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
     mockClearOldKey.mockResolvedValue({});
@@ -220,15 +212,14 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
 
     const cp = await prisma.product.findFirst({
       where: { satsrailProductId: productId },
-      include: { mediaEncryptedBlobs: true },
+      include: { mediaProducts: true },
     });
-    expect(cp!.mediaEncryptedBlobs).toHaveLength(2);
-    const urls = cp!.mediaEncryptedBlobs.map((e) =>
-      decryptSourceUrl(e.encryptedSource, newKey, productId)
+    expect(cp!.mediaProducts).toHaveLength(2);
+    // Each entry re-wraps its media's envelope DEK under the new key.
+    const deks = cp!.mediaProducts.map((e) =>
+      decryptSourceUrl(e.encryptedDek, newKey, productId)
     );
-    expect(urls).toEqual(
-      expect.arrayContaining(["https://a.example/v.mp4", "https://b.example/v.mp4"])
-    );
+    expect(deks).toEqual(expect.arrayContaining(expectedDeks));
   });
 
   it("auto-clears a media's Part B error flag after a clean re-encrypt", async () => {
@@ -241,7 +232,7 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
         channelId: channel.id,
         name: "Broken then fixed",
         mediaType: "video",
-        blob: { kind: "url", url: "https://cdn.example.com/fixed.mp4" },
+        envelope: envelopeCreateForUrl("https://cdn.example.com/fixed.mp4"),
         status: "error",
         statusReason: "integrity_auth_failed",
         statusChangedAt: new Date(),

@@ -74,7 +74,7 @@ describe("GET /api/envelopes/[id]", () => {
     // `image/jpeg` would tempt browsers to try and render it (and could give
     // false confidence about what's being served).
     const ciphertext = Buffer.from([0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe]);
-    const blob = await prisma.encryptedEnvelope.create({
+    const blob = await prisma.mediaEnvelope.create({
       data: { bytes: ciphertext, mimeType: "image/jpeg" },
       select: { id: true },
     });
@@ -97,7 +97,7 @@ describe("GET /api/envelopes/[id]", () => {
       Buffer.from([0x01, 0x02]),
       Buffer.from([0x03, 0x04, 0x05]),
     ]);
-    const blob = await prisma.encryptedEnvelope.create({
+    const blob = await prisma.mediaEnvelope.create({
       data: { bytes: payload, mimeType: "image/png" },
       select: { id: true },
     });
@@ -114,7 +114,7 @@ describe("GET /api/envelopes/[id]", () => {
       NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 })
     );
     // Seed a row so a non-rate-limited request would otherwise succeed.
-    const blob = await prisma.encryptedEnvelope.create({
+    const blob = await prisma.mediaEnvelope.create({
       data: { bytes: Buffer.from([0x00]), mimeType: "image/png" },
       select: { id: true },
     });
@@ -127,7 +127,7 @@ describe("GET /api/envelopes/[id]", () => {
     // Test the contract by simply NOT mocking auth: if the route required auth
     // it would 401 here. Confirm it returns the bytes.
     const ciphertext = Buffer.from([0xaa, 0xbb]);
-    const blob = await prisma.encryptedEnvelope.create({
+    const blob = await prisma.mediaEnvelope.create({
       data: { bytes: ciphertext, mimeType: "image/jpeg" },
       select: { id: true },
     });
@@ -139,7 +139,7 @@ describe("GET /api/envelopes/[id]", () => {
 
   it("returns 500 with a structured error when the DB lookup throws", async () => {
     const spy = vi
-      .spyOn(prisma.encryptedEnvelope, "findUnique")
+      .spyOn(prisma.mediaEnvelope, "findUnique")
       .mockRejectedValueOnce(new Error("db broke"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

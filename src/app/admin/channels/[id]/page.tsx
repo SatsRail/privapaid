@@ -65,13 +65,13 @@ export default async function ChannelDetailPage({
     where: { channelId: id },
     select: {
       satsrailProductId: true,
-      mediaEncryptedBlobs: { select: { mediaId: true } },
+      mediaProducts: { select: { mediaId: true } },
     },
   });
 
   const mediaCoveredByChannel = new Set<string>();
   for (const cp of channelProductDocs) {
-    for (const em of cp.mediaEncryptedBlobs) {
+    for (const em of cp.mediaProducts) {
       mediaCoveredByChannel.add(em.mediaId);
     }
   }
@@ -108,7 +108,7 @@ export default async function ChannelDetailPage({
               price_cents: sp.price_cents,
               currency: sp.currency,
               status: sp.status,
-              encrypted_media_count: doc.mediaEncryptedBlobs.length,
+              encrypted_media_count: doc.mediaProducts.length,
             };
           })
           .filter((p): p is ChannelProductData => p !== null);

@@ -5,11 +5,11 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * Channel-scoped product (bundle): one Product row (channelId set) + N
- * MediaEncryptedBlob rows. Asserts the same invariants the legacy
+ * MediaProduct rows. Asserts the same invariants the legacy
  * `ChannelProduct` model carried — satsrailProductId uniqueness, encrypted
  * media linkage, cached portal fields — against the new shape.
  */
-describe("Product (channel-scoped) + MediaEncryptedBlob", () => {
+describe("Product (channel-scoped) + MediaProduct", () => {
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -39,7 +39,7 @@ describe("Product (channel-scoped) + MediaEncryptedBlob", () => {
       channelId: channel.id,
       satsrailProductId: "prod_defaults",
     });
-    const blobs = await prisma.mediaEncryptedBlob.findMany({
+    const blobs = await prisma.mediaProduct.findMany({
       where: { productId: cp.id },
     });
     expect(blobs).toEqual([]);
@@ -72,7 +72,7 @@ describe("Product (channel-scoped) + MediaEncryptedBlob", () => {
     ).rejects.toThrow();
   });
 
-  it("stores encrypted media entries as MediaEncryptedBlob rows", async () => {
+  it("stores encrypted media entries as MediaProduct rows", async () => {
     const channel = await createChannel();
     const media = await createMedia(channel.id);
     const cp = await createChannelProduct({
@@ -80,12 +80,12 @@ describe("Product (channel-scoped) + MediaEncryptedBlob", () => {
       satsrailProductId: "prod_media",
       encryptedMedia: [{ mediaId: media.id, encryptedSource: "base64_encrypted_blob" }],
     });
-    const blobs = await prisma.mediaEncryptedBlob.findMany({
+    const blobs = await prisma.mediaProduct.findMany({
       where: { productId: cp.id },
     });
     expect(blobs).toHaveLength(1);
     expect(blobs[0].mediaId).toBe(media.id);
-    expect(blobs[0].encryptedSource).toBe("base64_encrypted_blob");
+    expect(blobs[0].encryptedDek).toBe("base64_encrypted_blob");
   });
 
   it("stores cached product metadata", async () => {

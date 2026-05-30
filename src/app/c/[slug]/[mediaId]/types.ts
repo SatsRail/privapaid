@@ -20,8 +20,8 @@ export interface MediaPageData {
     comments_count: number;
     likes_count: number;
     shares_count: number;
-    // For envelope-encrypted media (photo, article): EncryptedEnvelope row id.
-    // Not sensitive on its own (bytes are ciphertext without the DEK).
+    // The media's MediaEnvelope row id (every media has one). Not sensitive on
+    // its own — the bytes are ciphertext without the DEK.
     envelope_id?: string;
   };
   channel: {

@@ -5,13 +5,13 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * Media-scoped product (1:1 with Media): one Product row + one
- * MediaEncryptedBlob row, written via the `createMediaProduct` helper.
+ * MediaProduct row, written via the `createMediaProduct` helper.
  *
  * These tests exercise the same invariants the legacy `MediaProduct` model
  * carried — mediaId uniqueness, encryptedSource persistence, the
  * keyFingerprint field — but against the new split shape.
  */
-describe("Product + MediaEncryptedBlob (media-scoped)", () => {
+describe("Product + MediaProduct (media-scoped)", () => {
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -38,11 +38,11 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
     expect(product.satsrailProductId).toBe("prod_test_123");
     expect(product.createdAt).toBeInstanceOf(Date);
 
-    const blob = await prisma.mediaEncryptedBlob.findFirst({
+    const blob = await prisma.mediaProduct.findFirst({
       where: { productId: product.id, mediaId: media.id },
     });
     expect(blob).not.toBeNull();
-    expect(blob!.encryptedSource).toBe("base64encryptedblob==");
+    expect(blob!.encryptedDek).toBe("base64encryptedblob==");
   });
 
   it("stores keyFingerprint on Product and blob", async () => {
@@ -57,7 +57,7 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
     });
 
     expect(product.keyFingerprint).toBe("sha256hexfingerprint");
-    const blob = await prisma.mediaEncryptedBlob.findFirst({
+    const blob = await prisma.mediaProduct.findFirst({
       where: { productId: product.id },
     });
     expect(blob!.keyFingerprint).toBe("sha256hexfingerprint");
@@ -93,15 +93,15 @@ describe("Product + MediaEncryptedBlob (media-scoped)", () => {
       keyFingerprint: "old_fp",
     });
 
-    await prisma.mediaEncryptedBlob.updateMany({
+    await prisma.mediaProduct.updateMany({
       where: { productId: product.id },
-      data: { encryptedSource: "new_blob==", keyFingerprint: "new_fp" },
+      data: { encryptedDek: "new_blob==", keyFingerprint: "new_fp" },
     });
 
-    const blob = await prisma.mediaEncryptedBlob.findFirst({
+    const blob = await prisma.mediaProduct.findFirst({
       where: { productId: product.id },
     });
-    expect(blob!.encryptedSource).toBe("new_blob==");
+    expect(blob!.encryptedDek).toBe("new_blob==");
     expect(blob!.keyFingerprint).toBe("new_fp");
   });
 });

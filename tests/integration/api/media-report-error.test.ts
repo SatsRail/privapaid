@@ -3,6 +3,8 @@ import { randomBytes } from "crypto";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct } from "../../helpers/factories";
 import { encryptSourceUrl } from "@/lib/content-encryption";
+import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 // Mirror the unlock route's test surface: a cookie store the gate reads
@@ -102,10 +104,12 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
   });
 
   /**
-   * Seed an active channel + url-backed media + one media-scoped product whose
-   * encryptedSource is supplied by the caller. The product key (`keyB64url`)
-   * matches what the portal-verify mock returns so the server's confirm decrypt
-   * runs against a known key.
+   * Seed an active channel + url-backed media (with a real MediaEnvelope) + one
+   * media-scoped product whose encryptedDek is supplied by the caller. The
+   * product key (`keyB64url`) matches what the portal-verify mock returns so the
+   * server's confirm decrypt runs against a known key. Returns the envelope's
+   * `dekBase64url` so a test can build a *valid* encryptedDek (one that decrypts
+   * the envelope cleanly) when it wants `confirmed:false`.
    */
   async function seed(opts: {
     encryptedSource: string;
@@ -121,12 +125,20 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
         active: true,
       },
     });
+    const art = createEnvelopeArtifacts(Buffer.from("https://example.com/video.mp4", "utf8"));
     const media = await prisma.media.create({
       data: {
         ref: nextRef(),
         channelId: channel.id,
         name: "Reportable Video",
-        blob: { kind: "url", url: "https://example.com/video.mp4" },
+        envelope: {
+          create: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bytes: art.bytes as any,
+            mimeType: URL_ENVELOPE_MIME,
+            wrappedDek: art.wrappedDek,
+          },
+        },
         mediaType: "video",
         ...(opts.mediaStatus ? { status: opts.mediaStatus } : {}),
       },
@@ -137,7 +149,7 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
       encryptedSource: opts.encryptedSource,
       keyFingerprint: "fp_report",
     });
-    return { channelId: channel.id, mediaId: media.id, productId };
+    return { channelId: channel.id, mediaId: media.id, productId, dekBase64url: art.dekBase64url };
   }
 
   it("rejects an unknown reason with 400 (no free-text ever persisted)", async () => {
@@ -183,7 +195,7 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Inactive Media",
-        blob: { kind: "url", url: "https://example.com/x.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/x.mp4"),
         mediaType: "video",
       },
     });
@@ -215,14 +227,20 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
   });
 
   it("does NOT flag the media when the server can still decrypt (confirmed:false)", async () => {
-    // The client reported a failure, but the blob decrypts cleanly server-side
-    // with the portal-returned key. A single false client report must never
-    // take good content offline.
+    // The client reported a failure, but the two-step decrypt succeeds
+    // server-side: the product key unwraps the DEK, and the DEK decrypts the
+    // envelope bytes cleanly. A single false client report must never take good
+    // content offline. The valid encryptedDek wraps the envelope's *DEK*
+    // (base64url) under the product key — recovered from seed().
     const keyB64url = randomBytes(32).toString("base64url");
     const productId = "prod_good";
-    const goodBlob = encryptSourceUrl("https://example.com/video.mp4", keyB64url, productId);
 
-    const { mediaId } = await seed({ encryptedSource: goodBlob, productId });
+    const { mediaId, dekBase64url } = await seed({ encryptedSource: "placeholder", productId });
+    const goodBlob = encryptSourceUrl(dekBase64url, keyB64url, productId);
+    await prisma.mediaProduct.updateMany({
+      where: { mediaId },
+      data: { encryptedDek: goodBlob },
+    });
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ [productId]: "mac" }));
     mockPortalValid(keyB64url);
 

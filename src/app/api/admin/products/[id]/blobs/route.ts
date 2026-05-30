@@ -20,10 +20,10 @@ export async function GET(
     where: { satsrailProductId },
     select: {
       keyFingerprint: true,
-      mediaEncryptedBlobs: {
+      mediaProducts: {
         select: {
           mediaId: true,
-          encryptedSource: true,
+          encryptedDek: true,
           keyFingerprint: true,
           createdAt: true,
         },
@@ -35,7 +35,7 @@ export async function GET(
     return NextResponse.json({ data: [] });
   }
 
-  const rows = product.mediaEncryptedBlobs;
+  const rows = product.mediaProducts;
   const mediaIds = [...new Set(rows.map((r) => r.mediaId))];
   const mediaItems = mediaIds.length > 0
     ? await prisma.media.findMany({
@@ -53,10 +53,10 @@ export async function GET(
       media_name: media?.name || "Unknown",
       media_type: media?.mediaType || "unknown",
       media_ref: media?.ref ?? null,
-      blob_preview: row.encryptedSource
-        ? `${row.encryptedSource.slice(0, 24)}...${row.encryptedSource.slice(-8)}`
+      blob_preview: row.encryptedDek
+        ? `${row.encryptedDek.slice(0, 24)}...${row.encryptedDek.slice(-8)}`
         : null,
-      blob_length: row.encryptedSource?.length ?? 0,
+      blob_length: row.encryptedDek?.length ?? 0,
       key_fingerprint: row.keyFingerprint ?? product.keyFingerprint ?? null,
       created_at: row.createdAt.toISOString(),
     };

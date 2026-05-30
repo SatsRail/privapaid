@@ -2,24 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl } from "@/lib/content-encryption";
-import { unwrapDekToBase64url } from "@/lib/content-dek";
 import { satsrail } from "@/lib/satsrail";
-import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
+import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
 
 /**
- * Create a SatsRail product for a channel and encrypt every media in the
- * channel under that product's key.
+ * Create a SatsRail product for a channel and wrap every media's DEK under that
+ * product's key.
  *
  * Flow:
- * 1. Fetch channel + all its media + merchant key.
+ * 1. Fetch channel + all its media (+ envelopes) + merchant key.
  * 2. Create the product on SatsRail with external_ref: ch_{channel.ref},
  *    using the channel's product type.
  * 3. Fetch the product key.
- * 4. For each media: derive the plaintext (URL for url-backed kinds, raw DEK
- *    for envelope-encrypted kinds) and encrypt under the new product key
- *    with AAD = SatsRail product UUID.
- * 5. Write a channel-scoped Product + one MediaEncryptedBlob row per media,
- *    all in one transaction.
+ * 4. For each media: recover the DEK from its MediaEnvelope.wrappedDek (uniform
+ *    across kinds) and wrap it under the new product key with AAD = SatsRail
+ *    product UUID.
+ * 5. Write a channel-scoped Product + one MediaProduct row per media, all in
+ *    one transaction.
  */
 export async function POST(
   req: NextRequest,
@@ -85,34 +84,28 @@ export async function POST(
       product.id
     );
 
-    // 3. Encrypt every media's plaintext under this product's key.
-    //    - URL kinds: read the URL straight from Media.blob.
-    //    - Envelope kinds (photo, article): unwrap the KEK-protected DEK on
-    //      Media.blob.encryptedDek to recover the raw DEK, then wrap under
-    //      THIS product's key. No SatsRail round-trip needed for the DEK
-    //      since CONTENT_KEK is operator-held.
+    // 3. Wrap every media's DEK under this product's key. The DEK is recovered
+    //    from each MediaEnvelope.wrappedDek (CONTENT_KEK, operator-held) — no
+    //    SatsRail round-trip needed.
     const mediaItems = await prisma.media.findMany({
       where: { channelId },
-      select: { id: true, blob: true, mediaType: true },
+      select: { id: true, envelope: { select: { wrappedDek: true } } },
     });
 
-    const encryptedMedia: Array<{ mediaId: string; encryptedSource: string }> = [];
+    const encryptedMedia: Array<{ mediaId: string; encryptedDek: string }> = [];
     for (const m of mediaItems) {
-      const mediaId = m.id;
-      const blob = parseMediaBlob(m.blob);
-
-      const plaintext =
-        blob.kind === "photo" || blob.kind === "article"
-          ? unwrapDekToBase64url(blob.encryptedDek)
-          : plaintextForEncryption(blob);
-
+      if (!m.envelope) continue; // media with no envelope can't be unlocked; skip
       encryptedMedia.push({
-        mediaId,
-        encryptedSource: encryptSourceUrl(plaintext, key, product.id),
+        mediaId: m.id,
+        encryptedDek: encryptSourceUrl(
+          dekBase64urlFromEnvelope(m.envelope),
+          key,
+          product.id
+        ),
       });
     }
 
-    // 4. Write Product (channel-scoped) + N MediaEncryptedBlob rows atomically.
+    // 4. Write Product (channel-scoped) + N MediaProduct rows atomically.
     const channelProduct = await prisma.product.create({
       data: {
         channelId,
@@ -126,10 +119,10 @@ export async function POST(
         productSlug: product.slug,
         productExternalRef: product.external_ref ?? `ch_${channel.ref}`,
         syncedAt: new Date(),
-        mediaEncryptedBlobs: {
+        mediaProducts: {
           create: encryptedMedia.map((em) => ({
             mediaId: em.mediaId,
-            encryptedSource: em.encryptedSource,
+            encryptedDek: em.encryptedDek,
             keyFingerprint: key_fingerprint,
           })),
         },

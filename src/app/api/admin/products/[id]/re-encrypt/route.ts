@@ -4,31 +4,29 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { prisma } from "@/lib/prisma";
 import { encryptSourceUrl } from "@/lib/content-encryption";
-import { unwrapDekToBase64url } from "@/lib/content-dek";
-import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
+import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
 
 /**
  * POST /api/admin/products/[id]/re-encrypt
  *
- * Re-encrypts every MediaEncryptedBlob attached to this product after a key
- * rotation. Plaintext is sourced from the local DB (Media.blob — URL string
- * or CONTENT_KEK-wrapped DEK), not by decrypting the old ciphertext with
- * SatsRail's old_key. That pre-rotation key has proven unreliable in
- * practice: the portal can clear it independently, and any temporary fetch
- * failure used to mean unrecoverable rotation.
+ * Re-encrypts every MediaProduct attached to this product after a key rotation.
+ * The plaintext is the media DEK, recovered locally from each media's
+ * MediaEnvelope.wrappedDek (CONTENT_KEK) — not by decrypting the old ciphertext
+ * with SatsRail's old_key. That pre-rotation key has proven unreliable: the
+ * portal can clear it independently, and any temporary fetch failure used to
+ * mean unrecoverable rotation. The envelope bytes never change here.
  *
  * Streams progress back to the client as newline-delimited JSON.
  *
  * Flow:
  *   1. Fetch new key from SatsRail (only one round-trip).
- *   2. Find the local Product row, load all its MediaEncryptedBlob entries.
- *   3. For each blob: lookup the Media, derive plaintext, re-encrypt.
+ *   2. Find the local Product row, load all its MediaProduct entries.
+ *   3. For each entry: look up the Media's envelope, recover the DEK, re-wrap.
  *   4. On clean run: clear old_key via SatsRail.
  *
  * Failure modes (still surfaced as `errors`):
- *   - Media not found (was deleted before rotation completed).
- *   - Envelope media missing `encryptedDek`.
- *   - CONTENT_KEK not configured and we have envelope-encrypted media.
+ *   - Media (or its envelope) not found.
+ *   - CONTENT_KEK not configured.
  */
 export async function POST(
   _req: NextRequest,
@@ -60,7 +58,7 @@ export async function POST(
 
   const productRow = await prisma.product.findUnique({
     where: { satsrailProductId },
-    include: { mediaEncryptedBlobs: true },
+    include: { mediaProducts: true },
   });
 
   if (!productRow) {
@@ -73,7 +71,7 @@ export async function POST(
     return NextResponse.json({ done: true, total: 0, errors: 0 });
   }
 
-  const blobs = productRow.mediaEncryptedBlobs;
+  const blobs = productRow.mediaProducts;
   const total = blobs.length;
 
   if (total === 0) {
@@ -89,20 +87,22 @@ export async function POST(
   const mediaIds = Array.from(new Set(blobs.map((b) => b.mediaId)));
   const mediaDocs = await prisma.media.findMany({
     where: { id: { in: mediaIds } },
+    select: { id: true, envelope: { select: { wrappedDek: true } } },
   });
   const mediaById = new Map<string, (typeof mediaDocs)[number]>();
   for (const m of mediaDocs) mediaById.set(m.id, m);
 
+  // The product-key plaintext is the media DEK, recovered from the envelope's
+  // CONTENT_KEK-wrapped copy. Uniform across all media kinds.
   function plaintextForMedia(mediaId: string): string {
     const media = mediaById.get(mediaId);
     if (!media) {
       throw new Error(`Media ${mediaId} not found — was it deleted?`);
     }
-    const blob = parseMediaBlob(media.blob);
-    if (blob.kind === "photo" || blob.kind === "article") {
-      return unwrapDekToBase64url(blob.encryptedDek);
+    if (!media.envelope) {
+      throw new Error(`Media ${mediaId} has no envelope`);
     }
-    return plaintextForEncryption(blob);
+    return dekBase64urlFromEnvelope(media.envelope);
   }
 
   const encoder = new TextEncoder();
@@ -116,9 +116,9 @@ export async function POST(
         try {
           const plaintext = plaintextForMedia(entry.mediaId);
           const encrypted = encryptSourceUrl(plaintext, newKey, satsrailProductId);
-          await prisma.mediaEncryptedBlob.update({
+          await prisma.mediaProduct.update({
             where: { id: entry.id },
-            data: { encryptedSource: encrypted },
+            data: { encryptedDek: encrypted },
           });
         } catch (err) {
           errors++;

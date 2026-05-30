@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockCookieStore, mockFetch } = vi.hoisted(() => {
@@ -87,7 +88,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Locked Video",
-        blob: { kind: "url", url: "https://example.com/video.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/video.mp4"),
         mediaType: "video",
       },
     });
@@ -117,7 +118,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Channel Locked Video",
-        blob: { kind: "url", url: "https://example.com/video2.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/video2.mp4"),
         mediaType: "video",
       },
     });
@@ -155,7 +156,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Inactive Ch Media",
-        blob: { kind: "url", url: "https://example.com/inactive.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/inactive.mp4"),
         mediaType: "video",
       },
     });
@@ -182,7 +183,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "No Product Media",
-        blob: { kind: "url", url: "https://example.com/noprod.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/noprod.mp4"),
         mediaType: "video",
       },
     });
@@ -209,7 +210,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media",
-        blob: { kind: "url", url: "https://example.com/archived.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/archived.mp4"),
         mediaType: "video",
       },
     });
@@ -260,7 +261,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media No Mac",
-        blob: { kind: "url", url: "https://example.com/archived.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/archived.mp4"),
         mediaType: "video",
       },
     });
@@ -407,7 +408,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived CP Media",
-        blob: { kind: "url", url: "https://example.com/archivedcp.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/archivedcp.mp4"),
         mediaType: "video",
       },
     });
@@ -506,7 +507,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Dual Product Video",
-        blob: { kind: "url", url: "https://example.com/dual.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/dual.mp4"),
         mediaType: "video",
       },
     });
@@ -594,7 +595,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Archived Media Video",
-        blob: { kind: "url", url: "https://example.com/arch.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/arch.mp4"),
         mediaType: "video",
       },
     });
@@ -662,7 +663,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Multi CP Video",
-        blob: { kind: "url", url: "https://example.com/multi.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/multi.mp4"),
         mediaType: "video",
       },
     });

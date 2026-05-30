@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 const { mockRateLimit } = vi.hoisted(() => ({
   mockRateLimit: vi.fn().mockResolvedValue(null),
@@ -51,7 +52,7 @@ describe("Share API — POST /api/media/[id]/share", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Shareable Video",
-        blob: { kind: "url", url: "https://example.com/share.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/share.mp4"),
         mediaType: "video",
         position: 1,
         ...overrides,

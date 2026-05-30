@@ -35,8 +35,8 @@ export async function POST(req: Request) {
 
     // Verify the product covers this media — works for both media-scoped
     // and channel-scoped products because every (product, media) pair has
-    // a MediaEncryptedBlob row in the unified shape.
-    const blob = await prisma.mediaEncryptedBlob.findFirst({
+    // a MediaProduct row in the unified shape.
+    const blob = await prisma.mediaProduct.findFirst({
       where: {
         mediaId: media.id,
         product: { satsrailProductId: product_id },

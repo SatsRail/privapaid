@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { findMediaProducts } from "../../helpers/factories";
 import { createCategory, createChannel, createMedia } from "../../helpers/factories";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
 
 function generateProductKey(): string {
@@ -387,8 +388,9 @@ describe("POST /api/admin/import", () => {
 
     const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    const blob = media!.blob as { kind: string; url: string };
-    expect(blob.url).toBe("https://example.com/new.mp4");
+    // The source URL now lives encrypted in the (re-encrypted) MediaEnvelope.
+    const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media!.id } });
+    expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe("https://example.com/new.mp4");
   });
 
   it("matches existing media by name when ref is not provided", async () => {

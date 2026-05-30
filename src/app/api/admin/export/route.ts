@@ -3,32 +3,23 @@ import { prisma } from "@/lib/prisma";
 import { resolveMediaImages } from "@/lib/images";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
-import { parseMediaBlob } from "@/lib/schemas/media-blob";
-import { decryptBytes } from "@/lib/content-encryption";
-import { unwrapDek } from "@/lib/content-dek";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 
 /**
- * Recover the on-the-wire `source_url` field from Media.blob for export.
- * Photos surface the EncryptedEnvelope.id pointer (matching the legacy
- * shape — admins can re-link by uploading bytes through /api/admin/photos
- * and matching ids in a re-import). Articles decrypt their envelope on the
- * fly to recover the markdown body so the export round-trips.
+ * Recover the on-the-wire `source_url` field for export by decrypting the
+ * media's envelope (admin-only). url media → the source URL; article → the
+ * markdown body (so the export round-trips). Photos surface the envelope id
+ * pointer — their bytes aren't a re-importable source_url (re-upload via
+ * /api/admin/photos and match ids on re-import).
  */
-async function sourceUrlForExport(blob: unknown): Promise<string> {
+async function sourceUrlForExport(media: {
+  mediaType: string;
+  envelope: { id: string; bytes: Uint8Array; wrappedDek: string | null } | null;
+}): Promise<string> {
+  if (!media.envelope) return "";
+  if (media.mediaType === "photo") return media.envelope.id;
   try {
-    const parsed = parseMediaBlob(blob);
-    if (parsed.kind === "url") return parsed.url;
-    if (parsed.kind === "photo") return parsed.envelopeId;
-    if (parsed.kind === "article") {
-      const envelope = await prisma.encryptedEnvelope.findUnique({
-        where: { id: parsed.envelopeId },
-        select: { bytes: true },
-      });
-      if (!envelope) return "";
-      const dek = unwrapDek(parsed.encryptedDek);
-      return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
-    }
-    return "";
+    return decryptEnvelopePayload(media.envelope).toString("utf8");
   } catch {
     return "";
   }
@@ -57,6 +48,7 @@ export async function GET() {
           images: {
             select: { id: true, kind: true, externalUrl: true, position: true },
           },
+          envelope: { select: { id: true, bytes: true, wrappedDek: true } },
         },
       })
     : [];
@@ -137,7 +129,7 @@ export async function GET() {
             ref: m.ref,
             name: m.name,
             description: m.description || "",
-            source_url: await sourceUrlForExport(m.blob),
+            source_url: await sourceUrlForExport(m),
             media_type: m.mediaType,
             thumbnail_url: thumbnailUrl,
             preview_image_urls: previewUrls,

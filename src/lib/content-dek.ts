@@ -1,19 +1,19 @@
 /**
  * KEK-based wrapping for per-content DEKs.
  *
- * Envelope-encrypted content (photos, articles) is stored ciphertext-at-rest
- * in the EncryptedEnvelope table under a random 32-byte DEK (data encryption
- * key). The DEK is then wrapped — historically only under each SatsRail
- * product key (envelope encryption), which forced a SatsRail round-trip every
- * time we needed to create a new product covering the content and made the
- * "decrypt with an existing product to recover the DEK" step a single point
- * of failure (no existing product → can't create another).
+ * Every media's content is stored ciphertext-at-rest in the MediaEnvelope table
+ * under a random 32-byte per-media DEK (data encryption key). The DEK is then
+ * wrapped — historically only under each SatsRail product key (envelope
+ * encryption), which forced a SatsRail round-trip every time we needed to create
+ * a new product covering the content and made the "decrypt with an existing
+ * product to recover the DEK" step a single point of failure (no existing
+ * product → can't create another).
  *
- * This module persists a second copy of the wrapped DEK on the Media row
- * itself, wrapped under an operator-held KEK (key encryption key) from the
- * CONTENT_KEK env var. Creating new products becomes a single-step operation
- * with no SatsRail round-trip for the DEK, and "no existing MediaEncryptedBlob
- * yet" stops being a blocker.
+ * This module persists a second copy of the wrapped DEK on the MediaEnvelope row
+ * (`wrappedDek`), wrapped under an operator-held KEK (key encryption key) from
+ * the CONTENT_KEK env var. Creating new products becomes a single-step operation
+ * with no SatsRail round-trip for the DEK, and "no existing MediaProduct yet"
+ * stops being a blocker.
  *
  * Threat model: a database-only snapshot leak still does NOT expose content,
  * because the KEK lives in the operator's environment, not the database. If

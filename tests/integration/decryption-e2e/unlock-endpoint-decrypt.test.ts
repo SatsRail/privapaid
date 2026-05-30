@@ -77,9 +77,17 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     mockCookieStore._clear();
   });
 
+  // Uniform model: a media's payload (article body / photo bytes / URL string)
+  // is encrypted under a per-media DEK and stored in its MediaEnvelope.bytes.
+  // The MediaProduct.encryptedDek wraps that DEK (base64url) under the product
+  // key. The unlock endpoint returns the encryptedDek + product key; the client
+  // unwraps the DEK, fetches the envelope, and decrypts the bytes. So seeding
+  // mints the envelope bytes here and returns them + the envelope id for the
+  // two-step client decrypt the tests assert.
   async function seedMediaProduct(opts: {
     mediaType: "article" | "photo" | "video";
-    sourceUrl: string;
+    payload: Buffer;
+    dek: Buffer;
     encryptedSource: string;
     keyFingerprintHex: string;
     productId: string;
@@ -92,29 +100,26 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
         active: true,
       },
     });
-    const blob =
+    const mimeType =
       opts.mediaType === "article"
-        ? {
-            kind: "article",
-            envelopeId: opts.sourceUrl,
-            encryptedDek: "test_dek",
-            mimeType: "text/markdown; charset=utf-8",
-          }
+        ? "text/markdown; charset=utf-8"
         : opts.mediaType === "photo"
-          ? {
-              kind: "photo",
-              envelopeId: opts.sourceUrl,
-              encryptedDek: "test_dek",
-              mimeType: "image/jpeg",
-            }
-          : { kind: "url", url: opts.sourceUrl };
+          ? "image/jpeg"
+          : "text/url";
+    const envelopeBytes = encryptBytes(opts.payload, opts.dek);
     const media = await prisma.media.create({
       data: {
         ref: nextRef(),
         channelId: channel.id,
         name: "Test media",
-        blob,
         mediaType: opts.mediaType,
+        envelope: {
+          create: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bytes: envelopeBytes as any,
+            mimeType,
+          },
+        },
       },
     });
     await createMediaProduct({
@@ -123,10 +128,19 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
         encryptedSource: opts.encryptedSource,
         keyFingerprint: opts.keyFingerprintHex,
       });
-    return { mediaId: media.id, channelId: channel.id };
+    const envelope = await prisma.mediaEnvelope.findUnique({
+      where: { mediaId: media.id },
+      select: { id: true, bytes: true },
+    });
+    return {
+      mediaId: media.id,
+      channelId: channel.id,
+      envelopeId: envelope!.id,
+      envelopeBytes: Buffer.from(envelope!.bytes),
+    };
   }
 
-  it("article: full lifecycle — create-product encrypt → unlock endpoint → Web Crypto decrypt recovers the markdown", async () => {
+  it("article: full lifecycle — wrap DEK → unlock endpoint → unwrap DEK → decrypt envelope recovers the markdown", async () => {
     const productKey = genProductKey();
     const productId = "550e8400-e29b-41d4-a716-446655440000";
     const articleBody = [
@@ -137,12 +151,16 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
       "[A link](https://example.com)",
     ].join("\n");
 
-    const encryptedSource = encryptSourceUrl(articleBody, productKey, productId);
+    // Uniform two-step: the product blob wraps the DEK; the envelope holds the body.
+    const dek = randomBytes(32);
+    const dekBase64url = bytesToBase64url(dek);
+    const encryptedSource = encryptSourceUrl(dekBase64url, productKey, productId);
     const fingerprintHex = await sha256HexOfString(productKey);
 
-    const { mediaId } = await seedMediaProduct({
+    const { mediaId, envelopeBytes } = await seedMediaProduct({
       mediaType: "article",
-      sourceUrl: articleBody,
+      payload: Buffer.from(articleBody, "utf8"),
+      dek,
       encryptedSource,
       keyFingerprintHex: fingerprintHex,
       productId,
@@ -171,7 +189,12 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     expect(body.encrypted_blob).toBe(encryptedSource);
     expect(body.remaining_seconds).toBe(3600);
 
-    const recovered = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);
+    // Step 1: unwrap the DEK from the product blob.
+    const innerBytes = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);
+    const recoveredDek = base64urlToBytes(new TextDecoder().decode(innerBytes));
+    expect(Buffer.compare(Buffer.from(recoveredDek), dek)).toBe(0);
+    // Step 2: decrypt the envelope bytes with the DEK to recover the markdown.
+    const recovered = await clientDecryptBytesWithKey(new Uint8Array(envelopeBytes), recoveredDek);
     expect(new TextDecoder().decode(recovered)).toBe(articleBody);
   });
 
@@ -186,15 +209,16 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
         ...Buffer.from("FAKE-PNG-PAYLOAD-BYTES"),
       ])
     );
-    const gridFsCiphertext = encryptBytes(photoBytes, dek);
 
     const dekBase64url = bytesToBase64url(dek);
     const wrappedDek = encryptSourceUrl(dekBase64url, productKey, productId);
     const fingerprintHex = await sha256HexOfString(productKey);
 
-    const { mediaId } = await seedMediaProduct({
+    // The envelope bytes are the encrypted photo, minted by the seed helper.
+    const { mediaId, envelopeBytes: gridFsCiphertext } = await seedMediaProduct({
       mediaType: "photo",
-      sourceUrl: "blob-id-placeholder",
+      payload: photoBytes,
+      dek,
       encryptedSource: wrappedDek,
       keyFingerprintHex: fingerprintHex,
       productId,
@@ -233,7 +257,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     expect(Buffer.compare(Buffer.from(recoveredPhoto), photoBytes)).toBe(0);
   });
 
-  it("article: rotation — re-encrypt under a NEW product key still decrypts correctly", async () => {
+  it("article: rotation — re-wrap the DEK under a NEW product key still decrypts correctly", async () => {
     const productId = "550e8400-e29b-41d4-a716-446655440002";
     const articleBody = "Article body for rotation test.";
 
@@ -241,12 +265,17 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     const newKey = genProductKey();
     expect(oldKey).not.toBe(newKey);
 
-    const reEncryptedBlob = encryptSourceUrl(articleBody, newKey, productId);
+    // Rotation re-wraps the SAME envelope DEK under the new product key; the
+    // envelope bytes (and DEK) are unchanged.
+    const dek = randomBytes(32);
+    const dekBase64url = bytesToBase64url(dek);
+    const reEncryptedBlob = encryptSourceUrl(dekBase64url, newKey, productId);
     const newFp = await sha256HexOfString(newKey);
 
-    const { mediaId } = await seedMediaProduct({
+    const { mediaId, envelopeBytes } = await seedMediaProduct({
       mediaType: "article",
-      sourceUrl: articleBody,
+      payload: Buffer.from(articleBody, "utf8"),
+      dek,
       encryptedSource: reEncryptedBlob,
       keyFingerprintHex: newFp,
       productId,
@@ -271,9 +300,13 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
 
-    const recovered = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);
+    // Step 1: the new key unwraps the DEK; step 2: the DEK decrypts the body.
+    const innerBytes = await clientDecryptBlob(body.encrypted_blob, body.key, body.product_id);
+    const recoveredDek = base64urlToBytes(new TextDecoder().decode(innerBytes));
+    const recovered = await clientDecryptBytesWithKey(new Uint8Array(envelopeBytes), recoveredDek);
     expect(new TextDecoder().decode(recovered)).toBe(articleBody);
 
+    // The OLD key no longer unwraps the (re-wrapped) DEK.
     await expect(clientDecryptBlob(body.encrypted_blob, oldKey, body.product_id)).rejects.toBeTruthy();
   });
 });

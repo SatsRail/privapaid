@@ -28,7 +28,10 @@ const { mockEncryptSourceUrl, mockDecryptSourceUrl } = vi.hoisted(() => ({
   mockEncryptSourceUrl: vi.fn().mockReturnValue("encrypted_blob_123"),
   mockDecryptSourceUrl: vi.fn().mockReturnValue("dek-recovered-base64url"),
 }));
-vi.mock("@/lib/content-encryption", () => ({
+// Keep the real encryptBytes/decryptBytes so the createMedia factory (which
+// mints a real MediaEnvelope) still works; only spy on the URL/DEK wrappers.
+vi.mock("@/lib/content-encryption", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/content-encryption")>()),
   encryptSourceUrl: mockEncryptSourceUrl,
   decryptSourceUrl: mockDecryptSourceUrl,
 }));
@@ -36,7 +39,9 @@ vi.mock("@/lib/content-encryption", () => ({
 const { mockUnwrapDekToBase64url } = vi.hoisted(() => ({
   mockUnwrapDekToBase64url: vi.fn(),
 }));
-vi.mock("@/lib/content-dek", () => ({
+// Keep the real wrapDek (factory needs it); only spy on unwrapDekToBase64url.
+vi.mock("@/lib/content-dek", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/content-dek")>()),
   unwrapDekToBase64url: mockUnwrapDekToBase64url,
 }));
 
@@ -189,22 +194,23 @@ describe("Admin Channel Create Product", () => {
   // Photo media — envelope encryption: DEK recovery + re-wrap
   // -------------------------------------------------------
   describe("photo media in channel product (envelope re-wrap)", () => {
-    it("uses Media.encryptedDek to recover the DEK (no SatsRail decrypt call)", async () => {
+    it("recovers the DEK from the media's envelope wrappedDek (no SatsRail decrypt call)", async () => {
       const channel = await createChannel({
         slug: "ch-photo-kek",
         satsrailProductTypeId: "pt_1",
         ref: 2001,
       });
-      // Photo has KEK-wrapped DEK on Media — the preferred path. Even though
-      // a stale MediaProduct exists, the route must NOT fall back to it.
+      // The DEK is recovered from MediaEnvelope.wrappedDek (CONTENT_KEK-local).
+      // Even though a stale MediaProduct exists, the route must NOT fetch its
+      // key from SatsRail to decrypt the DEK — no decryptSourceUrl round-trip.
       const photoMedia = await createMedia(channel.id, {
         mediaType: "photo",
-        blob: {
-          kind: "photo",
-          envelopeId: "gridfs:photo-with-kek",
-          encryptedDek: "kek-wrapped-blob",
-          mimeType: "image/jpeg",
-        },
+        sourceUrl: "gridfs:photo-with-kek",
+      });
+      // The real wrappedDek minted by the factory is what the route must unwrap.
+      const envelope = await prisma.mediaEnvelope.findUnique({
+        where: { mediaId: photoMedia.id },
+        select: { wrappedDek: true },
       });
       await createMediaProduct({
           mediaId: photoMedia.id,
@@ -237,7 +243,7 @@ describe("Admin Channel Create Product", () => {
       const res = await POST(req, ctx);
       expect(res.status).toBe(201);
 
-      expect(mockUnwrapDekToBase64url).toHaveBeenCalledWith("kek-wrapped-blob");
+      expect(mockUnwrapDekToBase64url).toHaveBeenCalledWith(envelope!.wrappedDek);
       expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
       expect(mockSatsrailClient.getProductKey).toHaveBeenCalledTimes(1);
       expect(mockEncryptSourceUrl).toHaveBeenCalledWith(
@@ -247,24 +253,22 @@ describe("Admin Channel Create Product", () => {
       );
     });
 
-    it("mixes photo and non-photo media in the same channel correctly", async () => {
+    it("wraps every media's envelope DEK under the channel key (uniform two-step)", async () => {
       const channel = await createChannel({
         slug: "ch-mixed",
         satsrailProductTypeId: "pt_1",
         ref: 1002,
       });
-      const videoMedia = await createMedia(channel.id, {
+      // Both media now follow the same path: the DEK is recovered from each
+      // MediaEnvelope.wrappedDek (via the mocked unwrapDekToBase64url) and wrapped
+      // under the channel product key. The old "video=URL, photo=DEK" split is gone.
+      await createMedia(channel.id, {
         mediaType: "video",
-        blob: { kind: "url", url: "https://example.com/v.mp4" },
+        sourceUrl: "https://example.com/v.mp4",
       });
       await createMedia(channel.id, {
         mediaType: "photo",
-        blob: {
-          kind: "photo",
-          envelopeId: "env_mixed_photo",
-          encryptedDek: "kek-wrapped-photo-dek",
-          mimeType: "image/jpeg",
-        },
+        sourceUrl: "gridfs:photo-bytes",
       });
 
       mockSatsrailClient.createProduct.mockResolvedValue({
@@ -279,7 +283,10 @@ describe("Admin Channel Create Product", () => {
         key: "mixed-channel-key",
         key_fingerprint: "fp_m",
       });
-      mockUnwrapDekToBase64url.mockReturnValueOnce("photo-dek-recovered");
+      // One recovered DEK per media (route iterates all media in the channel).
+      mockUnwrapDekToBase64url
+        .mockReturnValueOnce("dek-recovered-1")
+        .mockReturnValueOnce("dek-recovered-2");
 
       const [req, ctx] = buildRequest(channel.id, {
         name: "Mixed",
@@ -288,18 +295,16 @@ describe("Admin Channel Create Product", () => {
       const res = await POST(req, ctx);
       expect(res.status).toBe(201);
 
-      // Video encrypts the URL; photo encrypts the unwrapped DEK. Both go under
-      // the same channel key + product ID.
+      // Every media's recovered DEK is wrapped under the same channel key + product ID.
       const calls = mockEncryptSourceUrl.mock.calls;
       const plaintexts = calls.map((c) => c[0]);
-      const videoBlob = videoMedia.blob as { url: string };
-      expect(plaintexts).toContain(videoBlob.url);
-      expect(plaintexts).toContain("photo-dek-recovered");
+      expect(plaintexts).toContain("dek-recovered-1");
+      expect(plaintexts).toContain("dek-recovered-2");
       for (const [, key, productId] of calls) {
         expect(key).toBe("mixed-channel-key");
         expect(productId).toBe("prod_mixed_channel");
       }
-      // No SatsRail decrypt round-trip for photo recovery.
+      // No SatsRail decrypt round-trip for DEK recovery — it's CONTENT_KEK-local.
       expect(mockDecryptSourceUrl).not.toHaveBeenCalled();
     });
   });

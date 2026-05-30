@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
 const { mockGetMerchantKey, mockSatsrail, mockRateLimit } = vi.hoisted(() => ({
@@ -93,7 +94,7 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Paid Media",
-        blob: { kind: "url", url: "https://example.com/paid.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/paid.mp4"),
         mediaType: "video",
       },
     });
@@ -122,7 +123,7 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Channel Paid Media",
-        blob: { kind: "url", url: "https://example.com/chpaid.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/chpaid.mp4"),
         mediaType: "video",
       },
     });
@@ -182,7 +183,7 @@ describe("Checkout API — POST /api/checkout", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "Inactive Channel Media",
-        blob: { kind: "url", url: "https://example.com/inactive.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/inactive.mp4"),
         mediaType: "video",
       },
     });

@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
-import { decryptBytes } from "@/lib/content-encryption";
-import { unwrapDek } from "@/lib/content-dek";
-import { parseMediaBlob } from "@/lib/schemas/media-blob";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +17,11 @@ export async function GET(
 
   const media = await prisma.media.findUnique({
     where: { id },
-    select: { blob: true, mediaType: true, name: true },
+    select: {
+      mediaType: true,
+      name: true,
+      envelope: { select: { id: true, bytes: true, wrappedDek: true } },
+    },
   });
 
   if (!media) {
@@ -36,32 +38,23 @@ export async function GET(
     details: { name: media.name },
   });
 
-  // Recover the on-the-wire `source_url` value from Media.blob.
-  //   url     → the URL as-is
-  //   photo   → surface the EncryptedEnvelope.id pointer (bytes stay behind /api/envelopes/[id])
-  //   article → decrypt the envelope on the fly and return the markdown body
+  if (!media.envelope) {
+    return NextResponse.json(
+      { error: "Envelope row missing — content unrecoverable" },
+      { status: 500 }
+    );
+  }
+
+  // Recover the on-the-wire `source_url` by decrypting the media's envelope.
+  //   url     → the source URL
+  //   photo   → surface the envelope id pointer (bytes stay behind /api/envelopes/[id])
+  //   article → the markdown body
   let sourceUrl: string;
   try {
-    const parsed = parseMediaBlob(media.blob);
-    if (parsed.kind === "url") {
-      sourceUrl = parsed.url;
-    } else if (parsed.kind === "photo") {
-      sourceUrl = parsed.envelopeId;
-    } else {
-      const envelope = await prisma.encryptedEnvelope.findUnique({
-        where: { id: parsed.envelopeId },
-        select: { bytes: true },
-      });
-      if (!envelope) {
-        return NextResponse.json(
-          { error: "Envelope row missing — content unrecoverable" },
-          { status: 500 }
-        );
-      }
-      const dek = unwrapDek(parsed.encryptedDek);
-      const plaintext = decryptBytes(envelope.bytes as Buffer, dek);
-      sourceUrl = plaintext.toString("utf8");
-    }
+    sourceUrl =
+      media.mediaType === "photo"
+        ? media.envelope.id
+        : decryptEnvelopePayload(media.envelope).toString("utf8");
   } catch (err) {
     // Don't log the err object directly — exception messages from the
     // crypto layer can include byte offsets or key lengths that the Sentry

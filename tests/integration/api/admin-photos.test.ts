@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { prisma } from "@/lib/prisma";
 import { decryptBytes } from "@/lib/content-encryption";
+import { unwrapDekToBase64url } from "@/lib/content-dek";
 
 // ── Hoisted mocks (must come before route imports) ─────────────────────
 // requireAdminApi, file-type, sharp stay mocked — same reasoning as
@@ -173,7 +174,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
 
     // Fetch the bytes that the route persisted and verify they're NOT the
     // original plaintext.
-    const blob = await prisma.encryptedEnvelope.findUnique({
+    const blob = await prisma.mediaEnvelope.findUnique({
       where: { id: body.gridFsId },
       select: { bytes: true },
     });
@@ -196,7 +197,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     // Round-trip: take the ciphertext from Postgres + the returned DEK
     // and confirm the original plaintext comes back. This is the strongest
     // end-to-end guarantee — if it fails, the photo is unrecoverable.
-    const blob = await prisma.encryptedEnvelope.findUnique({
+    const blob = await prisma.mediaEnvelope.findUnique({
       where: { id: body.gridFsId },
       select: { bytes: true },
     });
@@ -215,13 +216,34 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     const body = await res.json();
     expect(res.status).toBe(201);
 
-    const blob = await prisma.encryptedEnvelope.findUnique({
+    const blob = await prisma.mediaEnvelope.findUnique({
       where: { id: body.gridFsId },
     });
     expect(blob).not.toBeNull();
     expect(blob!.mimeType).toBe("image/jpeg");
     // No DEK anywhere on the row.
     expect(JSON.stringify(blob)).not.toContain(body.dek);
+  });
+
+  it("persists the CONTENT_KEK-wrapped DEK on the envelope (server-side recovery)", async () => {
+    // The MediaEnvelope now also stores `wrappedDek` — the DEK wrapped under
+    // CONTENT_KEK — so the operator can recover the DEK for product wrapping
+    // without re-uploading. It must be present and unwrap to the returned DEK.
+    const res = await POST(buildFormRequest(makeJpegFile()));
+    const body = await res.json();
+    expect(res.status).toBe(201);
+
+    const blob = await prisma.mediaEnvelope.findUnique({
+      where: { id: body.gridFsId },
+      select: { wrappedDek: true, mediaId: true },
+    });
+    expect(blob).not.toBeNull();
+    expect(typeof blob!.wrappedDek).toBe("string");
+    expect(blob!.wrappedDek!.length).toBeGreaterThan(0);
+    // The staged upload has no Media yet.
+    expect(blob!.mediaId).toBeNull();
+    // The wrapped DEK recovers exactly the DEK returned to the client.
+    expect(unwrapDekToBase64url(blob!.wrappedDek!)).toBe(body.dek);
   });
 
   it("generates a fresh DEK per upload (no DEK reuse across requests)", async () => {
@@ -232,7 +254,7 @@ describe("Admin Photos API — POST /api/admin/photos", () => {
     expect(body1.dek).not.toBe(body2.dek);
     // And the persisted ciphertexts should differ (fresh DEK → fresh IV →
     // different ciphertext even for identical plaintext).
-    const blobs = await prisma.encryptedEnvelope.findMany({
+    const blobs = await prisma.mediaEnvelope.findMany({
       where: { id: { in: [body1.gridFsId, body2.gridFsId] } },
       select: { id: true, bytes: true },
     });

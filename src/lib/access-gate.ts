@@ -47,7 +47,7 @@ export interface AccessResult {
  * Return every product that covers a given media item. This is the single
  * source of truth for "what products gate this content?"
  *
- * Reads from MediaEncryptedBlob, which carries one row per (product, media).
+ * Reads from MediaProduct, which carries one row per (product, media).
  * The same media may be referenced by many rows when multiple products
  * unlock it (direct-sale + channel access, multiple tiers, etc.).
  *
@@ -74,13 +74,13 @@ export async function getProductsForMedia(
     ? {}
     : { product: { productStatus: { not: "archived" } } };
 
-  const blobs = await prisma.mediaEncryptedBlob.findMany({
+  const blobs = await prisma.mediaProduct.findMany({
     where: {
       mediaId,
       ...archivedProductFilter,
     },
     select: {
-      encryptedSource: true,
+      encryptedDek: true,
       keyFingerprint: true,
       product: {
         select: {
@@ -93,10 +93,10 @@ export async function getProductsForMedia(
 
   const products: GatedProduct[] = [];
   for (const b of blobs) {
-    if (!b.encryptedSource) continue;
+    if (!b.encryptedDek) continue;
     products.push({
       productId: b.product.satsrailProductId,
-      encryptedBlob: b.encryptedSource,
+      encryptedBlob: b.encryptedDek,
       keyFingerprint: b.keyFingerprint ?? undefined,
       status: b.product.productStatus ?? undefined,
     });

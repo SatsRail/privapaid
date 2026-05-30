@@ -1,4 +1,3 @@
-import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminApi } from "@/lib/auth-helpers";
@@ -6,123 +5,53 @@ import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import { encryptBytes, encryptSourceUrl } from "@/lib/content-encryption";
-import { wrapDek, wrapDekFromBase64url } from "@/lib/content-dek";
-import { type MediaBlob } from "@/lib/schemas/media-blob";
+import { encryptSourceUrl } from "@/lib/content-encryption";
+import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
 
 const ARTICLE_MIME = "text/markdown; charset=utf-8";
 
-function bytesToBase64url(buf: Buffer): string {
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
 /**
- * Plan returned by `prepareCreatePlan` — pure (no DB writes). The caller
- * executes the envelope row creation + Media.create + channel mediaCount
- * increment in a single transaction.
+ * Plan returned by `prepareCreatePlan` — pure (no DB writes). The caller mints
+ * the MediaEnvelope (url/article) or links the photo's pre-staged envelope, then
+ * wraps the media DEK per product.
  *
- * For envelope kinds (photo, article) `envelopeWrite` describes the new
- * EncryptedEnvelope row to insert; the caller patches its returned id into
- * `blobShape.envelopeId` before persisting Media.blob.
+ *   video/audio/podcast → payload is the source URL bytes; mint a new envelope
+ *   article             → payload is the markdown body bytes; mint a new envelope
+ *   photo               → bytes were uploaded via /api/admin/photos (the envelope
+ *                         already exists, carrying its own wrappedDek); link it
+ *                         and use the provided raw DEK as the per-product plaintext
  */
 type CreatePlan =
-  | {
-      kind: "url";
-      blob: MediaBlob;
-      productPlaintext: string;
-    }
-  | {
-      kind: "photo";
-      // Photo bytes were uploaded separately via /api/admin/photos; the
-      // envelopeId already exists. No new envelope row to create here.
-      blob: MediaBlob;
-      productPlaintext: string;
-    }
-  | {
-      kind: "article";
-      envelopeWrite: { bytes: Buffer; mimeType: string };
-      blobShape: { kind: "article"; encryptedDek: string; mimeType: string };
-      productPlaintext: string;
-    };
+  | { kind: "new-envelope"; payload: Buffer; mimeType: string }
+  | { kind: "link-photo"; envelopeId: string; dekBase64url: string };
 
-/**
- * Translate the API wire shape (`source_url`, `media_type`, optional `dek` for
- * photos) into a `CreatePlan` describing the DB writes to perform.
- *
- *   video/audio/podcast → source_url is the URL; product plaintext is the URL
- *   photo               → source_url is the EncryptedEnvelope id; dek is the
- *                         raw per-photo DEK; product plaintext is the raw DEK
- *   article             → source_url is the markdown body; the server mints a
- *                         per-article DEK and the caller writes a new
- *                         EncryptedEnvelope row inside a transaction
- *
- * For envelope kinds (photo, article) the DEK is wrapped under CONTENT_KEK
- * and stored on Media.blob.encryptedDek so rotation can recover without
- * SatsRail's old_key.
- */
 function prepareCreatePlan(
   sourceUrl: string,
   mediaType: MediaType,
-  dek: string | undefined,
-  mimeTypeFromEnvelope: string | null
+  dek: string | undefined
 ): CreatePlan | { error: string } {
   if (mediaType === "photo") {
     if (!dek) {
       return { error: "dek is required for photo media" };
     }
-    let encryptedDek: string;
-    try {
-      encryptedDek = wrapDekFromBase64url(dek);
-    } catch (err) {
-      return {
-        error: `Failed to KEK-wrap photo DEK: ${err instanceof Error ? err.message : "unknown"}`,
-      };
-    }
-    return {
-      kind: "photo",
-      blob: {
-        kind: "photo",
-        envelopeId: sourceUrl,
-        encryptedDek,
-        mimeType: mimeTypeFromEnvelope ?? "application/octet-stream",
-      },
-      productPlaintext: dek,
-    };
+    return { kind: "link-photo", envelopeId: sourceUrl, dekBase64url: dek };
   }
 
   if (mediaType === "article") {
-    // Server-side envelope encryption of markdown body. The raw DEK never
-    // leaves this function — it's consumed by the per-product wrap below and
-    // its only persisted form is the CONTENT_KEK-wrapped copy on Media.blob.
-    const dekBytes = randomBytes(32);
-    const dekBase64url = bytesToBase64url(dekBytes);
-    const ciphertext = encryptBytes(Buffer.from(sourceUrl, "utf8"), dekBytes);
-    let encryptedDek: string;
-    try {
-      encryptedDek = wrapDek(dekBytes);
-    } catch (err) {
-      return {
-        error: `Failed to KEK-wrap article DEK: ${err instanceof Error ? err.message : "unknown"}`,
-      };
-    }
     return {
-      kind: "article",
-      envelopeWrite: { bytes: ciphertext, mimeType: ARTICLE_MIME },
-      blobShape: { kind: "article", encryptedDek, mimeType: ARTICLE_MIME },
-      productPlaintext: dekBase64url,
+      kind: "new-envelope",
+      payload: Buffer.from(sourceUrl, "utf8"),
+      mimeType: ARTICLE_MIME,
     };
   }
 
+  // url-backed (video/audio/podcast): the source URL itself is the payload.
   return {
-    kind: "url",
-    blob: { kind: "url", url: sourceUrl },
-    productPlaintext: sourceUrl,
+    kind: "new-envelope",
+    payload: Buffer.from(sourceUrl, "utf8"),
+    mimeType: URL_ENVELOPE_MIME,
   };
 }
 
@@ -199,18 +128,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // For photos, look up the EncryptedEnvelope row to recover its mimeType so
-  // the Media.blob carries a meaningful value for the public envelope route.
-  let mimeTypeFromEnvelope: string | null = null;
-  if (mediaType === "photo") {
-    const envelopeRow = await prisma.encryptedEnvelope.findUnique({
-      where: { id: source_url },
-      select: { mimeType: true },
-    });
-    mimeTypeFromEnvelope = envelopeRow?.mimeType ?? null;
-  }
-
-  const plan = prepareCreatePlan(source_url, mediaType, dek, mimeTypeFromEnvelope);
+  const plan = prepareCreatePlan(source_url, mediaType, dek);
   if ("error" in plan) {
     return NextResponse.json({ error: plan.error }, { status: 422 });
   }
@@ -222,43 +140,44 @@ export async function POST(req: NextRequest) {
     select: { position: true },
   });
 
-  // Envelope + Media + channel.mediaCount must commit atomically:
-  //   - If Media.create fails after envelope.create, the envelope row would be
-  //     orphan (cleanup-cron-recoverable, but worth avoiding).
-  //   - If channel.update fails after Media.create, mediaCount diverges from
-  //     the actual count.
-  const { media, productPlaintext } = await prisma.$transaction(async (tx) => {
-    let blob: MediaBlob;
-    let productPlaintext: string;
-    if (plan.kind === "article") {
-      const envelope = await tx.encryptedEnvelope.create({
-        data: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          bytes: plan.envelopeWrite.bytes as any,
-          mimeType: plan.envelopeWrite.mimeType,
-        },
-        select: { id: true },
-      });
-      blob = {
-        ...plan.blobShape,
-        envelopeId: envelope.id,
-      };
-      productPlaintext = plan.productPlaintext;
-    } else {
-      blob = plan.blob;
-      productPlaintext = plan.productPlaintext;
-    }
-
+  // Media + MediaEnvelope + channel.mediaCount must commit atomically:
+  //   - Media is created first so the envelope's mediaId FK resolves.
+  //   - If the envelope create/link fails, the Media row rolls back too.
+  //   - If channel.update fails after Media.create, mediaCount diverges.
+  const { media, dekBase64url } = await prisma.$transaction(async (tx) => {
     const media = await tx.media.create({
       data: {
         channelId: channel_id,
         name: name.trim(),
         description: result.description || "",
-        blob,
         mediaType,
         position: result.position ?? (maxPos?.position ?? 0) + 1,
       },
     });
+
+    // Exactly one MediaEnvelope per media. url/article mint a fresh envelope;
+    // photo links the row already staged by /api/admin/photos. The per-product
+    // DEK plaintext (base64url) is the minted DEK or the request-supplied photo DEK.
+    let dekBase64url: string;
+    if (plan.kind === "new-envelope") {
+      const artifacts = createEnvelopeArtifacts(plan.payload);
+      await tx.mediaEnvelope.create({
+        data: {
+          mediaId: media.id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: artifacts.bytes as any,
+          mimeType: plan.mimeType,
+          wrappedDek: artifacts.wrappedDek,
+        },
+      });
+      dekBase64url = artifacts.dekBase64url;
+    } else {
+      await tx.mediaEnvelope.update({
+        where: { id: plan.envelopeId },
+        data: { mediaId: media.id },
+      });
+      dekBase64url = plan.dekBase64url;
+    }
 
     // Link images to this Media. Uploaded thumbnails/previews already exist as
     // free-standing MediaImage rows (created via POST /api/images with mediaId
@@ -294,7 +213,7 @@ export async function POST(req: NextRequest) {
       data: { mediaCount: { increment: 1 } },
     });
 
-    return { media, productPlaintext };
+    return { media, dekBase64url };
   });
 
   audit({
@@ -320,16 +239,16 @@ export async function POST(req: NextRequest) {
             sk,
             cp.satsrailProductId
           );
-          const encryptedSource = encryptSourceUrl(
-            productPlaintext,
+          const encryptedDek = encryptSourceUrl(
+            dekBase64url,
             key,
             cp.satsrailProductId
           );
-          await prisma.mediaEncryptedBlob.create({
+          await prisma.mediaProduct.create({
             data: {
               productId: cp.id,
               mediaId: media.id,
-              encryptedSource,
+              encryptedDek,
               keyFingerprint: cp.keyFingerprint,
             },
           });

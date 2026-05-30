@@ -5,18 +5,19 @@ import { requireAdminApi } from "@/lib/auth-helpers";
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/image-constants";
 import { rateLimit } from "@/lib/rate-limit";
 import { encryptBytes } from "@/lib/content-encryption";
+import { wrapDek } from "@/lib/content-dek";
 
 /**
  * POST /api/admin/photos
  *
  * Uploads a photo, encrypts it under a fresh random DEK (data encryption key),
- * stores the ciphertext in the EncryptedEnvelope table, and returns the blob
- * id + the DEK.
+ * stages the ciphertext as a MediaEnvelope row (mediaId null until the Media is
+ * created and links it), and returns the envelope id + the DEK.
  *
- * The DEK is NOT persisted server-side. The client must immediately use it to
- * create a SatsRail product via /api/admin/media/[id]/create-product, which
- * wraps the DEK under the product key. If the client drops the DEK, the photo
- * bytes are unrecoverable.
+ * The envelope also stores `wrappedDek` — the DEK wrapped under CONTENT_KEK — so
+ * the bytes stay recoverable server-side for rotation/preview without a SatsRail
+ * round-trip. The raw DEK is still returned to the client so create-product can
+ * wrap it under the product key immediately.
  */
 export async function POST(req: NextRequest) {
   const limited = await rateLimit("photo_upload", 30);
@@ -89,14 +90,16 @@ export async function POST(req: NextRequest) {
     const dek = randomBytes(32);
     const ciphertext = encryptBytes(cleanBuffer, dek);
 
-    // Persist ciphertext as a row in the EncryptedEnvelope table. Cast
-    // because Prisma's Bytes type wants Uint8Array<ArrayBuffer> while Node's
-    // Buffer is Uint8Array<ArrayBufferLike> — they're byte-compatible at runtime.
-    const envelope = await prisma.encryptedEnvelope.create({
+    // Stage ciphertext as a MediaEnvelope row (mediaId null; linked when the
+    // Media is created). `wrappedDek` is the CONTENT_KEK-wrapped DEK for
+    // server-side recovery. Cast because Prisma's Bytes type wants
+    // Uint8Array<ArrayBuffer> while Node's Buffer is Uint8Array<ArrayBufferLike>.
+    const envelope = await prisma.mediaEnvelope.create({
       data: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         bytes: ciphertext as any,
         mimeType: detected.mime,
+        wrappedDek: wrapDek(dek),
       },
       select: { id: true },
     });

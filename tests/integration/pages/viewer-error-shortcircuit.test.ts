@@ -11,7 +11,7 @@ import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/pos
  *
  * We invoke the server component directly and inspect the React element tree it
  * returns (never rendering it), so the heavy client subtree stays inert. The
- * `mediaEncryptedBlob.findMany` spy and the `cookies()` spy are the behavioral
+ * `mediaProduct.findMany` spy and the `cookies()` spy are the behavioral
  * proof that the short-circuit ran before any portal-bound work.
  */
 
@@ -55,6 +55,7 @@ import MediaPlayerPage from "@/app/c/[slug]/[mediaId]/page";
 import UnavailableWall from "@/components/UnavailableWall";
 import MediaLayout from "@/components/layout/MediaLayout";
 import { prisma } from "@/lib/prisma";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 /**
  * Recursively search a returned React element tree for the first element whose
@@ -114,7 +115,7 @@ describe("Viewer page Part B short-circuit (Media.status = error)", () => {
         ref: nextRef(),
         channelId: channel.id,
         name: "SC Media",
-        blob: { kind: "url", url: "https://example.com/v.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/v.mp4"),
         mediaType: "video",
         status,
       },
@@ -123,7 +124,7 @@ describe("Viewer page Part B short-circuit (Media.status = error)", () => {
   }
 
   it("renders UnavailableWall and SKIPS the product query + macaroon-cookie read when status=error", async () => {
-    const findManySpy = vi.spyOn(prisma.mediaEncryptedBlob, "findMany");
+    const findManySpy = vi.spyOn(prisma.mediaProduct, "findMany");
     const { slug, mediaId } = await seed("error");
 
     const result = await MediaPlayerPage({
@@ -143,7 +144,7 @@ describe("Viewer page Part B short-circuit (Media.status = error)", () => {
   });
 
   it("does NOT short-circuit for status=ok — the normal page (MediaLayout) renders and products are queried", async () => {
-    const findManySpy = vi.spyOn(prisma.mediaEncryptedBlob, "findMany");
+    const findManySpy = vi.spyOn(prisma.mediaProduct, "findMany");
     const { slug, mediaId } = await seed("ok");
 
     const result = await MediaPlayerPage({
@@ -158,7 +159,7 @@ describe("Viewer page Part B short-circuit (Media.status = error)", () => {
   });
 
   it("admin preview (?preview=admin) bypasses the short-circuit so an owner can still diagnose a flagged asset", async () => {
-    const findManySpy = vi.spyOn(prisma.mediaEncryptedBlob, "findMany");
+    const findManySpy = vi.spyOn(prisma.mediaProduct, "findMany");
     const { slug, mediaId } = await seed("error");
 
     const result = await MediaPlayerPage({

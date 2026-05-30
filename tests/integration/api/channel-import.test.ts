@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct, findMediaProducts, findFirstMediaProduct } from "../../helpers/factories";
 import { createChannel, createMedia } from "../../helpers/factories";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
 
 function generateProductKey(): string {
@@ -213,8 +214,9 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
     const media = await prisma.media.findFirst({ where: { ref: 42 } });
     expect(media!.name).toBe("New Name");
-    const blob = media!.blob as { kind: string; url: string };
-    expect(blob.url).toBe("https://example.com/new.mp4");
+    // The source URL now lives encrypted in the (re-encrypted) MediaEnvelope.
+    const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media!.id } });
+    expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe("https://example.com/new.mp4");
   });
 
   it("updates existing media by name when ref is not provided", async () => {
@@ -399,7 +401,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     expect(mediaCount).toBe(2);
   });
 
-  it("re-encrypts when source URL changes on update", async () => {
+  it("re-encrypts the envelope (not the product blob) when source URL changes on update", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -414,7 +416,7 @@ describe("POST /api/admin/channels/[id]/import", () => {
     const media = await createMedia(channel.id, {
       name: "Video",
       ref: 99,
-      blob: { kind: "url", url: "https://example.com/old.mp4" },
+      sourceUrl: "https://example.com/old.mp4",
     });
 
     // Create existing MediaProduct
@@ -444,10 +446,15 @@ describe("POST /api/admin/channels/[id]/import", () => {
 
     expect((body.results.media as { updated: number }).updated).toBe(1);
 
-    // MediaProduct should be updated with new encrypted URL
+    // The envelope bytes are re-encrypted in place to the NEW url (stable DEK).
+    const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+    expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe("https://example.com/NEW.mp4");
+
+    // The DEK is unchanged, so the per-product blob + fingerprint stay as-is
+    // (no key re-fetch, no product re-wrap on a source-only change).
     const mp = await findFirstMediaProduct({ mediaId: media.id });
-    expect(mp!.encryptedSource).not.toBe("old_encrypted_blob");
-    expect(mp!.keyFingerprint).toBe("new_fp");
+    expect(mp!.encryptedSource).toBe("old_encrypted_blob");
+    expect(mp!.keyFingerprint).toBe("old_fp");
   });
 
   describe("media types", () => {

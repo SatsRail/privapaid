@@ -14,6 +14,41 @@
  */
 
 import { randomBytes, webcrypto } from "crypto";
+import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
+
+// ── MediaEnvelope nested-create helpers ───────────────────────────────
+//
+// Media.blob was dropped; every Media now owns one MediaEnvelope holding its
+// encrypted payload. Tests that build a Media directly via `prisma.media.create`
+// (rather than the `createMedia` factory) use these to mint the paired envelope
+// inline, replacing the old `blob: { kind: "url", url }` literal.
+
+/**
+ * Build a nested `envelope: { create: {...} }` input for a Media that carries
+ * `payload` (URL string bytes for url-media, content bytes for photo/article).
+ * Pass `mimeType` for non-url payloads; defaults to the url-envelope MIME.
+ */
+export function envelopeCreateForPayload(
+  payload: Buffer | Uint8Array | string,
+  mimeType: string = URL_ENVELOPE_MIME
+) {
+  const buf = typeof payload === "string" ? Buffer.from(payload, "utf8") : payload;
+  const art = createEnvelopeArtifacts(buf);
+  return {
+    create: {
+      // Buffer ⇆ Prisma Bytes input: cast matches the `createMedia` factory.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bytes: art.bytes as any,
+      mimeType,
+      wrappedDek: art.wrappedDek,
+    },
+  };
+}
+
+/** Shorthand for the common url-media case (payload = the source URL string). */
+export function envelopeCreateForUrl(url: string) {
+  return envelopeCreateForPayload(url, URL_ENVELOPE_MIME);
+}
 
 // ── base64 / base64url ────────────────────────────────────────────────
 

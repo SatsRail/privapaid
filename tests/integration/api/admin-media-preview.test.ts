@@ -19,6 +19,7 @@ vi.mock("@/lib/auth-helpers", () => ({
 import { GET } from "@/app/api/admin/media/[id]/preview/route";
 import { prisma } from "@/lib/prisma";
 import { createChannel } from "../../helpers/factories";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 function buildReq(id: string): NextRequest {
   return new NextRequest(new URL(`http://localhost:3000/api/admin/media/${id}/preview`));
@@ -68,7 +69,7 @@ describe("GET /api/admin/media/[id]/preview", () => {
         ref: 7777,
         channelId: channel.id,
         name: "Preview Me",
-        blob: { kind: "url", url: "https://example.com/sample.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/sample.mp4"),
         mediaType: "video",
         position: 1,
       },

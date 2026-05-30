@@ -54,7 +54,7 @@ interface PaymentWallProps {
   }) => void;
   thumbnailUrl?: string;
   mediaType: string;
-  /** For envelope-encrypted media (photo, article): EncryptedEnvelope row id. */
+  /** The media's MediaEnvelope row id (every media has exactly one). */
   envelopeId?: string;
   merchantLogo?: string;
   merchantName?: string;
@@ -187,20 +187,22 @@ export default function PaymentWall({
     [mediaId]
   );
 
-  // Unwrap encrypted content into displayable bytes. For url-backed media this
-  // is a single AES-GCM decrypt. For envelope-encrypted media (photo, article)
-  // the encrypted blob holds a DEK: unwrap the DEK with the product key, fetch
-  // the ciphertext from the envelope route, then decrypt with the DEK.
+  // Unwrap encrypted content into displayable bytes. Every media uses the same
+  // two-step flow: the encrypted blob holds the per-media DEK — unwrap it with
+  // the product key, fetch the ciphertext from the envelope route, then decrypt
+  // with the DEK. For url media the decrypted payload is the source URL string;
+  // for photo/article it's the content bytes (ContentRenderer branches on type).
   const resolveContent = useCallback(
     async (encryptedBlob: string, key: string, productId: string): Promise<Uint8Array> => {
+      // Step 1: unwrap the per-media DEK with the product key (AAD = productId).
       const inner = await decryptBlob(encryptedBlob, key, productId);
-      if (mediaType !== "photo" && mediaType !== "article") return inner;
       if (!envelopeId) {
-        throw new Error(`${mediaType} media is missing its envelope id`);
+        throw new Error("media is missing its envelope id");
       }
-      // `inner` is the UTF-8 bytes of the base64url DEK; decode it back to 32 raw bytes.
+      // `inner` is the UTF-8 bytes of the base64url DEK; decode it to 32 raw bytes.
       const dekBase64url = new TextDecoder().decode(inner);
       const dekBytes = base64urlToBytes(dekBase64url);
+      // Step 2: fetch the envelope ciphertext and decrypt it with the DEK.
       const res = await fetch(`/api/envelopes/${envelopeId}`);
       if (!res.ok) {
         throw new Error(`Failed to fetch encrypted envelope: ${res.status}`);
@@ -208,7 +210,7 @@ export default function PaymentWall({
       const ciphertext = new Uint8Array(await res.arrayBuffer());
       return decryptBytesWithKey(ciphertext, dekBytes);
     },
-    [mediaType, envelopeId]
+    [envelopeId]
   );
 
   // Decryption effect: whenever access becomes active, attempt to decrypt

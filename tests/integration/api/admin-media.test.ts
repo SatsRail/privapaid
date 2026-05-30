@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createMediaProduct, createChannelProduct, findMediaProducts, findFirstMediaProduct } from "../../helpers/factories";
+import { createMedia, createMediaProduct, createChannelProduct, findMediaProducts, findFirstMediaProduct } from "../../helpers/factories";
 import { mockSatsrailClient } from "../../helpers/mocks/satsrail";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
+import { decryptEnvelopePayload, createEnvelopeArtifacts } from "@/lib/media-envelope";
 
 // Mocks — MUST be before route imports
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: vi.fn().mockResolvedValue(null) }));
@@ -14,7 +16,11 @@ vi.mock("@/lib/auth-helpers", () => ({
 }));
 vi.mock("@/lib/satsrail", () => ({ satsrail: mockSatsrailClient }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue("sk_test_key") }));
-vi.mock("@/lib/content-encryption", () => ({
+// Keep the real encryptBytes/decryptBytes so the createMedia factory + envelope
+// helpers (which mint real MediaEnvelope ciphertext) still work; only spy on the
+// URL/DEK wrappers exercised by the routes.
+vi.mock("@/lib/content-encryption", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/content-encryption")>()),
   encryptSourceUrl: vi.fn().mockReturnValue("encrypted_blob_base64"),
   decryptSourceUrl: vi.fn().mockReturnValue("https://example.com/video.mp4"),
 }));
@@ -22,7 +28,10 @@ vi.mock("@/lib/content-encryption", () => ({
 const { mockWrapDekFromBase64url } = vi.hoisted(() => ({
   mockWrapDekFromBase64url: vi.fn().mockReturnValue("kek-wrapped-dek-blob"),
 }));
-vi.mock("@/lib/content-dek", () => ({
+// Keep the real wrapDek/unwrapDek (factory + envelope decrypt need them); only
+// spy on wrapDekFromBase64url.
+vi.mock("@/lib/content-dek", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/content-dek")>()),
   wrapDekFromBase64url: mockWrapDekFromBase64url,
 }));
 
@@ -77,7 +86,7 @@ describe("Admin Media API", () => {
         ref: nextRef(),
         channelId: chId,
         name: "Test Video",
-        blob: { kind: "url", url: "https://example.com/video.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/video.mp4"),
         mediaType: "video",
         position: 1,
         ...overrides,
@@ -222,12 +231,24 @@ describe("Admin Media API", () => {
       expect(body.error).toBe("Channel not found");
     });
 
-    it("persists KEK-wrapped DEK on Media for photo + dek payload", async () => {
+    it("links the pre-staged photo envelope to the new Media (photo + dek payload)", async () => {
       const chId = await seedChannel();
+      // Photo bytes were already uploaded via /api/admin/photos, creating a
+      // staged (mediaId-null) MediaEnvelope. create-media links it by id.
+      const art = createEnvelopeArtifacts(Buffer.from("PHOTO BYTES"));
+      const staged = await prisma.mediaEnvelope.create({
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: art.bytes as any,
+          mimeType: "image/jpeg",
+          wrappedDek: art.wrappedDek,
+        },
+      });
+
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: chId,
         name: "New Photo",
-        source_url: "gridfs:photo-id",
+        source_url: staged.id, // the staged envelope id
         media_type: "photo",
         dek: "raw-dek-base64url",
       });
@@ -235,35 +256,32 @@ describe("Admin Media API", () => {
       const body = await res.json();
 
       expect(res.status).toBe(201);
-      expect(mockWrapDekFromBase64url).toHaveBeenCalledWith("raw-dek-base64url");
 
-      // The persisted doc should carry the wrapped DEK in Media.blob.
-      const persisted = await prisma.media.findUnique({ where: { id: body.data.id ?? body.data._id } });
-      const blob = persisted?.blob as { kind: string; encryptedDek?: string };
-      expect(blob.kind).toBe("photo");
-      expect(blob.encryptedDek).toBe("kek-wrapped-dek-blob");
+      // The staged envelope is now linked to the created Media (mediaId set);
+      // nothing is stored on a (now-removed) Media.blob.
+      const mediaId = body.data.id ?? body.data._id;
+      const linked = await prisma.mediaEnvelope.findUnique({ where: { id: staged.id } });
+      expect(linked!.mediaId).toBe(mediaId);
+      // Exactly one envelope for the media.
+      const envForMedia = await prisma.mediaEnvelope.findUnique({ where: { mediaId } });
+      expect(envForMedia!.id).toBe(staged.id);
     });
 
-    it("photo creation rejects with 422 when KEK wrapping throws (DEK is required)", async () => {
+    it("photo creation rejects with 422 when the DEK is missing", async () => {
       const chId = await seedChannel();
-      mockWrapDekFromBase64url.mockImplementationOnce(() => {
-        throw new Error("CONTENT_KEK is not set");
-      });
 
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: chId,
         name: "Failing Photo",
         source_url: "gridfs:photo-id",
         media_type: "photo",
-        dek: "raw-dek-base64url",
+        // no dek — the route requires it for photo media.
       });
       const res = await createMediaRoute(req);
       const body = await res.json();
 
-      // The new media route refuses to persist a photo without a usable DEK
-      // (the blob's `encryptedDek` is a required field in the JSONB shape).
       expect(res.status).toBe(422);
-      expect(body.error).toContain("Failed to KEK-wrap photo DEK");
+      expect(body.error).toMatch(/dek is required/);
     });
 
     it("does not call the DEK wrapper for non-photo media", async () => {
@@ -320,13 +338,13 @@ describe("Admin Media API", () => {
       const res = await createMediaRoute(req);
       expect(res.status).toBe(201);
 
-      // Both channel-scoped Products should get a MediaEncryptedBlob entry for
+      // Both channel-scoped Products should get a MediaProduct entry for
       // the new media.
       const cps = await prisma.product.findMany({
         where: { channelId: chId },
-        include: { mediaEncryptedBlobs: true },
+        include: { mediaProducts: true },
       });
-      const allEncrypted = cps.flatMap((cp) => cp.mediaEncryptedBlobs);
+      const allEncrypted = cps.flatMap((cp) => cp.mediaProducts);
       expect(allEncrypted).toHaveLength(2);
     });
 
@@ -340,10 +358,21 @@ describe("Admin Media API", () => {
       mockSatsrailClient.getProductKey.mockResolvedValue({ key: "0".repeat(64) });
       const { encryptSourceUrl } = await import("@/lib/content-encryption");
 
+      // Stage the photo envelope first (as /api/admin/photos would).
+      const art = createEnvelopeArtifacts(Buffer.from("PHOTO BYTES"));
+      const staged = await prisma.mediaEnvelope.create({
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: art.bytes as any,
+          mimeType: "image/jpeg",
+          wrappedDek: art.wrappedDek,
+        },
+      });
+
       const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
         channel_id: chId,
         name: "Photo With DEK",
-        source_url: "gridfs:photo-zzz",
+        source_url: staged.id,
         media_type: "photo",
         dek: "rawdekbase64url",
       });
@@ -473,8 +502,11 @@ describe("Admin Media API", () => {
       });
       expect(thumb!.externalUrl).toBe("https://example.com/thumb.jpg");
       expect(m!.position).toBe(42);
-      const updatedBlob = m!.blob as { kind: string; url?: string };
-      expect(updatedBlob.url).toBe("https://example.com/different.mp4");
+      // The source_url change re-encrypts the media's envelope bytes in place.
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId } });
+      expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe(
+        "https://example.com/different.mp4"
+      );
     });
 
     it("claims an uploaded thumbnail_id as a byte-backed MediaImage", async () => {
@@ -524,7 +556,7 @@ describe("Admin Media API", () => {
       expect(previews.map((p) => p.position)).toEqual([0, 1, 2]);
     });
 
-    it("re-encrypts MediaProduct + ChannelProduct blobs when sourceUrl changes", async () => {
+    it("re-encrypts only the envelope bytes on sourceUrl change; per-product blobs stay valid", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
@@ -547,11 +579,16 @@ describe("Admin Media API", () => {
       const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
       expect(res.status).toBe(200);
 
-      // Both blobs should be re-encrypted with the mocked encryptSourceUrl
+      // The envelope bytes now decrypt to the NEW url (re-encrypted under the
+      // SAME DEK). The DEK is unchanged, so the per-product blobs are untouched.
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId } });
+      expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe(
+        "https://example.com/new-source.mp4"
+      );
       const updatedMp = await findFirstMediaProduct({ mediaId });
-      expect(updatedMp!.encryptedSource).toBe("encrypted_blob_base64");
-      const updatedCp = await prisma.mediaEncryptedBlob.findFirst({ where: { productId: cp.id, mediaId } });
-      expect(updatedCp!.encryptedSource).toBe("encrypted_blob_base64");
+      expect(updatedMp!.encryptedSource).toBe("old_blob");
+      const updatedCp = await prisma.mediaProduct.findFirst({ where: { productId: cp.id, mediaId } });
+      expect(updatedCp!.encryptedDek).toBe("old_ch_blob");
     });
 
     it("skips re-encryption when sourceUrl is unchanged", async () => {
@@ -578,7 +615,7 @@ describe("Admin Media API", () => {
       expect(mp!.encryptedSource).toBe("unchanged_blob");
     });
 
-    it("re-encrypt swallows errors when getMerchantKey returns null", async () => {
+    it("source_url change does not touch SatsRail or the merchant key (envelope-only re-encrypt)", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
@@ -588,23 +625,21 @@ describe("Admin Media API", () => {
           encryptedSource: "old_blob",
         });
 
-      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
-
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
         source_url: "https://example.com/changed.mp4",
       });
       const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
       expect(res.status).toBe(200);
 
-      // Should not have called getProductKey since sk is null
+      // The DEK is stable, so no SatsRail key fetch is needed at all.
       expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
 
-      // MediaProduct blob unchanged
+      // MediaProduct blob unchanged (only the envelope bytes were re-encrypted).
       const mp = await findFirstMediaProduct({ mediaId });
       expect(mp!.encryptedSource).toBe("old_blob");
     });
 
-    it("re-encrypt catches and logs errors from satsrail.getProductKey", async () => {
+    it("source_url change succeeds without invoking satsrail.getProductKey", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
 
@@ -614,14 +649,15 @@ describe("Admin Media API", () => {
           encryptedSource: "old_blob",
         });
 
+      // Even if getProductKey would throw, the PATCH source_url path never calls it.
       mockSatsrailClient.getProductKey.mockRejectedValue(new Error("SatsRail timeout"));
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "PATCH", {
         source_url: "https://example.com/diff.mp4",
       });
-      // Should still succeed even though re-encrypt fails
       const res = await updateMedia(req, { params: Promise.resolve({ id: mediaId }) });
       expect(res.status).toBe(200);
+      expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
     });
 
     it("returns 400 when validation fails (invalid media_type)", async () => {
@@ -722,9 +758,9 @@ describe("Admin Media API", () => {
 
       const updated = await prisma.product.findUnique({
         where: { id: cp.id },
-        include: { mediaEncryptedBlobs: true },
+        include: { mediaProducts: true },
       });
-      expect(updated!.mediaEncryptedBlobs).toHaveLength(0);
+      expect(updated!.mediaProducts).toHaveLength(0);
     });
 
     it("archives associated MediaProduct on SatsRail and removes the local record", async () => {
@@ -846,26 +882,16 @@ describe("Admin Media API", () => {
       expect(mockSatsrailClient.deleteProduct).not.toHaveBeenCalled();
     });
 
-    it("removes the encrypted photo blob row when deleting photo media", async () => {
+    it("removes the linked MediaEnvelope (cascade) when deleting photo media", async () => {
       const chId = await seedChannel();
-      const blob = await prisma.encryptedEnvelope.create({
-        data: { bytes: Buffer.from("photo-bytes"), mimeType: "image/jpeg" },
+      const photoMedia = await createMedia(chId, {
+        name: "Photo",
+        mediaType: "photo",
+        sourceUrl: "gridfs:photo-bytes",
       });
-      const photoMedia = await prisma.media.create({
-        data: {
-          ref: nextRef(),
-          channelId: chId,
-          name: "Photo",
-          description: "",
-          blob: {
-            kind: "photo",
-            envelopeId: blob.id,
-            encryptedDek: "test_dek",
-            mimeType: "image/jpeg",
-          },
-          mediaType: "photo",
-          position: 1,
-        },
+      const envelope = await prisma.mediaEnvelope.findUnique({
+        where: { mediaId: photoMedia.id },
+        select: { id: true },
       });
 
       const req = jsonRequest(
@@ -877,35 +903,42 @@ describe("Admin Media API", () => {
       });
       expect(res.status).toBe(200);
 
-      // EncryptedEnvelope cleanup happened
-      const remaining = await prisma.encryptedEnvelope.findUnique({ where: { id: blob.id } });
+      // The media's envelope is removed via the onDelete: Cascade FK.
+      const remaining = await prisma.mediaEnvelope.findUnique({ where: { id: envelope!.id } });
       expect(remaining).toBeNull();
     });
 
-    it("non-photo media delete does NOT touch encrypted photo blobs", async () => {
+    it("deleting one media does NOT touch an unrelated envelope", async () => {
       const chId = await seedChannel();
-      const blob = await prisma.encryptedEnvelope.create({
-        data: { bytes: Buffer.from("photo-bytes"), mimeType: "image/jpeg" },
+      // A standalone (mediaId-null) envelope unrelated to the media we delete.
+      const art = createEnvelopeArtifacts(Buffer.from("photo-bytes"));
+      const unrelated = await prisma.mediaEnvelope.create({
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: art.bytes as any,
+          mimeType: "image/jpeg",
+          wrappedDek: art.wrappedDek,
+        },
       });
       const mediaId = await seedMedia(chId);
 
       const req = jsonRequest(`http://localhost:3000/api/admin/media/${mediaId}`, "DELETE");
       await deleteMedia(req, { params: Promise.resolve({ id: mediaId }) });
 
-      // The unrelated blob still exists
-      const remaining = await prisma.encryptedEnvelope.findUnique({ where: { id: blob.id } });
+      // The unrelated envelope still exists
+      const remaining = await prisma.mediaEnvelope.findUnique({ where: { id: unrelated.id } });
       expect(remaining).not.toBeNull();
     });
 
-    it("photo media delete tolerates missing blob row (logs, does not fail the request)", async () => {
+    it("photo media delete tolerates a missing envelope (does not fail the request)", async () => {
       const chId = await seedChannel();
+      // A photo media with NO linked envelope (edge state) — delete must still work.
       const photoMedia = await prisma.media.create({
         data: {
           ref: nextRef(),
           channelId: chId,
           name: "PhotoBroken",
           description: "",
-          blob: { kind: "url", url: "missing-blob-id" },
           mediaType: "photo",
           position: 1,
         },
@@ -918,13 +951,13 @@ describe("Admin Media API", () => {
       const res = await deleteMedia(req, {
         params: Promise.resolve({ id: photoMedia.id }),
       });
-      // The DELETE still succeeds — orphan bytes are a soft failure
+      // The DELETE still succeeds — a missing envelope is a soft failure
       expect(res.status).toBe(200);
       const stillThere = await prisma.media.findUnique({ where: { id: photoMedia.id } });
       expect(stillThere).toBeNull();
     });
 
-    it("photo media with non-blob-id sourceUrl is skipped without error", async () => {
+    it("url media without an envelope deletes cleanly", async () => {
       const chId = await seedChannel();
       const photoMedia = await prisma.media.create({
         data: {
@@ -932,7 +965,6 @@ describe("Admin Media API", () => {
           channelId: chId,
           name: "PhotoLegacy",
           description: "",
-          blob: { kind: "url", url: "legacy-non-blob-id-string" },
           mediaType: "photo",
           position: 1,
         },

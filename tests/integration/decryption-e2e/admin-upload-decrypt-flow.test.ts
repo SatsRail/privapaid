@@ -69,7 +69,7 @@ import { NextRequest } from "next/server";
 import { POST as adminPhotosPOST } from "@/app/api/admin/photos/route";
 import { POST as adminMediaPOST } from "@/app/api/admin/media/route";
 import { POST as createProductPOST } from "@/app/api/admin/media/[id]/create-product/route";
-import { createChannel } from "../../helpers/factories";
+import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -151,8 +151,8 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     ].join("\n");
 
     // POST through /api/admin/media so the server-side envelope-encryption path
-    // for articles fires (generates DEK, writes EncryptedEnvelope, wraps DEK
-    // under CONTENT_KEK).
+    // for articles fires (generates DEK, writes the MediaEnvelope bytes, wraps
+    // the DEK under CONTENT_KEK).
     const createReq = buildJsonRequest(
       "http://localhost:3000/api/admin/media",
       {
@@ -167,17 +167,14 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const createJson = (await createRes.json()) as { data: { _id: string } };
     const mediaId = createJson.data._id;
 
-    // Verify envelope-shaped blob landed on Media.blob.
-    const media = await prisma.media.findUnique({ where: { id: mediaId } });
-    const blobShape = media!.blob as {
-      kind: string;
-      envelopeId: string;
-      encryptedDek: string;
-      mimeType: string;
-    };
-    expect(blobShape.kind).toBe("article");
-    expect(blobShape.envelopeId).toBeTruthy();
-    expect(blobShape.encryptedDek).toBeTruthy();
+    // Verify the media's MediaEnvelope was created with ciphertext + wrappedDek.
+    const envelopeRow = await prisma.mediaEnvelope.findUnique({
+      where: { mediaId },
+      select: { id: true, bytes: true, wrappedDek: true, mimeType: true },
+    });
+    expect(envelopeRow).not.toBeNull();
+    expect(envelopeRow!.mimeType).toContain("text/markdown");
+    expect(envelopeRow!.wrappedDek).toBeTruthy();
 
     // Create the product over this article — the per-product blob wraps the
     // raw DEK (recovered via CONTENT_KEK), not the markdown.
@@ -205,8 +202,8 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const dekBytes = base64urlToBytes(dekBase64url);
 
     // Step 2: fetch the envelope ciphertext, decrypt with the DEK, expect markdown.
-    const envelope = await prisma.encryptedEnvelope.findUnique({
-      where: { id: blobShape.envelopeId },
+    const envelope = await prisma.mediaEnvelope.findUnique({
+      where: { mediaId },
       select: { bytes: true },
     });
     const recovered = await clientDecryptBytesWithKey(
@@ -267,14 +264,14 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     expect(typeof uploadBody.dek).toBe("string");
     expect(uploadBody.mime).toBe("image/png");
 
-    // Find the blob that was created
-    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
+    // Find the envelope that was created
+    const blob = await prisma.mediaEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     expect(blob).not.toBeNull();
     const ciphertext = Buffer.from(blob!.bytes);
     expect(ciphertext.equals(originalPhoto)).toBe(false);
     expect(ciphertext.length).toBe(originalPhoto.length + 12 + 16);
 
-    // Step 2 — register the Media (photo) pointing at the blob id.
+    // Step 2 — register the Media (photo) and link the staged envelope to it.
     const channel = await createChannel({
       slug: "showcase-photo-e2e",
       satsrailProductTypeId: "pt_photo",
@@ -284,17 +281,13 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 3,
         channelId: channel.id,
         name: "Photo",
-        blob: {
-          kind: "photo",
-          envelopeId: blob!.id,
-          encryptedDek: "test_kek_wrapped_dek",
-          mimeType: "image/png",
-        },
         mediaType: "photo",
+        envelope: { connect: { id: blob!.id } },
       },
     });
 
-    // Step 3 — POST /api/admin/media/[id]/create-product with the DEK.
+    // Step 3 — POST /api/admin/media/[id]/create-product. The route recovers the
+    // DEK from the envelope's wrappedDek (the `dek` field is no longer read).
     const cpReq = buildJsonRequest(
       `http://localhost:3000/api/admin/media/${media.id}/create-product`,
       {
@@ -350,7 +343,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const uploadRes = await adminPhotosPOST(buildFormRequest(file));
     const uploadBody = await uploadRes.json();
 
-    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
+    const blob = await prisma.mediaEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     const channel = await createChannel({
       slug: "showcase-photo-wrongkey",
       satsrailProductTypeId: "pt_photo2",
@@ -360,13 +353,8 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
         ref: 4,
         channelId: channel.id,
         name: "Photo Wrong Key",
-        blob: {
-          kind: "photo",
-          envelopeId: blob!.id,
-          encryptedDek: "test_kek_wrapped_dek",
-          mimeType: "image/png",
-        },
         mediaType: "photo",
+        envelope: { connect: { id: blob!.id } },
       },
     });
     const cpReq = buildJsonRequest(
@@ -400,7 +388,7 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
     const file = new File([originalPhoto], "photo.png", { type: "image/png" });
     await adminPhotosPOST(buildFormRequest(file));
 
-    const blob = await prisma.encryptedEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
+    const blob = await prisma.mediaEnvelope.findFirst({ orderBy: { createdAt: "desc" } });
     const ciphertext = Buffer.from(blob!.bytes);
     const wrongDek = randomBytes(32);
     await expect(
@@ -414,14 +402,11 @@ describe("Admin upload → store → decrypt with fake portal key", () => {
       slug: "fp-check",
       satsrailProductTypeId: "pt_fp",
     });
-    const media = await prisma.media.create({
-      data: {
-        ref: 5,
-        channelId: channel.id,
-        name: "Fingerprint check",
-        blob: { kind: "url", url: "irrelevant body" },
-        mediaType: "article",
-      },
+    const media = await createMedia(channel.id, {
+      ref: 5,
+      name: "Fingerprint check",
+      mediaType: "article",
+      sourceUrl: "irrelevant body",
     });
     const req = buildJsonRequest(
       `http://localhost:3000/api/admin/media/${media.id}/create-product`,

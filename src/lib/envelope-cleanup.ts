@@ -30,15 +30,15 @@ export interface CleanupResult {
 }
 
 /**
- * Scan the EncryptedEnvelope table and remove any ciphertext row that has no
- * `Media` row pointing at it. Photo and article media types both store the
- * envelope id in `Media.blob.envelopeId`. Skips rows younger than `graceMs`
- * so an in-progress upload isn't deleted out from under the admin before
- * they finish creating the Media row + first product wrap.
+ * Scan the MediaEnvelope table for unlinked rows (mediaId IS NULL) and remove
+ * them. A linked envelope (mediaId set) is the live content for its Media; an
+ * unlinked one is a staged photo upload whose Media was never created. Skips
+ * rows younger than `graceMs` so an in-progress upload isn't deleted before the
+ * admin finishes creating the Media row + first product wrap.
  *
- * Why this matters: the upload endpoint persists ciphertext before the admin
- * has committed to creating a Media row. If the admin abandons the flow, the
- * bytes stay forever. They're unrecoverable without the DEK (which was never
+ * Why this matters: /api/admin/photos persists ciphertext before the admin has
+ * committed to creating a Media row. If the admin abandons the flow, the bytes
+ * stay forever. They're unrecoverable without the DEK (the raw DEK was never
  * persisted), so they're not a security risk — just dead storage.
  */
 export async function cleanupOrphanEnvelopes(
@@ -64,28 +64,17 @@ export async function cleanupOrphanEnvelopes(
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       orderBy: { id: "asc" as const },
+      where: { mediaId: null },
       select: { id: true, createdAt: true },
     };
     const batch: Array<{ id: string; createdAt: Date }> =
-      await prisma.encryptedEnvelope.findMany(args);
+      await prisma.mediaEnvelope.findMany(args);
     if (batch.length === 0) break;
     cursor = batch[batch.length - 1].id;
 
     for (const envelope of batch) {
+      // Only unlinked rows reach here (mediaId IS NULL), so every one is orphaned.
       result.scanned++;
-
-      const referenced = await prisma.media.findFirst({
-        where: {
-          mediaType: { in: ["photo", "article"] },
-          blob: { path: ["envelopeId"], equals: envelope.id },
-        },
-        select: { id: true },
-      });
-      if (referenced) {
-        result.referenced++;
-        continue;
-      }
-
       result.orphaned++;
 
       const uploadedAt = envelope.createdAt.getTime();
@@ -97,7 +86,7 @@ export async function cleanupOrphanEnvelopes(
       if (dryRun) continue;
 
       try {
-        await prisma.encryptedEnvelope.delete({ where: { id: envelope.id } });
+        await prisma.mediaEnvelope.delete({ where: { id: envelope.id } });
         result.deleted++;
       } catch (err) {
         const message = err instanceof Error ? err.message : "unknown error";

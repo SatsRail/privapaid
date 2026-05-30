@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 /**
  * Owner-only manual reset of the Part B decrypt-error flag. The flag normally
@@ -67,7 +68,7 @@ describe("Admin media status reset — POST /api/admin/media/[id]/status", () =>
         ref: nextRef(),
         channelId: channel.id,
         name: "Flagged Media",
-        blob: { kind: "url", url: "https://example.com/v.mp4" },
+        envelope: envelopeCreateForUrl("https://example.com/v.mp4"),
         mediaType: "video",
         status,
         ...(reason ? { statusReason: reason, statusChangedAt: new Date() } : {}),

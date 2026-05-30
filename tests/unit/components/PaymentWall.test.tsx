@@ -136,6 +136,10 @@ const defaultProps = {
   onAccessClaim: () => {},
   thumbnailUrl: "https://example.com/thumb.jpg",
   mediaType: "video",
+  // Every media now resolves content via the uniform two-step: decrypt the
+  // product blob → DEK → fetch this envelope → decrypt its bytes. The default
+  // fetch (in beforeEach) serves ciphertext for /api/envelopes/<id>.
+  envelopeId: "env-default",
 };
 
 /**
@@ -185,6 +189,10 @@ function setupFreshPaymentScenario(
     if (url === "/api/macaroons" && init?.method === "POST") {
       return { ok: true, json: async () => ({}) };
     }
+    // The uniform two-step content resolve fetches the envelope ciphertext.
+    if (url.startsWith("/api/envelopes/")) {
+      return { ok: true, arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer };
+    }
     return undefined; // fall through to 404
   });
 }
@@ -198,8 +206,18 @@ describe("PaymentWall", () => {
     mockVerifyKeyFingerprint.mockResolvedValue(true);
     mockLocale = "en";
 
-    // Default: all fetches fail. Tests that need success paths override via mockFetch.
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) });
+    // Default: envelope ciphertext fetches succeed (every media now resolves
+    // content via the two-step decrypt → envelope fetch). All OTHER fetches
+    // fail; tests that need those success paths override via mockFetch.
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.startsWith("/api/envelopes/")) {
+        return Promise.resolve({
+          ok: true,
+          arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer,
+        });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) });
+    });
   });
 
   // -------------------------------------------------------
@@ -1082,12 +1100,15 @@ describe("PaymentWall", () => {
         if (url === "/api/macaroons" && init?.method === "POST") {
           return { ok: false, status: 503, json: async () => ({ error: "down" }) };
         }
+        // Content resolution (uniform two-step) fetches the envelope ciphertext.
+        if (url.startsWith("/api/envelopes/")) {
+          return { ok: true, arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer };
+        }
         return { ok: false, status: 404, json: async () => ({}) };
       });
 
-      // Use url-backed media (video) so this test focuses on the macaroon
-      // side-channel without needing an envelope-fetch mock for the
-      // decrypt step.
+      // url-backed media (video) — the macaroon side-channel is what's under
+      // test; content resolution succeeds via the envelope mock above.
       render(<StatefulPaymentWall {...defaultProps} mediaType="video" />);
       await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
       await user.click(screen.getAllByText(/HD Video/)[0]);

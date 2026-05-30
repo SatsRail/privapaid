@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
 
 export async function createCategory(overrides: Partial<{
   name: string;
@@ -56,29 +57,34 @@ export async function createMedia(
 ) {
   const { sourceUrl, blob, mediaType, ...rest } = overrides;
   const finalType = mediaType ?? "video";
-  const finalBlob =
-    blob ??
-    (finalType === "article"
-      ? {
-          kind: "article",
-          envelopeId: sourceUrl ?? "envelope_test",
-          encryptedDek: "test_encrypted_dek",
-          mimeType: "text/markdown; charset=utf-8",
-        }
+  // Media.blob no longer exists; every media has one MediaEnvelope holding its
+  // encrypted payload. Accept a legacy `{ url }` blob for caller convenience.
+  const payload =
+    sourceUrl ??
+    (blob && typeof blob === "object" && blob !== null && "url" in blob
+      ? (blob as { url?: string }).url
+      : undefined) ??
+    "https://example.com/video.mp4";
+  const mimeType =
+    finalType === "article"
+      ? "text/markdown; charset=utf-8"
       : finalType === "photo"
-        ? {
-            kind: "photo",
-            envelopeId: sourceUrl ?? "envelope_test",
-            encryptedDek: "test_encrypted_dek",
-            mimeType: "image/jpeg",
-          }
-        : { kind: "url", url: sourceUrl ?? "https://example.com/video.mp4" });
+        ? "image/jpeg"
+        : URL_ENVELOPE_MIME;
+  const art = createEnvelopeArtifacts(Buffer.from(payload, "utf8"));
   return prisma.media.create({
     data: {
       channelId,
       name: "Test Media",
       mediaType: finalType,
-      blob: finalBlob as object,
+      envelope: {
+        create: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          bytes: art.bytes as any,
+          mimeType,
+          wrappedDek: art.wrappedDek,
+        },
+      },
       ...rest,
     },
   });
@@ -130,7 +136,7 @@ export async function createWebhookEvent(
  * Tests written against the legacy `MediaProduct` model expect a single row
  * carrying both the cached product fields (productName, satsrailProductId,
  * etc.) and the ciphertext (encryptedSource, keyFingerprint). This helper
- * joins `Product` + its `MediaEncryptedBlob` and returns the combined shape
+ * joins `Product` + its `MediaProduct` and returns the combined shape
  * so those expectations keep reading naturally.
  */
 type MediaProductRowView = {
@@ -167,19 +173,19 @@ function flatten(
     keyFingerprint: string | null;
     createdAt: Date;
     updatedAt: Date;
-    mediaEncryptedBlobs?: Array<{
-      encryptedSource: string;
+    mediaProducts?: Array<{
+      encryptedDek: string;
       keyFingerprint: string | null;
     }>;
   } | null
 ): MediaProductRowView | null {
   if (!product || !product.mediaId) return null;
-  const blob = product.mediaEncryptedBlobs?.[0];
+  const blob = product.mediaProducts?.[0];
   return {
     id: product.id,
     mediaId: product.mediaId,
     satsrailProductId: product.satsrailProductId,
-    encryptedSource: blob?.encryptedSource ?? "",
+    encryptedSource: blob?.encryptedDek ?? "",
     keyFingerprint: blob?.keyFingerprint ?? product.keyFingerprint,
     productName: product.productName,
     productPriceCents: product.productPriceCents,
@@ -201,7 +207,7 @@ export async function findMediaProducts(where: { mediaId?: string; satsrailProdu
       ...where,
       mediaId: where.mediaId ?? { not: null },
     },
-    include: { mediaEncryptedBlobs: true },
+    include: { mediaProducts: true },
   });
   return products.map((p) => flatten(p)).filter((v): v is MediaProductRowView => v !== null);
 }
@@ -213,7 +219,7 @@ export async function findFirstMediaProduct(where: { mediaId?: string; satsrailP
       ...where,
       mediaId: where.mediaId ?? { not: null },
     },
-    include: { mediaEncryptedBlobs: true },
+    include: { mediaProducts: true },
   });
   return flatten(product);
 }
@@ -228,7 +234,7 @@ export async function countChannelProducts(): Promise<number> {
   return prisma.product.count({ where: { channelId: { not: null } } });
 }
 
-// ── Product + MediaEncryptedBlob test helpers ──────────────────────
+// ── Product + MediaProduct test helpers ──────────────────────
 //
 // These wrap the new schema so tests can keep their legacy-shaped intent
 // (`createMediaProduct(...)`, `createChannelProduct(...)`) without
@@ -247,7 +253,7 @@ interface CachedProductFields {
 }
 
 /**
- * Create a media-scoped Product (mediaId set) + its single MediaEncryptedBlob.
+ * Create a media-scoped Product (mediaId set) + its single MediaProduct.
  * Matches the old `prisma.mediaProduct.create` call signature where the
  * cached fields lived alongside the encryptedSource on one row.
  */
@@ -275,11 +281,11 @@ export async function createMediaProduct(
         ...cached,
       },
     });
-    await tx.mediaEncryptedBlob.create({
+    await tx.mediaProduct.create({
       data: {
         productId: product.id,
         mediaId,
-        encryptedSource,
+        encryptedDek: encryptedSource,
         keyFingerprint: keyFingerprint ?? null,
       },
     });
@@ -288,7 +294,7 @@ export async function createMediaProduct(
 }
 
 /**
- * Create a channel-scoped Product (channelId set) + N MediaEncryptedBlob rows.
+ * Create a channel-scoped Product (channelId set) + N MediaProduct rows.
  * Matches the old `prisma.channelProduct.create` call where `encryptedMedia.create`
  * was the nested writer.
  */
@@ -317,10 +323,10 @@ export async function createChannelProduct(
       satsrailProductId,
       keyFingerprint: keyFingerprint ?? null,
       ...cached,
-      mediaEncryptedBlobs: {
+      mediaProducts: {
         create: encryptedMedia.map((em) => ({
           mediaId: em.mediaId,
-          encryptedSource: em.encryptedSource,
+          encryptedDek: em.encryptedSource,
           keyFingerprint: em.keyFingerprint ?? keyFingerprint ?? null,
         })),
       },

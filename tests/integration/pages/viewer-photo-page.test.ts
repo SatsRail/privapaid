@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
+import { createChannel, createMedia } from "../../helpers/factories";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
 
 /**
- * The viewer media page surfaces `Media.blob.envelopeId` to the client only when
- * `mediaType === "photo"` — for other types the blob (URL / markdown) is the
- * plaintext and must stay server-side. These tests assert that conditional.
+ * Every media now owns exactly one MediaEnvelope. The viewer page surfaces
+ * `envelope_id` to the client UNIFORMLY (for all media kinds) so it can fetch
+ * the ciphertext after unwrapping the DEK — the envelope id is safe to expose
+ * because its bytes are useless without the DEK. The plaintext (URL / markdown /
+ * photo bytes) always stays encrypted inside the envelope, never on the page.
  */
-describe("Viewer page query for photo media", () => {
+describe("Viewer page query for media envelopes", () => {
   beforeAll(async () => {
     await setupTestDB();
   });
@@ -20,124 +24,78 @@ describe("Viewer page query for photo media", () => {
     await clearCollections();
   });
 
-  it("photo media exposes the blobId via Media.blob.envelopeId", async () => {
-    const channel = await prisma.channel.create({
-      data: {
-        ref: 1,
-        slug: "showcase-1",
-        name: "Platform Showcase",
-        active: true,
-      },
-    });
-
-    const envelopeIdValue = "env-id-12345";
-    const media = await prisma.media.create({
-      data: {
-        ref: 1,
-        channelId: channel.id,
-        name: "Lightning in a bottle",
-        mediaType: "photo",
-        blob: {
-          kind: "photo",
-          envelopeId: envelopeIdValue,
-          encryptedDek: "test_dek",
-          mimeType: "image/jpeg",
-        },
-      },
+  it("photo media exposes the envelope id via the envelope relation", async () => {
+    const channel = await createChannel({ slug: "showcase-1", name: "Platform Showcase" });
+    const media = await createMedia(channel.id, {
+      name: "Lightning in a bottle",
+      mediaType: "photo",
+      sourceUrl: "gridfs:photo-bytes",
     });
 
     const fetched = await prisma.media.findFirst({
       where: { id: media.id, channelId: channel.id },
+      select: { id: true, mediaType: true, envelope: { select: { id: true } } },
     });
 
     expect(fetched).not.toBeNull();
     expect(fetched!.mediaType).toBe("photo");
-    const blob = fetched!.blob as { kind: string; envelopeId: string };
-    expect(blob.kind).toBe("photo");
-    expect(blob.envelopeId).toBe(envelopeIdValue);
-
-    // Mirrors the page-level conditional that surfaces envelope_id only
-    // for envelope-encrypted media kinds.
-    const envelopeId =
-      fetched!.mediaType === "photo" ? blob.envelopeId : undefined;
-    expect(envelopeId).toBe(envelopeIdValue);
+    // Mirrors the page-level surfacing: envelope_id = media.envelope?.id.
+    expect(fetched!.envelope).not.toBeNull();
+    expect(typeof fetched!.envelope!.id).toBe("string");
   });
 
-  it("non-photo media's blob plaintext stays server-side via the conditional", async () => {
-    const channel = await prisma.channel.create({
-      data: {
-        ref: 2,
-        slug: "showcase-2",
-        name: "Showcase 2",
-        active: true,
-      },
-    });
-
+  it("non-photo media also exposes an envelope id; the URL stays encrypted server-side", async () => {
+    const channel = await createChannel({ slug: "showcase-2", name: "Showcase 2" });
     const secretUrl = "https://internal.example.com/video.mp4";
-    const media = await prisma.media.create({
-      data: {
-        ref: 3,
-        channelId: channel.id,
-        name: "Some video",
-        mediaType: "video",
-        blob: { kind: "url", url: secretUrl },
-      },
+    const media = await createMedia(channel.id, {
+      name: "Some video",
+      mediaType: "video",
+      sourceUrl: secretUrl,
     });
 
     const fetched = await prisma.media.findFirst({
       where: { id: media.id, channelId: channel.id },
+      select: {
+        id: true,
+        mediaType: true,
+        envelope: { select: { id: true, bytes: true, wrappedDek: true } },
+      },
     });
 
-    // For non-photo media the conditional yields undefined.
-    const envelopeId =
-      fetched!.mediaType === "photo"
-        ? (fetched!.blob as { blobId?: string }).blobId
-        : undefined;
-    expect(envelopeId).toBeUndefined();
-    const blob = fetched!.blob as { kind: string; url?: string };
-    expect(blob.url).toBe(secretUrl);
+    // The envelope id is surfaced uniformly.
+    expect(fetched!.envelope).not.toBeNull();
+    expect(typeof fetched!.envelope!.id).toBe("string");
+    // The plaintext URL is NOT on the page; it only comes back by decrypting the
+    // envelope server-side (admin-only path), proving it stayed encrypted.
+    const recovered = decryptEnvelopePayload({
+      bytes: fetched!.envelope!.bytes,
+      wrappedDek: fetched!.envelope!.wrappedDek,
+    });
+    expect(recovered.toString("utf8")).toBe(secretUrl);
   });
 
-  const NON_PHOTO_TYPES = ["video", "audio", "article", "podcast"] as const;
-  for (const mediaType of NON_PHOTO_TYPES) {
-    it(`does not surface blob plaintext to the client for mediaType=${mediaType}`, async () => {
-      const channel = await prisma.channel.create({
-        data: {
-          ref: 100 + NON_PHOTO_TYPES.indexOf(mediaType),
-          slug: `showcase-${mediaType}`,
-          name: `Showcase ${mediaType}`,
-          active: true,
-        },
-      });
-      const blob =
+  const ALL_TYPES = ["video", "audio", "article", "podcast"] as const;
+  for (const mediaType of ALL_TYPES) {
+    it(`mediaType=${mediaType} surfaces an envelope id without leaking the plaintext`, async () => {
+      const channel = await createChannel({ slug: `showcase-${mediaType}`, name: `Showcase ${mediaType}` });
+      const payload =
         mediaType === "article"
-          ? {
-              kind: "article",
-              envelopeId: `env_${mediaType}_test`,
-              encryptedDek: "test_dek",
-              mimeType: "text/markdown; charset=utf-8",
-            }
-          : { kind: "url", url: `https://internal.example.com/${mediaType}.bin` };
-      const media = await prisma.media.create({
-        data: {
-          ref: 200 + NON_PHOTO_TYPES.indexOf(mediaType),
-          channelId: channel.id,
-          name: `Test ${mediaType}`,
-          mediaType,
-          blob,
-        },
+          ? "# Body\n\nmarkdown"
+          : `https://internal.example.com/${mediaType}.bin`;
+      const media = await createMedia(channel.id, {
+        name: `Test ${mediaType}`,
+        mediaType,
+        sourceUrl: payload,
       });
 
       const fetched = await prisma.media.findFirst({
         where: { id: media.id, channelId: channel.id },
+        select: { id: true, mediaType: true, envelope: { select: { id: true } } },
       });
 
-      // url-backed media has no envelopeId in its blob shape.
-      const envelopeId =
-        fetched!.mediaType === "photo"
-          ? (fetched!.blob as { envelopeId?: string }).envelopeId
-          : undefined;
-      expect(envelopeId).toBeUndefined();
+      // The page only ever exposes the envelope id, never the plaintext bytes.
+      expect(fetched!.envelope).not.toBeNull();
+      expect(typeof fetched!.envelope!.id).toBe("string");
     });
   }
 });

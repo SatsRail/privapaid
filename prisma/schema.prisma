@@ -12,8 +12,9 @@
 //        Base64( IV[12] + ciphertext + auth_tag[16] ), AAD = satsrailProductId.
 //   3. external_ref format `ch_<channel.ref>` / `md_<media.ref>` is opaque to
 //      the portal but must survive unchanged.
-//   4. Media.blob is the plaintext recovery store (admin-only). Key rotation
-//      reads it directly, so rotation doesn't depend on SatsRail's old_key.
+//   4. MediaEnvelope.wrappedDek (the per-media DEK wrapped under CONTENT_KEK)
+//      is the operator recovery store. Key rotation unwraps it directly, so
+//      rotation doesn't depend on SatsRail's old_key. No plaintext at rest.
 
 generator client {
   provider        = "prisma-client-js"
@@ -137,19 +138,6 @@ model Media {
   name            String
   description     String      @default("")
   mediaType       MediaType   @default(video)
-  /// Type-discriminated payload + envelope-encryption pointer. Admin-only —
-  /// public routes MUST omit this field. For url-backed media this is the
-  /// plaintext recovery store; for envelope-backed media (photo, article)
-  /// it carries the wrapped DEK that lets rotation re-encrypt without
-  /// SatsRail's old_key.
-  ///
-  /// Shape (validated by src/lib/schemas/media-blob.ts):
-  ///   video/audio/podcast: { kind: "url",     url: string }
-  ///   photo:               { kind: "photo",   envelopeId, encryptedDek, mimeType }
-  ///   article:             { kind: "article", envelopeId, encryptedDek, mimeType }
-  /// envelopeId points at EncryptedEnvelope.id; encryptedDek is the DEK
-  /// wrapped under CONTENT_KEK.
-  blob            Json
   position        Int         @default(0)
   viewsCount      Int         @default(0)
   likesCount      Int         @default(0)
@@ -166,9 +154,10 @@ model Media {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  channel           Channel              @relation(fields: [channelId], references: [id], onDelete: Restrict)
-  directSaleProduct Product?             @relation("MediaDirectSaleProduct")
-  encryptedBlobs    MediaEncryptedBlob[]
+  channel           Channel        @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  directSaleProduct Product?       @relation("MediaDirectSaleProduct")
+  envelope          MediaEnvelope?
+  mediaProducts     MediaProduct[]
   comments          Comment[]
   images            MediaImage[]
 
@@ -178,20 +167,30 @@ model Media {
   @@index([channelId, status])
 }
 
-/// EncryptedEnvelope — ciphertext-at-rest for envelope-encrypted content
-/// (AES-256-GCM with a per-row DEK). Used by photos and articles. The
-/// owning Media row points here via `Media.blob.envelopeId`. No FKs by
-/// design: rows are staged before the Media row exists at upload time.
-model EncryptedEnvelope {
-  id        String   @id @default(cuid())
-  bytes     Bytes
-  mimeType  String
-  createdAt DateTime @default(now())
+/// MediaEnvelope — ciphertext-at-rest for ALL media content (AES-256-GCM with
+/// a per-media DEK, no AAD). Exactly one per Media: the envelope holds the
+/// encrypted payload — the source URL for url media, the content bytes for
+/// photo/article. `wrappedDek` is the per-media DEK wrapped under CONTENT_KEK
+/// (operator recovery: rotation + admin preview, no SatsRail old_key needed).
+///
+/// mediaId is nullable because photo uploads stage the envelope (via
+/// /api/admin/photos) before the Media row exists, then link it on save. The
+/// @@unique enforces 1:1 for linked rows (Postgres treats multiple NULLs as
+/// distinct, so unlinked staged rows don't collide).
+model MediaEnvelope {
+  id         String   @id @default(cuid())
+  mediaId    String?  @unique
+  bytes      Bytes
+  mimeType   String
+  wrappedDek String?
+  createdAt  DateTime @default(now())
+
+  media Media? @relation(fields: [mediaId], references: [id], onDelete: Cascade)
 }
 
 /// MediaImage — unencrypted thumbnail + preview-gallery images for a Media
 /// item. Replaces the generic PreviewImage table and the inline Media
-/// thumbnail* columns. Distinct from EncryptedEnvelope, which holds ciphertext.
+/// thumbnail* columns. Distinct from MediaEnvelope, which holds ciphertext.
 ///
 /// A row is exactly one of:
 ///   byte-backed: bytes + mimeType set, served via /api/images/<id>
@@ -226,9 +225,9 @@ model MediaImage {
 /// external_ref: `ch_N` → channelId, `md_N` → mediaId. PrivaPaid only
 /// consumes portal products with one of these two ref shapes.
 ///
-/// Cardinality with MediaEncryptedBlob:
-///   channel-scoped Product → N MediaEncryptedBlob rows (one per media in the bundle)
-///   media-scoped   Product → 1 MediaEncryptedBlob row  (the direct sale)
+/// Cardinality with MediaProduct:
+///   channel-scoped Product → N MediaProduct rows (one per media in the bundle)
+///   media-scoped   Product → 1 MediaProduct row  (the direct sale)
 model Product {
   id                String  @id @default(cuid())
   /// UUID from SatsRail. Canonical product identifier across the rail.
@@ -251,39 +250,38 @@ model Product {
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 
-  channel             Channel?             @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  media               Media?               @relation("MediaDirectSaleProduct", fields: [mediaId], references: [id], onDelete: Cascade)
-  mediaEncryptedBlobs MediaEncryptedBlob[]
+  channel       Channel?       @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  media         Media?         @relation("MediaDirectSaleProduct", fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaProducts MediaProduct[]
 
   @@index([channelId, productStatus])
   @@index([productStatus])
   @@index([productExternalRef])
 }
 
-/// MediaEncryptedBlob — the only table holding per-asset ciphertext.
+/// MediaProduct — the per-(product, media) row holding the encrypted media DEK.
 /// One row per (productId, mediaId). The same media can be referenced by
 /// multiple rows when multiple products unlock it (direct sale + channel
 /// access, multiple tiers, etc.). Key rotation re-encrypts each row
-/// transactionally.
+/// transactionally; the shared MediaEnvelope bytes never change.
 ///
-/// The "one payment → many keys, one per asset" design is embodied
-/// here: each row carries its own ciphertext bound to its own product's
-/// AES key via AAD = Product.satsrailProductId.
-model MediaEncryptedBlob {
+/// Patent claim 24 — "one payment → many keys, one per asset" — is embodied
+/// here: each row carries its own ciphertext bound to its own product's AES
+/// key via AAD = Product.satsrailProductId. It wraps the media DEK (which
+/// decrypts the shared MediaEnvelope) rather than the source directly.
+model MediaProduct {
   id        String @id @default(cuid())
   productId String
   mediaId   String
 
   /// AES-256-GCM blob (Base64): IV[12] + ciphertext + auth_tag[16].
   /// AAD = Product.satsrailProductId (UUID string).
-  /// Plaintext per Media.blob.kind:
-  ///   url     → source URL string
-  ///   photo   → wrapped DEK (unwraps with product key; then decrypts EncryptedEnvelope.bytes)
-  ///   article → wrapped DEK (unwraps with product key; then decrypts EncryptedEnvelope.bytes)
-  encryptedSource String
-  keyFingerprint  String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  /// Plaintext = the media DEK (base64url). Decrypt with the product key to
+  /// recover the DEK, then decrypt MediaEnvelope.bytes with it.
+  encryptedDek   String
+  keyFingerprint String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   media   Media   @relation(fields: [mediaId], references: [id], onDelete: Restrict)

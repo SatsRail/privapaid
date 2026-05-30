@@ -2,26 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl } from "@/lib/content-encryption";
-import { unwrapDekToBase64url } from "@/lib/content-dek";
 import { satsrail } from "@/lib/satsrail";
-import { parseMediaBlob, plaintextForEncryption } from "@/lib/schemas/media-blob";
+import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
 
 /**
  * Create a SatsRail product for a media item and write the media-scoped
- * Product + its single MediaEncryptedBlob row.
+ * Product + its single MediaProduct row.
  *
  * Flow:
- * 1. Fetch media + channel + merchant key.
+ * 1. Fetch media (+ its envelope) + channel + merchant key.
  * 2. Create the product on SatsRail with external_ref: md_{media.ref},
  *    using the channel's product type.
  * 3. Fetch the product key.
- * 4. Encrypt the plaintext under the product key with AAD = the SatsRail
- *    product UUID. Plaintext per media kind:
- *      - url media: the URL string
- *      - photo / article: the raw DEK (base64url) — recovered from the
- *        request body for photos (envelope upload returned it) or by
- *        unwrapping Media.blob.encryptedDek with CONTENT_KEK for articles.
- * 5. Write Product + MediaEncryptedBlob in one transaction.
+ * 4. Wrap the media DEK (recovered from MediaEnvelope.wrappedDek, uniform across
+ *    all media kinds) under the product key with AAD = the SatsRail product UUID.
+ * 5. Write Product + MediaProduct in one transaction.
  */
 export async function POST(
   req: NextRequest,
@@ -36,7 +31,6 @@ export async function POST(
     currency,
     access_duration_seconds,
     image_url,
-    dek, // optional — required when mediaType === "photo" (envelope encryption)
   } = body;
   if (!name || !price_cents) {
     return NextResponse.json(
@@ -45,20 +39,15 @@ export async function POST(
     );
   }
 
-  const media = await prisma.media.findUnique({ where: { id: mediaId } });
+  const media = await prisma.media.findUnique({
+    where: { id: mediaId },
+    include: { envelope: { select: { wrappedDek: true } } },
+  });
   if (!media) {
     return NextResponse.json({ error: "Media not found" }, { status: 404 });
   }
-
-  // For photo media the plaintext we wrap with the product key is the
-  // per-photo DEK (envelope encryption), not the photo bytes. The client
-  // must supply the DEK from the upload response — we never persist the
-  // raw DEK server-side.
-  if (media.mediaType === "photo" && !dek) {
-    return NextResponse.json(
-      { error: "dek is required for photo media" },
-      { status: 422 }
-    );
+  if (!media.envelope) {
+    return NextResponse.json({ error: "Media has no envelope" }, { status: 422 });
   }
 
   const channel = await prisma.channel.findUnique({
@@ -98,23 +87,12 @@ export async function POST(
     // 2. Fetch the encryption key (includes SHA-256 fingerprint for verification)
     const { key, key_fingerprint } = await satsrail.getProductKey(skLive, product.id);
 
-    // 3. Derive the plaintext to encrypt.
-    //    - Photo:   the per-photo DEK the client supplied.
-    //    - Article: the per-article DEK, recovered by unwrapping
-    //               Media.blob.encryptedDek with CONTENT_KEK.
-    //    - URL kinds: the URL string via Media.blob.
-    const blob = parseMediaBlob(media.blob);
-    let plaintext: string;
-    if (media.mediaType === "photo") {
-      plaintext = dek as string;
-    } else if (blob.kind === "article") {
-      plaintext = unwrapDekToBase64url(blob.encryptedDek);
-    } else {
-      plaintext = plaintextForEncryption(blob);
-    }
-    const encryptedSource = encryptSourceUrl(plaintext, key, product.id);
+    // 3. The product-key plaintext is the media DEK, recovered from the
+    //    envelope's CONTENT_KEK-wrapped copy — uniform across all media kinds.
+    const plaintext = dekBase64urlFromEnvelope(media.envelope);
+    const encryptedDek = encryptSourceUrl(plaintext, key, product.id);
 
-    // 4. Write Product + MediaEncryptedBlob atomically.
+    // 4. Write Product + MediaProduct atomically.
     const result = await prisma.$transaction(async (tx) => {
       const productRow = await tx.product.create({
         data: {
@@ -131,11 +109,11 @@ export async function POST(
           syncedAt: new Date(),
         },
       });
-      await tx.mediaEncryptedBlob.create({
+      await tx.mediaProduct.create({
         data: {
           productId: productRow.id,
           mediaId,
-          encryptedSource,
+          encryptedDek,
           keyFingerprint: key_fingerprint,
         },
       });

@@ -13,11 +13,11 @@ const MAX_ENVELOPE_BYTES = 10 * 1024 * 1024;
 /**
  * GET /api/envelopes/[id]
  *
- * Serves the AES-256-GCM ciphertext for an envelope-encrypted content row
- * (photo bytes, article markdown) from the `EncryptedEnvelope` table. No
- * auth required: the bytes are useless without the DEK, which is itself
- * encrypted under a SatsRail product key and only delivered to the viewer
- * after payment.
+ * Serves the AES-256-GCM ciphertext for a media's content from the
+ * `MediaEnvelope` table (the source URL for url media, the content bytes for
+ * photo/article). No auth required: the bytes are useless without the DEK,
+ * which is itself encrypted under a SatsRail product key and only delivered to
+ * the viewer after payment.
  *
  * Rate-limited to discourage scraping; clients only need this once per view.
  */
@@ -35,7 +35,7 @@ export async function GET(
   }
 
   try {
-    const envelope = await prisma.encryptedEnvelope.findUnique({
+    const envelope = await prisma.mediaEnvelope.findUnique({
       where: { id },
       select: { bytes: true, mimeType: true },
     });
@@ -54,7 +54,7 @@ export async function GET(
     return new Response(envelope.bytes, {
       headers: {
         // Always opaque/octet-stream — the bytes are AES-GCM ciphertext.
-        // The original plaintext MIME is recorded on the EncryptedEnvelope
+        // The original plaintext MIME is recorded on the MediaEnvelope
         // row but only the client (after DEK decrypt) can surface it.
         "Content-Type": "application/octet-stream",
         "Content-Length": envelope.bytes.length.toString(),

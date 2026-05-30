@@ -2,25 +2,16 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { resolveMediaImages } from "@/lib/images";
 import { requireAdminApi } from "@/lib/auth-helpers";
-import { parseMediaBlob } from "@/lib/schemas/media-blob";
-import { decryptBytes } from "@/lib/content-encryption";
-import { unwrapDek } from "@/lib/content-dek";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 
-async function sourceUrlForExport(blob: unknown): Promise<string> {
+async function sourceUrlForExport(media: {
+  mediaType: string;
+  envelope: { id: string; bytes: Uint8Array; wrappedDek: string | null } | null;
+}): Promise<string> {
+  if (!media.envelope) return "";
+  if (media.mediaType === "photo") return media.envelope.id;
   try {
-    const parsed = parseMediaBlob(blob);
-    if (parsed.kind === "url") return parsed.url;
-    if (parsed.kind === "photo") return parsed.envelopeId;
-    if (parsed.kind === "article") {
-      const envelope = await prisma.encryptedEnvelope.findUnique({
-        where: { id: parsed.envelopeId },
-        select: { bytes: true },
-      });
-      if (!envelope) return "";
-      const dek = unwrapDek(parsed.encryptedDek);
-      return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
-    }
-    return "";
+    return decryptEnvelopePayload(media.envelope).toString("utf8");
   } catch {
     return "";
   }
@@ -49,6 +40,7 @@ export async function GET(
       images: {
         select: { id: true, kind: true, externalUrl: true, position: true },
       },
+      envelope: { select: { id: true, bytes: true, wrappedDek: true } },
     },
   });
 
@@ -68,7 +60,7 @@ export async function GET(
       ref: m.ref,
       name: m.name,
       description: m.description || "",
-      source_url: await sourceUrlForExport(m.blob),
+      source_url: await sourceUrlForExport(m),
       media_type: m.mediaType,
       thumbnail_url: resolveMediaImages(m.images).thumbnailUrl,
       position: m.position,

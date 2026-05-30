@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMedia, createChannel } from "../../helpers/factories";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
 
 describe("Media model", () => {
@@ -21,7 +22,10 @@ describe("Media model", () => {
     const media = await createMedia(channel.id);
     expect(media.name).toBe("Test Media");
     expect(media.channelId).toBe(channel.id);
-    expect(media.blob).toEqual({ kind: "url", url: "https://example.com/video.mp4" });
+    // The payload (URL) is now held encrypted in the paired MediaEnvelope.
+    const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+    expect(envelope).not.toBeNull();
+    expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe("https://example.com/video.mp4");
     expect(media.mediaType).toBe("video");
   });
 
@@ -46,21 +50,13 @@ describe("Media model", () => {
     // Mirrors the Channel.ref autoincrement contract — operators rely on
     // md_<n> being short, sortable, and gap-free under normal creates.
     const channel = await createChannel();
-    const a = await prisma.media.create({
-      data: {
-        channelId: channel.id,
-        name: "Seq A",
-        mediaType: "video",
-        blob: { kind: "url", url: "https://example.com/a.mp4" } as object,
-      },
+    const a = await createMedia(channel.id, {
+      name: "Seq A",
+      sourceUrl: "https://example.com/a.mp4",
     });
-    const b = await prisma.media.create({
-      data: {
-        channelId: channel.id,
-        name: "Seq B",
-        mediaType: "video",
-        blob: { kind: "url", url: "https://example.com/b.mp4" } as object,
-      },
+    const b = await createMedia(channel.id, {
+      name: "Seq B",
+      sourceUrl: "https://example.com/b.mp4",
     });
     // Strict monotonicity is the contract — parallel workers share the
     // sequence and may bump it between these two inserts.

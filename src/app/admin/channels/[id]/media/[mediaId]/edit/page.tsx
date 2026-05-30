@@ -8,9 +8,7 @@ import DeleteMediaButton from "./DeleteMediaButton";
 import MarkResolvedButton from "./MarkResolvedButton";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
-import { parseMediaBlob } from "@/lib/schemas/media-blob";
-import { decryptBytes } from "@/lib/content-encryption";
-import { unwrapDek } from "@/lib/content-dek";
+import { decryptEnvelopePayload } from "@/lib/media-envelope";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +38,7 @@ function blobPreview(blob: string | undefined | null): string | null {
 }
 
 interface BlobWithProduct {
-  encryptedSource: string;
+  encryptedDek: string;
   keyFingerprint: string | null;
   createdAt: Date;
   product: {
@@ -89,38 +87,31 @@ function buildEncryptedBlobs(blobs: BlobWithProduct[]): EncryptedBlobInfo[] {
   return blobs.map((b) => ({
     product_id: b.product.satsrailProductId,
     scope: b.product.mediaId ? ("media" as const) : ("channel" as const),
-    blob_preview: blobPreview(b.encryptedSource),
-    blob_length: b.encryptedSource?.length ?? 0,
+    blob_preview: blobPreview(b.encryptedDek),
+    blob_length: b.encryptedDek?.length ?? 0,
     key_fingerprint: b.keyFingerprint ?? b.product.keyFingerprint ?? null,
     created_at: b.createdAt ? b.createdAt.toISOString() : null,
   }));
 }
 
 /**
- * Recover the on-the-wire `source_url` value for the form from Media.blob.
- * Articles are envelope-encrypted at rest, so we decrypt on the fly using
- * CONTENT_KEK + the envelope bytes; the form expects raw markdown.
+ * Recover the on-the-wire `source_url` value for the form by decrypting the
+ * media's envelope (CONTENT_KEK). url → the URL, article → the markdown body,
+ * photo → the envelope id pointer.
  *
- * On any decryption / row-missing failure throws — the edit page surfaces
- * that as a 500 rather than silently rendering an empty form (which would
- * have the admin save an empty article on submit).
+ * Throws on any decryption / row-missing failure — the edit page surfaces that
+ * as a 500 rather than silently rendering an empty form (which would have the
+ * admin save empty content on submit).
  */
-async function sourceUrlForForm(blob: unknown): Promise<string> {
-  const parsed = parseMediaBlob(blob);
-  if (parsed.kind === "url") return parsed.url;
-  if (parsed.kind === "photo") return parsed.envelopeId;
-  // article
-  const envelope = await prisma.encryptedEnvelope.findUnique({
-    where: { id: parsed.envelopeId },
-    select: { bytes: true },
-  });
-  if (!envelope) {
-    throw new Error(
-      `Article envelope ${parsed.envelopeId} missing — content unrecoverable`
-    );
+async function sourceUrlForForm(media: {
+  mediaType: string;
+  envelope: { id: string; bytes: Uint8Array; wrappedDek: string | null } | null;
+}): Promise<string> {
+  if (!media.envelope) {
+    throw new Error("Media envelope missing — content unrecoverable");
   }
-  const dek = unwrapDek(parsed.encryptedDek);
-  return decryptBytes(envelope.bytes as Buffer, dek).toString("utf8");
+  if (media.mediaType === "photo") return media.envelope.id;
+  return decryptEnvelopePayload(media.envelope).toString("utf8");
 }
 
 export default async function EditMediaPage({
@@ -137,6 +128,7 @@ export default async function EditMediaPage({
         images: {
           select: { id: true, kind: true, externalUrl: true, position: true },
         },
+        envelope: { select: { id: true, bytes: true, wrappedDek: true } },
       },
     }),
     prisma.channel.findUnique({ where: { id: channelId }, select: { slug: true } }),
@@ -147,12 +139,12 @@ export default async function EditMediaPage({
   const currency = instanceConfig.currency;
   const locale = instanceConfig.locale;
 
-  // All blobs covering this media (direct-sale + channel-scoped), via the
-  // unified MediaEncryptedBlob table.
-  const blobs = await prisma.mediaEncryptedBlob.findMany({
+  // All product rows covering this media (direct-sale + channel-scoped), via
+  // the unified MediaProduct table.
+  const blobs = await prisma.mediaProduct.findMany({
     where: { mediaId },
     select: {
-      encryptedSource: true,
+      encryptedDek: true,
       keyFingerprint: true,
       createdAt: true,
       product: {
@@ -170,7 +162,7 @@ export default async function EditMediaPage({
     new Set(blobs.map((b) => b.product.satsrailProductId))
   );
   const productIdsWithBlob = new Set(
-    blobs.filter((b) => !!b.encryptedSource).map((b) => b.product.satsrailProductId)
+    blobs.filter((b) => !!b.encryptedDek).map((b) => b.product.satsrailProductId)
   );
 
   let productDetails: ProductDetail[] = [];
@@ -199,7 +191,7 @@ export default async function EditMediaPage({
     _id: media.id,
     name: media.name,
     description: media.description || "",
-    source_url: await sourceUrlForForm(media.blob),
+    source_url: await sourceUrlForForm(media),
     media_type: media.mediaType,
     thumbnail_url: thumbnailUrl,
     thumbnail_id: thumbnailId,

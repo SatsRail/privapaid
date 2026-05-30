@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     });
 
     // Wipe every application table. Order matters where foreign keys are
-    // Restrict (Media → Channel, MediaEncryptedBlob → Media). DELETEs in
+    // Restrict (Media → Channel, MediaProduct → Media). DELETEs in
     // a single transaction so a mid-flight failure can't leave us with
     // half-deleted state.
     //
@@ -54,11 +54,11 @@ export async function POST(request: Request) {
     await prisma.$transaction(async (tx) => {
       // Children first (Restrict / Cascade leafs)
       await tx.comment.deleteMany({}); truncated.push("Comment");
-      await tx.mediaEncryptedBlob.deleteMany({}); truncated.push("MediaEncryptedBlob");
+      await tx.mediaProduct.deleteMany({}); truncated.push("MediaProduct");
       await tx.product.deleteMany({}); truncated.push("Product");
       await tx.mediaImage.deleteMany({}); truncated.push("MediaImage");
       await tx.media.deleteMany({}); truncated.push("Media");
-      await tx.encryptedEnvelope.deleteMany({}); truncated.push("EncryptedEnvelope");
+      await tx.mediaEnvelope.deleteMany({}); truncated.push("MediaEnvelope");
       await tx.channel.deleteMany({}); truncated.push("Channel");
       await tx.category.deleteMany({}); truncated.push("Category");
       await tx.webhookEvent.deleteMany({}); truncated.push("WebhookEvent");
