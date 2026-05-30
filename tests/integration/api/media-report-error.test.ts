@@ -110,7 +110,7 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
   async function seed(opts: {
     encryptedSource: string;
     productId?: string;
-    mediaStatus?: string;
+    mediaStatus?: "ok" | "error";
   }) {
     const productId = opts.productId ?? "prod_report";
     const channel = await prisma.channel.create({
