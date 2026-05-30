@@ -17,6 +17,7 @@ import VerifyFailureCard from "@/components/VerifyFailureCard";
 import { useLocale } from "@/i18n/useLocale";
 import { formatPrice, formatDuration } from "@/lib/format";
 import type { MediaAccess } from "@/lib/use-media-access";
+import { resolvePaywallView } from "@/lib/paywall-view";
 
 interface Product {
   productId: string;
@@ -128,10 +129,6 @@ export default function PaymentWall({
   // handleCheckoutComplete's locals. Stays null for already-active access on
   // mount (refresh case), which is correct — no payment just happened.
   const lastPaymentRef = useRef<{ orderNumber: string | null; orderId: string | null } | null>(null);
-  // Soft-fail card for transient portal hiccups. Distinct from `unlockFailure`,
-  // which is for "you just paid and decryption failed."
-  const showVerifyFailure =
-    access.status === "inactive" && access.reason === "transient";
 
   // Every failure report in this component shares the same identity envelope
   // (mediaId, activeProductId, mediaType). These wrappers fold the boilerplate
@@ -438,7 +435,19 @@ export default function PaymentWall({
     [activeProductId, products, mediaId, reportException, reportMessage, reportDecryptError, onAccessClaim]
   );
 
-  if (decryptedBytes) {
+  // Single source of truth for which surface renders — see resolvePaywallView
+  // for the full precedence (content > unlock_failure > verify_failure >
+  // buttons > checking).
+  const view = resolvePaywallView({
+    hasDecryptedContent: decryptedBytes !== null,
+    access,
+    hasUnlockFailure: unlockFailure !== null,
+  });
+
+  // `&& decryptedBytes` is always true when the view is "content" (the selector
+  // derives it from the same flag); it's here only to narrow the type for
+  // ContentRenderer, which needs non-null bytes.
+  if (view.kind === "content" && decryptedBytes) {
     return (
       <div className="mb-6">
         {ARTWORK_TYPES.has(mediaType) && thumbnailUrl && (
@@ -586,30 +595,30 @@ export default function PaymentWall({
   const reportCopyError = (err: unknown) =>
     Sentry.captureException(err, { tags: { context: "PaymentWall.copyReference" } });
 
-  // Failure cards win first (they own the "you paid, something broke" and
-  // "couldn't verify" states). Past those, product buttons render ONLY when
-  // access is definitively inactive — `loading`/`active`-decrypting fall
-  // through to the checking placeholder.
-  const cardContent = unlockFailure ? (
-    <UnlockFailureCard
-      orderNumber={unlockFailure.orderNumber}
-      orderId={unlockFailure.orderId}
-      failedAt={unlockFailure.failedAt}
-      merchantName={merchantName}
-      onCopyError={reportCopyError}
-      onReload={reload}
-    />
-  ) : showVerifyFailure ? (
-    <VerifyFailureCard
-      failedAt={Date.now()}
-      merchantName={merchantName}
-      onReload={reload}
-    />
-  ) : access.status === "inactive" ? (
-    productButtons
-  ) : (
-    checkingPlaceholder
-  );
+  // Which card fills the frame, per the view selector. (`view.kind === "content"`
+  // already returned above.) The `&& unlockFailure` narrows the type for the
+  // card's props and is always true when the view is "unlock_failure".
+  const cardContent =
+    view.kind === "unlock_failure" && unlockFailure ? (
+      <UnlockFailureCard
+        orderNumber={unlockFailure.orderNumber}
+        orderId={unlockFailure.orderId}
+        failedAt={unlockFailure.failedAt}
+        merchantName={merchantName}
+        onCopyError={reportCopyError}
+        onReload={reload}
+      />
+    ) : view.kind === "verify_failure" ? (
+      <VerifyFailureCard
+        failedAt={Date.now()}
+        merchantName={merchantName}
+        onReload={reload}
+      />
+    ) : view.kind === "buttons" ? (
+      productButtons
+    ) : (
+      checkingPlaceholder
+    );
 
   // Payment wall
   return (
@@ -645,7 +654,7 @@ export default function PaymentWall({
 
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
-      {checkoutToken && !unlockFailure && !showVerifyFailure && (() => {
+      {checkoutToken && view.kind !== "unlock_failure" && view.kind !== "verify_failure" && (() => {
         const activeProduct = products.find((p) => p.productId === activeProductId);
         return (
           <CheckoutOverlay

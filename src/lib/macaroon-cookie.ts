@@ -110,7 +110,11 @@ export function serializeMacaroonCookie(map: MacaroonMap): string {
 /**
  * Insert `{m: macaroon, t: now}` into the map and ensure it still fits
  * the caps. If the resulting serialization would exceed `MAX_BYTES` or
- * `MAX_ENTRIES`, evict by ascending `t` (oldest first) until it fits.
+ * `MAX_ENTRIES`, evict until it fits — DEAD (expired) macaroons first,
+ * then oldest-stored. `now` is read as the current time for the expiry
+ * check, so a heavy buyer who has filled the cookie sheds tokens that can
+ * no longer grant access before it ever touches one they still hold.
+ * With nothing expired this degrades to the original oldest-stored eviction.
  *
  * Returns the mutated map and a count of evicted entries.
  *
@@ -137,18 +141,34 @@ export function insertWithCap(
     Object.keys(next).length > MAX_ENTRIES ||
     serializeMacaroonCookie(next).length > MAX_BYTES
   ) {
-    // Find the oldest entry that isn't the one we just inserted.
-    let oldestPid: string | null = null;
-    let oldestT = Infinity;
+    // Pick a victim — never the just-inserted entry. Prefer DEAD (expired)
+    // macaroons over live ones: a heavy buyer's cookie fills with both, and
+    // evicting access they still hold (to keep a token that can't grant
+    // anything) is the worst outcome. Within the same tier, evict the
+    // oldest-stored entry. Unparseable-exp entries count as "live" — unknown
+    // freshness is left for the portal to judge, never assumed dead.
+    let victimPid: string | null = null;
+    let victimExpired = false;
+    let victimT = Infinity;
     for (const [pid, entry] of Object.entries(next)) {
       if (pid === productId) continue;
-      if (entry.t < oldestT) {
-        oldestT = entry.t;
-        oldestPid = pid;
+      const expired = isMacaroonExpired(entry.m, now);
+      let better: boolean;
+      if (victimPid === null) {
+        better = true;
+      } else if (expired !== victimExpired) {
+        better = expired; // an expired candidate outranks a live one
+      } else {
+        better = entry.t < victimT; // same tier → oldest stored wins
+      }
+      if (better) {
+        victimPid = pid;
+        victimExpired = expired;
+        victimT = entry.t;
       }
     }
-    if (!oldestPid) break;
-    delete next[oldestPid];
+    if (!victimPid) break;
+    delete next[victimPid];
     evicted++;
   }
 

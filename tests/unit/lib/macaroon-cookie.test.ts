@@ -179,6 +179,73 @@ describe("macaroon-cookie", () => {
         "MACAROON_TOO_LARGE"
       );
     });
+
+    it("evicts DEAD (expired) macaroons before still-valid ones under cap pressure", () => {
+      // Heavy-buyer protection: a full cookie holds one still-valid macaroon
+      // (the OLDEST by storage time — the original oldest-first eviction would
+      // have killed it first) plus several expired ones. Inserting a fresh
+      // purchase must shed the dead tokens and spare the live one.
+      const NOW = new Date("2026-05-23T21:00:00.000Z");
+      const PAST = new Date("2026-05-20T00:00:00.000Z"); // expired
+      const FUTURE = new Date("2026-12-01T00:00:00.000Z"); // valid
+      // Inflate each macaroon so a handful exceed MAX_BYTES (and so the
+      // valid + new pair comfortably fits, guaranteeing the valid one can
+      // survive once the dead ones are gone).
+      const pad = "x".repeat(500);
+
+      const map: Record<string, { m: string; t: number }> = {
+        valid_oldest: {
+          m: makeMacaroon({ productId: `valid_${pad}`, outerExp: FUTURE }),
+          t: 0,
+        },
+      };
+      const DEAD_COUNT = 4;
+      for (let i = 0; i < DEAD_COUNT; i++) {
+        map[`dead_${i}`] = {
+          m: makeMacaroon({ productId: `dead_${i}_${pad}`, outerExp: PAST }),
+          t: i + 1,
+        };
+      }
+      // Precondition: already over the byte budget, so eviction must run.
+      expect(serializeMacaroonCookie(map).length).toBeGreaterThan(MAX_BYTES);
+
+      const { map: out, evicted } = insertWithCap(
+        map,
+        "new_prod",
+        makeMacaroon({ productId: `new_${pad}`, outerExp: FUTURE }),
+        NOW.getTime()
+      );
+
+      // The just-paid macaroon always survives.
+      expect(out.new_prod).toBeDefined();
+      // The still-valid macaroon survives despite being the oldest-stored —
+      // the dead ones were sacrificed first.
+      expect(out.valid_oldest).toBeDefined();
+      // Eviction happened and fell on the dead entries.
+      expect(evicted).toBeGreaterThan(0);
+      const deadRemaining = Object.keys(out).filter((k) =>
+        k.startsWith("dead_")
+      ).length;
+      expect(deadRemaining).toBeLessThan(DEAD_COUNT);
+      // Result fits the cookie budget.
+      expect(serializeMacaroonCookie(out).length).toBeLessThanOrEqual(MAX_BYTES);
+    });
+
+    it("falls back to oldest-stored eviction when no entry is expired", () => {
+      // With no parseable/expired exp, behavior is unchanged from the original
+      // oldest-first policy — opaque tokens are never assumed dead.
+      const big = "x".repeat(300);
+      const map: Record<string, { m: string; t: number }> = {};
+      let i = 0;
+      while (serializeMacaroonCookie(map).length < MAX_BYTES - 200) {
+        map[`p${i}`] = { m: big, t: i };
+        i++;
+      }
+      const { map: out } = insertWithCap(map, "newer", big, i + 1);
+      // Oldest (p0) goes first; the just-inserted entry stays.
+      expect(out.p0).toBeUndefined();
+      expect(out.newer).toEqual({ m: big, t: i + 1 });
+    });
   });
 
   describe("getStoredProductIds", () => {
