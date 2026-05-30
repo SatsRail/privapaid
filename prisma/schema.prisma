@@ -226,7 +226,7 @@ model Product {
 /// access, multiple tiers, etc.). Key rotation re-encrypts each row
 /// transactionally.
 ///
-/// Patent claim 24 ("one payment → many keys, one per asset") is embodied
+/// The "one payment → many keys, one per asset" design is embodied
 /// here: each row carries its own ciphertext bound to its own product's
 /// AES key via AAD = Product.satsrailProductId.
 model MediaEncryptedBlob {

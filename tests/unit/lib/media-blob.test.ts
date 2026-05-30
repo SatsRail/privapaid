@@ -153,7 +153,7 @@ describe("Media.blob schema", () => {
     });
 
     it("returns the encryptedDek for a photo blob (NOT the envelopeId)", () => {
-      // This is the patent-sensitive invariant: envelope encryption uses the
+      // This is a critical encryption invariant: envelope encryption uses the
       // wrapped DEK as the per-product plaintext intermediate, not the
       // envelope row id (which is public). Callers must unwrap before
       // encrypting under a product key — `plaintextForEncryption` returns

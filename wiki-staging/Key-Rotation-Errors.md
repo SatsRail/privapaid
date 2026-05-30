@@ -82,7 +82,7 @@ Then refresh the admin UI.
 
 ## Architecture reference
 
-For the full encryption design and why rotation works this way (local plaintext recovery, why we don't depend on `old_key`, the patent claim on per-product DEK wrapping), see [`docs/ENCRYPTION.md`](https://github.com/SatsRail/privapaid/blob/main/docs/ENCRYPTION.md).
+For the full encryption design and why rotation works this way (local plaintext recovery, why we don't depend on `old_key`, per-product DEK wrapping), see [`docs/ENCRYPTION.md`](https://github.com/SatsRail/privapaid/blob/main/docs/ENCRYPTION.md).
 
 ## See also
 

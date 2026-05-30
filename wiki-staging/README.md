@@ -59,7 +59,7 @@ Wiki-link syntax `[[Page Name]]` resolves to `/wiki/Page-Name`.
 | Lives in `docs/` (code-coupled, versioned with the code) | Lives in the wiki (operator-facing, evolves on its own) |
 |---|---|
 | Encryption architecture (`docs/ENCRYPTION.md`) | Deployment walkthroughs |
-| Patent-sensitive design notes | Troubleshooting runbooks |
+| Sensitive design notes | Troubleshooting runbooks |
 | API surface reference | Operator playbooks |
 | Test design (`tests/integration/decryption-e2e/README.md`) | Backup procedures |
 
