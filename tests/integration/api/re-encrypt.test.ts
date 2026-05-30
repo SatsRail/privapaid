@@ -231,6 +231,45 @@ describe("POST /api/admin/products/[id]/re-encrypt", () => {
     );
   });
 
+  it("auto-clears a media's Part B error flag after a clean re-encrypt", async () => {
+    // A re-encrypt rewrites every blob for the product, so any media flagged
+    // `error` over a previously-undecryptable blob is now fixed. The flag
+    // should lift automatically — the admin shouldn't have to clear it by hand.
+    const channel = await createChannel();
+    const media = await prisma.media.create({
+      data: {
+        channelId: channel.id,
+        name: "Broken then fixed",
+        mediaType: "video",
+        blob: { kind: "url", url: "https://cdn.example.com/fixed.mp4" },
+        status: "error",
+        statusReason: "integrity_auth_failed",
+        statusChangedAt: new Date(),
+      },
+    });
+    await createMediaProduct({
+      mediaId: media.id,
+      satsrailProductId: productId,
+      encryptedSource: "stale-pre-rotation",
+    });
+
+    mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
+    mockClearOldKey.mockResolvedValue({});
+
+    const req = createReEncryptRequest(productId);
+    const res = await POST(req, { params: Promise.resolve({ id: productId }) });
+    expect(res.status).toBe(200);
+    const events = (await readStream(res)).map((l) => JSON.parse(l));
+    expect(events.at(-1)).toMatchObject({ done: true, errors: 0 });
+
+    const after = await prisma.media.findUnique({
+      where: { id: media.id },
+      select: { status: true, statusReason: true },
+    });
+    expect(after?.status).toBe("ok");
+    expect(after?.statusReason).toBeNull();
+  });
+
   it("clears old_key immediately when no work exists", async () => {
     mockGetProductKey.mockResolvedValue({ key: newKey, key_fingerprint: "fp" });
     mockClearOldKey.mockResolvedValue({});
