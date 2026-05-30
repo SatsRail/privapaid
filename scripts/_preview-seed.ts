@@ -2,6 +2,7 @@
 // (channel + main media + siblings) so the /c/[slug]/[mediaId] layout can be
 // inspected in the browser. No products → player shows UnavailableWall, but
 // the full info block + right rail render.
+import "dotenv/config"; // load .env (DATABASE_URL, CONTENT_KEK) for standalone runs
 import { PrismaClient } from "@prisma/client";
 import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
 
