@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import config, { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
 import MediaCard from "@/components/MediaCard";
@@ -106,9 +107,9 @@ export default async function ChannelPage({ params, searchParams }: Props) {
       name: true,
       description: true,
       mediaType: true,
-      thumbnailUrl: true,
-      thumbnailBytes: true,
-      previewImageUrls: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
       commentsCount: true,
       viewsCount: true,
     },
@@ -240,14 +241,11 @@ export default async function ChannelPage({ params, searchParams }: Props) {
         {media.length > 0 ? (
           <div className="grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
             {media.map((m) => {
-              // The new bytea-backed image endpoints use distinct prefixes
-              // (e.g. /api/images/channel/<id>, /api/images/media-thumbnail/<id>)
-              // — different from the old GridFS-by-id route MediaCard's
-              // `resolveImageUrl(id)` was built for. Pre-resolve URLs here and
-              // pass them through as `channelAvatarUrl` / `thumbnail_url`.
-              const cardThumb = m.thumbnailBytes
-                ? `/api/images/media-thumbnail/${m.id}`
-                : m.thumbnailUrl || "";
+              // Pre-resolve the thumbnail from the MediaImage relation
+              // (byte-backed → /api/images/<id>, url-backed → externalUrl) and
+              // pass it through as `thumbnail_url`. The channel avatar is
+              // resolved the same way above as `avatarSrc`.
+              const cardThumb = resolveMediaImages(m.images).thumbnailUrl;
               return (
                 <MediaCard
                   key={m.id}

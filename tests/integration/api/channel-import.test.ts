@@ -480,7 +480,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(body.success).toBe(true);
       const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media!.mediaType).toBe("video");
-      expect(media!.thumbnailUrl).toBe("https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg");
+      const thumb = await prisma.mediaImage.findFirst({ where: { mediaId: media!.id, kind: "thumbnail" } });
+      expect(thumb!.externalUrl).toBe("https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg");
       expect(media!.position).toBe(1);
 
       const mp = await findFirstMediaProduct({ mediaId: media!.id });
@@ -509,7 +510,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(body.success).toBe(true);
       const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media!.mediaType).toBe("audio");
-      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/audio/640/360");
+      const thumb = await prisma.mediaImage.findFirst({ where: { mediaId: media!.id, kind: "thumbnail" } });
+      expect(thumb!.externalUrl).toBe("https://picsum.photos/seed/audio/640/360");
     });
 
     it("imports podcast with thumbnail", async () => {
@@ -533,7 +535,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(body.success).toBe(true);
       const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media!.mediaType).toBe("podcast");
-      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/podcast/640/360");
+      const thumb = await prisma.mediaImage.findFirst({ where: { mediaId: media!.id, kind: "thumbnail" } });
+      expect(thumb!.externalUrl).toBe("https://picsum.photos/seed/podcast/640/360");
     });
 
     it("imports article with thumbnail", async () => {
@@ -557,7 +560,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(body.success).toBe(true);
       const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media!.mediaType).toBe("article");
-      expect(media!.thumbnailUrl).toBe("https://picsum.photos/seed/article/640/360");
+      const thumb = await prisma.mediaImage.findFirst({ where: { mediaId: media!.id, kind: "thumbnail" } });
+      expect(thumb!.externalUrl).toBe("https://picsum.photos/seed/article/640/360");
     });
 
     it("rejects photo media in JSON imports (must use /api/admin/photos)", async () => {
@@ -612,26 +616,34 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const allMedia = await prisma.media.findMany({ where: { channelId: channel.id }, orderBy: { ref: "asc" } });
       expect(allMedia).toHaveLength(4);
       expect(allMedia.map((m) => m.mediaType)).toEqual(["video", "audio", "podcast", "article"]);
-      expect(allMedia.every((m) => m.thumbnailUrl)).toBe(true);
+      const thumbs = await prisma.mediaImage.findMany({
+        where: { mediaId: { in: allMedia.map((m) => m.id) }, kind: "thumbnail" },
+      });
+      expect(thumbs).toHaveLength(4);
+      expect(thumbs.every((t) => !!t.externalUrl)).toBe(true);
     });
 
     it("updates thumbnailUrl on re-import", async () => {
       mockAuth.mockResolvedValue(authSession);
       const channel = await createChannel({ slug: "mt-thumb-update", name: "Thumb Update Channel" });
 
-      // Create media via factory with known ref
-      await createMedia(channel.id, {
+      // Create media via factory with known ref + an initial thumbnail row
+      const seeded = await createMedia(channel.id, {
         name: "Thumb Video",
         ref: 200,
         blob: { kind: "url", url: "https://example.com/video.mp4" },
       });
-      await prisma.media.updateMany({
-        where: { ref: 200 },
-        data: { thumbnailUrl: "https://example.com/old-thumb.jpg" },
+      await prisma.mediaImage.create({
+        data: {
+          mediaId: seeded.id,
+          kind: "thumbnail",
+          externalUrl: "https://example.com/old-thumb.jpg",
+          position: 0,
+        },
       });
 
-      const before = await prisma.media.findFirst({ where: { ref: 200, channelId: channel.id } });
-      expect(before!.thumbnailUrl).toBe("https://example.com/old-thumb.jpg");
+      const before = await prisma.mediaImage.findFirst({ where: { mediaId: seeded.id, kind: "thumbnail" } });
+      expect(before!.externalUrl).toBe("https://example.com/old-thumb.jpg");
 
       // Re-import with same ref but new thumbnail
       const [req, ctx] = channelImportRequest(channel.id, {
@@ -648,8 +660,9 @@ describe("POST /api/admin/channels/[id]/import", () => {
       const body = await readSSEResult(res);
 
       expect((body.results.media as { updated: number }).updated).toBe(1);
-      const after = await prisma.media.findFirst({ where: { ref: 200, channelId: channel.id } });
-      expect(after!.thumbnailUrl).toBe("https://example.com/new-thumb.jpg");
+      const after = await prisma.mediaImage.findMany({ where: { mediaId: seeded.id, kind: "thumbnail" } });
+      expect(after).toHaveLength(1);
+      expect(after[0].externalUrl).toBe("https://example.com/new-thumb.jpg");
     });
 
     it("preserves ref as stable identifier across re-imports", async () => {
@@ -685,7 +698,8 @@ describe("POST /api/admin/channels/[id]/import", () => {
       expect(allMedia).toHaveLength(1);
       expect(allMedia[0].name).toBe("Updated Name");
       expect(allMedia[0].mediaType).toBe("audio");
-      expect(allMedia[0].thumbnailUrl).toBe("https://example.com/thumb.jpg");
+      const thumb = await prisma.mediaImage.findFirst({ where: { mediaId: allMedia[0].id, kind: "thumbnail" } });
+      expect(thumb!.externalUrl).toBe("https://example.com/thumb.jpg");
     });
   });
 });

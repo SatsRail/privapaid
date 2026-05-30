@@ -203,7 +203,7 @@ describe("Images API — POST /api/images", () => {
     expect(typeof body.image_id).toBe("string");
 
     // Confirm the row exists in Postgres
-    const blob = await prisma.previewImage.findUnique({
+    const blob = await prisma.mediaImage.findUnique({
       where: { id: body.image_id },
       select: { id: true },
     });
@@ -216,9 +216,9 @@ describe("Images API — POST /api/images", () => {
     const body = await res.json();
 
     expect(res.status).toBe(201);
-    // Even without context, the row lands in PreviewImage (the shim
+    // Even without context, the row lands in MediaImage (the shim
     // path described in the route comment).
-    const blob = await prisma.previewImage.findUnique({
+    const blob = await prisma.mediaImage.findUnique({
       where: { id: body.image_id },
     });
     expect(blob).not.toBeNull();

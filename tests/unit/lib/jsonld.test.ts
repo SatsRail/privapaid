@@ -155,10 +155,15 @@ describe("buildMediaSchema", () => {
     expect(result["@type"]).toBe("CreativeWork");
   });
 
-  it("uses the bytea-backed URL when hasThumbnail is set", () => {
-    const media = { ...baseMedia, hasThumbnail: true };
+  it("passes an absolute thumbnailUrl through unchanged", () => {
+    const result = buildMediaSchema(baseMedia, channel, config);
+    expect(result.thumbnailUrl).toBe("https://cdn.example.com/thumb.jpg");
+  });
+
+  it("prefixes an app-relative thumbnailUrl with the site origin", () => {
+    const media = { ...baseMedia, thumbnailUrl: "/api/images/img123" };
     const result = buildMediaSchema(media, channel, config);
-    expect(result.thumbnailUrl).toBe("https://example.com/api/images/media-thumbnail/media123");
+    expect(result.thumbnailUrl).toBe("https://example.com/api/images/img123");
   });
 
   it("includes date fields", () => {

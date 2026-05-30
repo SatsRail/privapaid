@@ -56,9 +56,9 @@ export async function POST(request: Request) {
       await tx.comment.deleteMany({}); truncated.push("Comment");
       await tx.mediaEncryptedBlob.deleteMany({}); truncated.push("MediaEncryptedBlob");
       await tx.product.deleteMany({}); truncated.push("Product");
+      await tx.mediaImage.deleteMany({}); truncated.push("MediaImage");
       await tx.media.deleteMany({}); truncated.push("Media");
       await tx.encryptedEnvelope.deleteMany({}); truncated.push("EncryptedEnvelope");
-      await tx.previewImage.deleteMany({}); truncated.push("PreviewImage");
       await tx.channel.deleteMany({}); truncated.push("Channel");
       await tx.category.deleteMany({}); truncated.push("Category");
       await tx.webhookEvent.deleteMany({}); truncated.push("WebhookEvent");

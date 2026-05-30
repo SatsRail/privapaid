@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import { getInstanceConfig } from "@/config/instance";
 
 export const dynamic = "force-dynamic";
@@ -59,8 +60,9 @@ export async function GET(
       id: true,
       name: true,
       description: true,
-      thumbnailUrl: true,
-      thumbnailBytes: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
       mediaType: true,
       createdAt: true,
     },
@@ -81,9 +83,11 @@ export async function GET(
   const items = mediaItems
     .map((m) => {
       const itemUrl = `${channelUrl}/${m.id}`;
-      const thumb = m.thumbnailBytes
-        ? `${baseUrl}/api/images/media-thumbnail/${m.id}`
-        : m.thumbnailUrl;
+      // Resolved thumbnail is app-relative (/api/images/<id>) for byte-backed
+      // rows; RSS needs an absolute URL, so prefix the origin. External links
+      // are already absolute and pass through.
+      const rawThumb = resolveMediaImages(m.images).thumbnailUrl;
+      const thumb = rawThumb.startsWith("/") ? `${baseUrl}${rawThumb}` : rawThumb;
       const descriptionHtml =
         (thumb ? `<p><img src="${escapeXml(thumb)}" alt="${escapeXml(m.name)}" /></p>` : "") +
         (m.description ? `<p>${escapeXml(m.description)}</p>` : "");

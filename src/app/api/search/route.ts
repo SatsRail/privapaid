@@ -49,8 +49,6 @@ export async function GET(req: NextRequest) {
         name: true,
         mediaType: true,
         channelId: true,
-        thumbnailUrl: true,
-        thumbnailMimeType: true,
       },
       take: 10,
     }),

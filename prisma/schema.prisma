@@ -57,6 +57,13 @@ enum MediaStatus {
   error
 }
 
+/// Role of a MediaImage row: the single thumbnail or one of the preview-gallery
+/// images for a Media item.
+enum MediaImageKind {
+  thumbnail
+  preview
+}
+
 // ── Models ─────────────────────────────────────────────────────────────────
 
 /// Admin — team display + role assignment. Auth handled by SatsRail.
@@ -124,12 +131,12 @@ model Channel {
 
 /// Media — one of video/audio/article/photo/podcast.
 model Media {
-  id                String    @id @default(cuid())
-  ref               Int       @unique @default(autoincrement()) // emitted as `md_<ref>` to portal
-  channelId         String
-  name              String
-  description       String    @default("")
-  mediaType         MediaType @default(video)
+  id              String      @id @default(cuid())
+  ref             Int         @unique @default(autoincrement()) // emitted as `md_<ref>` to portal
+  channelId       String
+  name            String
+  description     String      @default("")
+  mediaType       MediaType   @default(video)
   /// Type-discriminated payload + envelope-encryption pointer. Admin-only —
   /// public routes MUST omit this field. For url-backed media this is the
   /// plaintext recovery store; for envelope-backed media (photo, article)
@@ -142,32 +149,28 @@ model Media {
   ///   article:             { kind: "article", envelopeId, encryptedDek, mimeType }
   /// envelopeId points at EncryptedEnvelope.id; encryptedDek is the DEK
   /// wrapped under CONTENT_KEK.
-  blob              Json
-  thumbnailUrl      String    @default("")
-  thumbnailBytes    Bytes? // replaces GridFS thumbnail
-  thumbnailMimeType String?
-  /// Direct URLs (from import). Cap-of-6 enforced in application code.
-  previewImageUrls  String[]  @default([])
-  position          Int       @default(0)
-  viewsCount        Int       @default(0)
-  likesCount        Int       @default(0)
-  sharesCount       Int       @default(0)
-  commentsCount     Int       @default(0)
+  blob            Json
+  position        Int         @default(0)
+  viewsCount      Int         @default(0)
+  likesCount      Int         @default(0)
+  sharesCount     Int         @default(0)
+  commentsCount   Int         @default(0)
   /// Decryptability health. `error` is server-confirmed (report-error route
   /// re-decrypts before flipping) and blocks the viewer page until an admin
   /// clears it. Distinct from Product.productStatus.
-  status            MediaStatus @default(ok)
+  status          MediaStatus @default(ok)
   /// Last integrity-failure reason (allowlisted code). Null when status=ok.
-  statusReason      String?
-  statusChangedAt   DateTime?
-  deletedAt         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  statusReason    String?
+  statusChangedAt DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   channel           Channel              @relation(fields: [channelId], references: [id], onDelete: Restrict)
   directSaleProduct Product?             @relation("MediaDirectSaleProduct")
   encryptedBlobs    MediaEncryptedBlob[]
   comments          Comment[]
+  images            MediaImage[]
 
   @@index([channelId, position])
   @@index([channelId, viewsCount(sort: Desc)])
@@ -186,14 +189,33 @@ model EncryptedEnvelope {
   createdAt DateTime @default(now())
 }
 
-/// PreviewImage — unencrypted preview/thumbnail bytes for the /api/images
-/// shim (free-standing image uploads from admin forms). Distinct from
-/// EncryptedEnvelope, which holds ciphertext only.
-model PreviewImage {
-  id        String   @id @default(cuid())
-  bytes     Bytes
-  mimeType  String
-  createdAt DateTime @default(now())
+/// MediaImage — unencrypted thumbnail + preview-gallery images for a Media
+/// item. Replaces the generic PreviewImage table and the inline Media
+/// thumbnail* columns. Distinct from EncryptedEnvelope, which holds ciphertext.
+///
+/// A row is exactly one of:
+///   byte-backed: bytes + mimeType set, served via /api/images/<id>
+///   url-backed:  externalUrl set (imported direct URL, no local bytes)
+/// The "exactly one" invariant is enforced by a CHECK constraint (raw SQL in
+/// the migration) plus app-level validation.
+///
+/// mediaId is nullable: gallery/thumbnail images are uploaded through the
+/// /api/images shim before the owning Media row exists, then linked on save.
+/// Rows left with mediaId = null also keep that shim non-breaking for any
+/// non-media upload (channel/settings images still use their own Bytes columns).
+model MediaImage {
+  id          String         @id @default(cuid())
+  mediaId     String?
+  kind        MediaImageKind @default(preview)
+  bytes       Bytes?
+  mimeType    String?
+  externalUrl String?
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  media Media? @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId, kind, position])
 }
 
 /// Product — flat mirror of the portal Products table. PrivaPaid never stores
@@ -259,9 +281,9 @@ model MediaEncryptedBlob {
   ///   photo   → wrapped DEK (unwraps with product key; then decrypts EncryptedEnvelope.bytes)
   ///   article → wrapped DEK (unwraps with product key; then decrypts EncryptedEnvelope.bytes)
   encryptedSource String
-  keyFingerprint     String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  keyFingerprint  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   media   Media   @relation(fields: [mediaId], references: [id], onDelete: Restrict)
@@ -349,4 +371,3 @@ model WebhookEvent {
 
   @@index([processedAt])
 }
-

@@ -29,7 +29,6 @@ describe("Media model", () => {
     const channel = await createChannel();
     const media = await createMedia(channel.id);
     expect(media.description).toBe("");
-    expect(media.thumbnailUrl).toBe("");
     expect(media.position).toBe(0);
     expect(media.deletedAt).toBeNull();
   });

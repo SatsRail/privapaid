@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import { isSetupComplete } from "@/lib/setup";
 import { getInstanceConfig } from "@/config/instance";
 import { t } from "@/i18n";
@@ -67,9 +68,9 @@ export default async function HomePage() {
       name: true,
       description: true,
       mediaType: true,
-      thumbnailUrl: true,
-      thumbnailBytes: true,
-      previewImageUrls: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
       commentsCount: true,
       channelId: true,
     },
@@ -99,9 +100,7 @@ export default async function HomePage() {
     name: m.name,
     description: m.description,
     media_type: m.mediaType,
-    thumbnail_url: m.thumbnailBytes
-      ? `/api/images/media-thumbnail/${m.id}`
-      : m.thumbnailUrl,
+    thumbnail_url: resolveMediaImages(m.images).thumbnailUrl,
     thumbnail_id: undefined,
     preview_image_ids: [],
     comments_count: m.commentsCount,

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
 import { getInstanceConfig } from "@/config/instance";
@@ -31,6 +32,20 @@ export default async function ChannelDetailPage({
   const media = await prisma.media.findMany({
     where: { channelId: id },
     orderBy: { position: "asc" },
+    // Scalar select (no bytes) + the image refs the table needs. A bare
+    // findMany would also drag the Media.blob JSONB across for every row.
+    select: {
+      id: true,
+      ref: true,
+      position: true,
+      name: true,
+      mediaType: true,
+      status: true,
+      statusReason: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
+    },
   });
 
   const cat = channel.category;
@@ -175,19 +190,16 @@ export default async function ChannelDetailPage({
             {media.map((m) => {
               const hasIndividual = mediaWithProduct.has(m.id);
               const hasChannel = mediaCoveredByChannel.has(m.id);
+              const thumb = resolveMediaImages(m.images).thumbnailUrl;
 
               return (
                 <tr key={m.id} className="hover:bg-[var(--theme-bg-secondary)]">
                   <td className="px-4 py-3 text-[var(--theme-text-secondary)]">{m.position}</td>
                   <td className="px-4 py-3">
-                    {m.thumbnailBytes || m.thumbnailUrl ? (
+                    {thumb ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={
-                          m.thumbnailBytes
-                            ? `/api/images/media-thumbnail/${m.id}`
-                            : m.thumbnailUrl
-                        }
+                        src={thumb}
                         alt=""
                         className="h-10 w-16 rounded object-cover"
                       />

@@ -77,7 +77,6 @@ export function buildMediaSchema(
     description?: string;
     mediaType: MediaType;
     thumbnailUrl?: string;
-    hasThumbnail?: boolean;
     createdAt?: Date | string;
     updatedAt?: Date | string;
   },
@@ -86,15 +85,19 @@ export function buildMediaSchema(
 ): JsonLdBase {
   const siteUrl = `https://${config.domain}`;
   const url = `${siteUrl}/c/${channel.slug}/${media.id}`;
-  const imageUrl = media.hasThumbnail
-    ? `${siteUrl}/api/images/media-thumbnail/${media.id}`
-    : media.thumbnailUrl || undefined;
+  // thumbnailUrl arrives already resolved (/api/images/<id> for byte-backed
+  // rows, or an external link). Schema.org wants absolute URLs, so prefix the
+  // site origin for app-relative paths and pass external links through as-is.
+  const imageUrl = media.thumbnailUrl
+    ? media.thumbnailUrl.startsWith("/")
+      ? `${siteUrl}${media.thumbnailUrl}`
+      : media.thumbnailUrl
+    : undefined;
 
   const shared = {
     name: media.name,
     url,
     ...(media.description && { description: media.description }),
-    ...(imageUrl && { thumbnailUrl: imageUrl }),
     ...(media.createdAt && { datePublished: new Date(media.createdAt).toISOString() }),
     ...(media.updatedAt && { dateModified: new Date(media.updatedAt).toISOString() }),
   };

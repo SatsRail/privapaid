@@ -131,7 +131,14 @@ export default async function EditMediaPage({
   const { id: channelId, mediaId } = await params;
 
   const [media, channel, instanceConfig] = await Promise.all([
-    prisma.media.findUnique({ where: { id: mediaId } }),
+    prisma.media.findUnique({
+      where: { id: mediaId },
+      include: {
+        images: {
+          select: { id: true, kind: true, externalUrl: true, position: true },
+        },
+      },
+    }),
     prisma.channel.findUnique({ where: { id: channelId }, select: { slug: true } }),
     getInstanceConfig(),
   ]);
@@ -176,17 +183,17 @@ export default async function EditMediaPage({
     }
   }
 
-  // Extract blob ids from Media.previewImageUrls (shaped like `/api/images/<id>`).
-  // External URLs (non-/api/images/) pass through unchanged in display but
-  // don't surface as removable "ids" in the admin slot UI.
-  const previewImageIds = (media.previewImageUrls ?? [])
-    .map((u) => {
-      const m = /^\/api\/images\/([^/?#]+)$/.exec(u);
-      return m ? m[1] : null;
-    })
-    .filter((id): id is string => id !== null);
-
-  const thumbnailId = media.thumbnailBytes ? media.id : "";
+  // Map the MediaImage relation into the form's wire shape. The form round-trips
+  // byte-backed images by id (/api/images/<id>) and a url-backed thumbnail via
+  // thumbnail_url. Byte-backed previews surface as removable id slots; url-backed
+  // previews (imported) aren't editable in the slot UI and drop on save.
+  const thumbnailRow = media.images.find((img) => img.kind === "thumbnail");
+  const thumbnailId = thumbnailRow && !thumbnailRow.externalUrl ? thumbnailRow.id : "";
+  const thumbnailUrl = thumbnailRow?.externalUrl ?? "";
+  const previewImageIds = media.images
+    .filter((img) => img.kind === "preview" && !img.externalUrl)
+    .sort((a, b) => a.position - b.position)
+    .map((img) => img.id);
 
   const serialized = {
     _id: media.id,
@@ -194,7 +201,7 @@ export default async function EditMediaPage({
     description: media.description || "",
     source_url: await sourceUrlForForm(media.blob),
     media_type: media.mediaType,
-    thumbnail_url: media.thumbnailUrl || "",
+    thumbnail_url: thumbnailUrl,
     thumbnail_id: thumbnailId,
     preview_image_ids: previewImageIds,
     product_ids: [...new Set([...allProductIds, ...productDetails.map((p) => p.id)])],

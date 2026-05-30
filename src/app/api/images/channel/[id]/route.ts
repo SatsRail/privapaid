@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
  *
  * Serves a channel's avatar straight from the `Channel.profileImageBytes`
  * column (set on import). Distinct from /api/images/[id], which reads the
- * generic `PreviewImage` blob store for uploaded-before-the-row images.
+ * `MediaImage` table (media thumbnails + preview-gallery images).
  * The id here is the Channel row id.
  */
 export async function GET(

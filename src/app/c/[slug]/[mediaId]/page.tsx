@@ -8,6 +8,7 @@ import MediaLayout from "@/components/layout/MediaLayout";
 import MediaBreadcrumb from "@/components/MediaBreadcrumb";
 import UnavailableWall from "@/components/UnavailableWall";
 import { buildMediaSchema, buildBreadcrumbSchema } from "@/lib/jsonld";
+import { resolveMediaImages } from "@/lib/images";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 
@@ -27,15 +28,6 @@ function resolveChannelAvatar(channel: {
   return channel.profileImageUrl || "";
 }
 
-function resolveMediaThumb(media: {
-  id: string;
-  thumbnailBytes: Uint8Array | null;
-  thumbnailUrl: string;
-}): string {
-  if (media.thumbnailBytes) return `/api/images/media-thumbnail/${media.id}`;
-  return media.thumbnailUrl || "";
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, mediaId } = await params;
 
@@ -48,12 +40,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const media = await prisma.media.findUnique({
     where: { id: mediaId },
     select: {
-      id: true,
       name: true,
       description: true,
       mediaType: true,
-      thumbnailUrl: true,
-      thumbnailBytes: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
     },
   });
   if (!media) return { title: "Not Found" };
@@ -62,11 +54,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const description = media.description
     ? media.description.slice(0, 160)
     : undefined;
-  const imageUrl = media.thumbnailBytes
-    ? `/api/images/media-thumbnail/${media.id}`
-    : media.thumbnailUrl
-      || instanceConfig.theme.logo
-      || undefined;
+  const imageUrl =
+    resolveMediaImages(media.images).thumbnailUrl ||
+    instanceConfig.theme.logo ||
+    undefined;
 
   // Map media_type to OG type
   const ogType = media.mediaType === "video" ? "video.other"
@@ -114,6 +105,11 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   // payload is filtered explicitly below.
   const media = await prisma.media.findFirst({
     where: { id: mediaId, channelId: channel.id },
+    include: {
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
+    },
   });
   if (!media) notFound();
 
@@ -138,7 +134,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
             <UnavailableWall
               variant="overlay"
               reason="error"
-              thumbnailUrl={resolveMediaThumb(media)}
+              thumbnailUrl={resolveMediaImages(media.images).thumbnailUrl}
               mediaName={media.name}
               locale={locale}
             />
@@ -224,12 +220,11 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     }
   }
 
-  // Preview images: direct URLs stored on Media.previewImageUrls. Uploaded
-  // images live as bytes in the PreviewImage table and are referenced here
-  // via `/api/images/<id>` URLs. Cap-of-6 enforced on read.
-  const previewImages = (media.previewImageUrls || []).slice(0, 6);
-
-  const thumbSrc = resolveMediaThumb(media);
+  // Thumbnail + preview images resolved from the MediaImage relation
+  // (byte-backed → /api/images/<id>, url-backed → externalUrl). Previews are
+  // ordered by position; cap-of-6 enforced on read.
+  const { thumbnailUrl: thumbSrc, previewUrls } = resolveMediaImages(media.images);
+  const previewImages = previewUrls.slice(0, 6);
 
   // Sibling-media list for the YouTube-style "up next" sidebar. Most-viewed
   // first (founder's choice — surface the channel's hits), current media
@@ -243,8 +238,9 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     select: {
       id: true,
       name: true,
-      thumbnailBytes: true,
-      thumbnailUrl: true,
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
       mediaType: true,
       viewsCount: true,
       createdAt: true,
@@ -256,7 +252,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   const siblingMedia = siblingDocs.map((m) => ({
     _id: m.id,
     name: m.name,
-    thumbnailSrc: resolveMediaThumb(m),
+    thumbnailSrc: resolveMediaImages(m.images).thumbnailUrl,
     mediaType: m.mediaType,
     viewsCount: m.viewsCount ?? 0,
     href: `/c/${slug}/${m.id}`,
@@ -272,8 +268,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       name: media.name,
       description: media.description,
       mediaType: media.mediaType,
-      thumbnailUrl: media.thumbnailUrl,
-      hasThumbnail: !!media.thumbnailBytes,
+      thumbnailUrl: thumbSrc,
       createdAt: media.createdAt,
       updatedAt: media.updatedAt,
     },
@@ -297,8 +292,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       name: media.name,
       description: media.description,
       media_type: media.mediaType,
-      thumbnail_url: media.thumbnailUrl,
-      thumbnail_id: media.thumbnailBytes ? media.id : undefined,
+      thumbnail_url: thumbSrc,
       views_count: media.viewsCount,
       comments_count: media.commentsCount,
       likes_count: media.likesCount ?? 0,

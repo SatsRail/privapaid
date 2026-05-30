@@ -50,13 +50,19 @@ async function main() {
         "the show-more toggle appears.",
       mediaType: "video",
       blob: { kind: "url", url: "https://example.com/video.mp4" },
-      thumbnailUrl: tile("#1e293b", "▶"),
-      previewImageUrls: [tile("#3b82f6", "1"), tile("#10b981", "2"), tile("#f59e0b", "3")],
       viewsCount: 12480,
       likesCount: 342,
       sharesCount: 58,
       position: 1,
     },
+  });
+  await prisma.mediaImage.create({
+    data: { mediaId: main.id, kind: "thumbnail", externalUrl: tile("#1e293b", "▶"), position: 0 },
+  });
+  await prisma.mediaImage.createMany({
+    data: [tile("#3b82f6", "1"), tile("#10b981", "2"), tile("#f59e0b", "3")].map(
+      (url, i) => ({ mediaId: main.id, kind: "preview" as const, externalUrl: url, position: i })
+    ),
   });
 
   const siblings = [
@@ -67,16 +73,18 @@ async function main() {
   ];
   let pos = 2;
   for (const s of siblings) {
-    await prisma.media.create({
+    const sib = await prisma.media.create({
       data: {
         channelId: channel.id,
         name: s.name,
         mediaType: "video",
         blob: { kind: "url", url: "https://example.com/video.mp4" },
-        thumbnailUrl: tile(s.color, "▶"),
         viewsCount: s.views,
         position: pos++,
       },
+    });
+    await prisma.mediaImage.create({
+      data: { mediaId: sib.id, kind: "thumbnail", externalUrl: tile(s.color, "▶"), position: 0 },
     });
   }
   await prisma.channel.update({

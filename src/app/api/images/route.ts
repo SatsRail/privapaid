@@ -7,15 +7,15 @@ import { rateLimit } from "@/lib/rate-limit";
 /**
  * POST /api/images
  *
- * Generic image upload endpoint. The bytes go into the `PreviewImage` table —
- * the standalone image store for free-standing uploads — and the row id is
- * returned to the caller so it can be embedded via /api/images/{id}.
+ * Generic image upload endpoint. The bytes go into the `MediaImage` table
+ * (mediaId null until the owning Media row is saved) and the row id is
+ * returned so the caller can embed it via /api/images/{id}. Media thumbnails
+ * and preview-gallery images are uploaded here first, then linked to their
+ * Media on save — the create/patch routes set the real kind + position
+ * (kind defaults to `preview` here).
  *
- * Owner-specific images (channel avatar, media thumbnail, logo) have
- * dedicated POST endpoints that write directly to the owning row's Bytes
- * column. This route stays for free-standing images uploaded before the
- * owning row exists yet (e.g. preview gallery uploads during media
- * creation, ImageUpload component in admin forms).
+ * Channel avatars and the settings logo are NOT handled here; they keep their
+ * own Bytes columns and dedicated endpoints.
  */
 export async function POST(req: NextRequest) {
   const limited = await rateLimit("image_upload", 30);
@@ -104,11 +104,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Standalone images live in the PreviewImage table — a generic blob
-    // store with no FKs, separate from the EncryptedEnvelope table that
-    // holds ciphertext for paid content. The caller embeds the returned id
-    // via /api/images/{id}.
-    const image = await prisma.previewImage.create({
+    // Unencrypted image bytes live in the MediaImage table (mediaId null
+    // here; linked to a Media on save), separate from the EncryptedEnvelope
+    // table that holds ciphertext for paid content. The caller embeds the
+    // returned id via /api/images/{id}.
+    const image = await prisma.mediaImage.create({
       data: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         bytes: strippedBuffer as any,

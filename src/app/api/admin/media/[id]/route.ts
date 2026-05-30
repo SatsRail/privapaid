@@ -158,6 +158,64 @@ async function reEncryptBlobs(
   }
 }
 
+/**
+ * Reconcile a Media's thumbnail + preview MediaImage rows to the desired state
+ * submitted by an edit. PATCH is partial, so only dimensions present in the
+ * payload are touched: pass thumbnailId/thumbnailUrl to set the thumbnail and
+ * previewIds to set the gallery. Uploaded ids are claimed from the free-standing
+ * pool (mediaId null) or reordered in place; rows of a reconciled kind that are
+ * no longer referenced are deleted (freeing their bytes).
+ *
+ * Reassign-then-prune ordering lets an image move between kinds (e.g. promoting
+ * a preview to the thumbnail) without being deleted mid-flight. The where guard
+ * `mediaId IS NULL OR mediaId = this` ensures we never steal another media's row.
+ */
+async function reconcileMediaImages(
+  tx: Prisma.TransactionClient,
+  mediaId: string,
+  desired: { thumbnailId?: string; thumbnailUrl?: string; previewIds?: string[] }
+): Promise<void> {
+  const thumbnailProvided =
+    desired.thumbnailId !== undefined || desired.thumbnailUrl !== undefined;
+  const previewsProvided = desired.previewIds !== undefined;
+  if (!thumbnailProvided && !previewsProvided) return;
+
+  // 1. Claim / reorder the rows we want to keep.
+  if (desired.thumbnailId) {
+    await tx.mediaImage.updateMany({
+      where: { id: desired.thumbnailId, OR: [{ mediaId: null }, { mediaId }] },
+      data: { mediaId, kind: "thumbnail", position: 0 },
+    });
+  }
+  const previewIds = desired.previewIds ?? [];
+  for (let i = 0; i < previewIds.length; i++) {
+    await tx.mediaImage.updateMany({
+      where: { id: previewIds[i], OR: [{ mediaId: null }, { mediaId }] },
+      data: { mediaId, kind: "preview", position: i },
+    });
+  }
+
+  // 2. Prune this media's now-unreferenced rows in the reconciled kinds. Runs
+  //    before the external-thumbnail insert so that fresh row isn't pruned.
+  const survivors = [
+    ...(desired.thumbnailId ? [desired.thumbnailId] : []),
+    ...previewIds,
+  ];
+  const kinds: ("thumbnail" | "preview")[] = [];
+  if (thumbnailProvided) kinds.push("thumbnail");
+  if (previewsProvided) kinds.push("preview");
+  await tx.mediaImage.deleteMany({
+    where: { mediaId, kind: { in: kinds }, id: { notIn: survivors } },
+  });
+
+  // 3. An external thumbnail URL (no upload id) becomes a fresh url-backed row.
+  if (thumbnailProvided && !desired.thumbnailId && desired.thumbnailUrl) {
+    await tx.mediaImage.create({
+      data: { mediaId, kind: "thumbnail", externalUrl: desired.thumbnailUrl, position: 0 },
+    });
+  }
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -230,24 +288,9 @@ export async function PATCH(
   if (validated.name !== undefined) updates.name = validated.name;
   if (validated.description !== undefined) updates.description = validated.description;
   if (validated.media_type !== undefined) updates.mediaType = validated.media_type;
-  // thumbnail_id is a PreviewImage row id served via /api/images/<id>. The edit
-  // page reuses `thumbnail_id === media.id` as a flag meaning "byte-backed
-  // thumbnail already exists" — that's not a PreviewImage id, so skip it and
-  // leave the stored URL untouched.
-  if (validated.thumbnail_id && validated.thumbnail_id !== id) {
-    updates.thumbnailUrl = `/api/images/${validated.thumbnail_id}`;
-  } else if (validated.thumbnail_url !== undefined) {
-    updates.thumbnailUrl = validated.thumbnail_url;
-  }
-  // The form only round-trips /api/images/<id> previews (edit page filters out
-  // external URLs on load), so this overwrite drops any imported non-uploaded
-  // preview URL on a subsequent edit-save. Acceptable for the upload-driven flow.
-  if (validated.preview_image_ids !== undefined) {
-    updates.previewImageUrls = validated.preview_image_ids.map(
-      (pid) => `/api/images/${pid}`
-    );
-  }
   if (validated.position !== undefined) updates.position = validated.position;
+  // Thumbnail + preview images live in MediaImage now and are reconciled inside
+  // the transaction below (reconcileMediaImages), not via Media columns.
 
   let plan: UpdatePlan | null = null;
   let existingBlob: MediaBlob | null = null;
@@ -291,7 +334,13 @@ export async function PATCH(
           mimeType: plan.mimeType,
         };
       }
-      return tx.media.update({ where: { id }, data: updates });
+      const updated = await tx.media.update({ where: { id }, data: updates });
+      await reconcileMediaImages(tx, id, {
+        thumbnailId: validated.thumbnail_id,
+        thumbnailUrl: validated.thumbnail_url,
+        previewIds: validated.preview_image_ids,
+      });
+      return updated;
     });
   } catch (err) {
     // Validation already passed; the most likely cause is a concurrent

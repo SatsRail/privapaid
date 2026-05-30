@@ -52,9 +52,9 @@ describe("GET /api/images/[id]", () => {
     expect(body.error).toBe("Image not found");
   });
 
-  it("returns an PreviewImage row with its stored MIME type", async () => {
+  it("returns a MediaImage row with its stored MIME type", async () => {
     const imageData = Buffer.from("blob-bytes");
-    const blob = await prisma.previewImage.create({
+    const blob = await prisma.mediaImage.create({
       data: { bytes: imageData, mimeType: "image/jpeg" },
       select: { id: true },
     });
@@ -73,9 +73,9 @@ describe("GET /api/images/[id]", () => {
     expect(buf.equals(imageData)).toBe(true);
   });
 
-  it("returns 500 when the PreviewImage lookup throws", async () => {
+  it("returns 500 when the MediaImage lookup throws", async () => {
     const spy = vi
-      .spyOn(prisma.previewImage, "findUnique")
+      .spyOn(prisma.mediaImage, "findUnique")
       .mockRejectedValueOnce(new Error("DB error"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

@@ -16,7 +16,6 @@ export interface MediaPageData {
     description?: string;
     media_type: string;
     thumbnail_url?: string;
-    thumbnail_id?: string;
     views_count: number;
     comments_count: number;
     likes_count: number;

@@ -551,6 +551,40 @@ function productPlaintextFromMediaRow(media: { blob: unknown }): string {
   return plaintextForEncryption(blob);
 }
 
+/**
+ * Replace a media's url-backed MediaImage rows from the import wire fields.
+ * Imports carry external image links (thumbnail_url + preview_image_urls), so
+ * each becomes an externalUrl-backed row. Empty strings mean "no image" and
+ * are skipped rather than stored as a blank URL.
+ *
+ * The thumbnail is always reconciled (the old import set Media.thumbnailUrl
+ * unconditionally). Previews are only touched when the import provides them,
+ * matching the old conditional write that left existing previews intact when
+ * the field was absent.
+ */
+async function syncImportedMediaImages(
+  mediaId: string,
+  thumbnailUrl: string | undefined,
+  previewUrls: string[] | undefined
+): Promise<void> {
+  await prisma.mediaImage.deleteMany({ where: { mediaId, kind: "thumbnail" } });
+  if (thumbnailUrl) {
+    await prisma.mediaImage.create({
+      data: { mediaId, kind: "thumbnail", externalUrl: thumbnailUrl, position: 0 },
+    });
+  }
+
+  if (previewUrls && previewUrls.length > 0) {
+    await prisma.mediaImage.deleteMany({ where: { mediaId, kind: "preview" } });
+    const rows = previewUrls
+      .map((url, i) => ({ mediaId, kind: "preview" as const, externalUrl: url, position: i }))
+      .filter((row) => !!row.externalUrl);
+    if (rows.length > 0) {
+      await prisma.mediaImage.createMany({ data: rows });
+    }
+  }
+}
+
 // Find existing media by ref or name
 export async function findExistingMedia(mData: ImportMedia, channelId: string) {
   const byRef = mData.ref
@@ -586,11 +620,14 @@ export async function updateExistingMedia(
       description: mData.description || "",
       blob: newBlob,
       mediaType: mData.media_type || "video",
-      thumbnailUrl: mData.thumbnail_url || "",
-      ...(mData.preview_image_urls?.length ? { previewImageUrls: mData.preview_image_urls } : {}),
       ...(mData.position !== undefined ? { position: mData.position } : {}),
     },
   });
+  await syncImportedMediaImages(
+    existingMedia.id,
+    mData.thumbnail_url,
+    mData.preview_image_urls
+  );
 
   if (mData.product && sk) {
     // For articles, the per-product blob's plaintext is the raw DEK — which
@@ -652,11 +689,10 @@ export async function createNewMedia(
       description: mData.description || "",
       blob,
       mediaType: mData.media_type || "video",
-      thumbnailUrl: mData.thumbnail_url || "",
-      previewImageUrls: mData.preview_image_urls || [],
       position: mData.position ?? (maxPos?.position ?? 0) + 1,
     },
   });
+  await syncImportedMediaImages(media.id, mData.thumbnail_url, mData.preview_image_urls);
 
   if (mData.product && sk && channelDoc.satsrailProductTypeId) {
     try {

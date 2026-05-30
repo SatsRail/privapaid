@@ -10,13 +10,11 @@ import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { prisma } from "@/lib/prisma";
 
-import { GET as getMediaThumbnail } from "@/app/api/images/media-thumbnail/[id]/route";
 import { GET as getChannelAvatar } from "@/app/api/images/channel/[id]/route";
 
-// These two routes serve owner-row byte columns (Media.thumbnailBytes,
-// Channel.profileImageBytes) — distinct from the generic PreviewImage store
-// that /api/images/[id] reads. No auth: image bytes are public once a row
-// exists, same as the generic route.
+// This route serves an owner-row byte column (Channel.profileImageBytes) —
+// distinct from the generic MediaImage store that /api/images/[id] reads.
+// No auth: image bytes are public once a row exists, same as the generic route.
 
 let refCounter = 1;
 function nextRef(): number {
@@ -56,92 +54,6 @@ describe("Owner-byte image routes", () => {
     });
     return channel.id;
   }
-
-  async function seedMedia(chId: string, overrides: Record<string, unknown> = {}): Promise<string> {
-    const media = await prisma.media.create({
-      data: {
-        ref: nextRef(),
-        channelId: chId,
-        name: "Test Video",
-        blob: { kind: "url", url: "https://example.com/video.mp4" },
-        mediaType: "video",
-        position: 1,
-        ...overrides,
-      },
-    });
-    return media.id;
-  }
-
-  describe("GET /api/images/media-thumbnail/[id]", () => {
-    it("serves the thumbnail bytes with the stored MIME type", async () => {
-      const chId = await seedChannel();
-      const bytes = Buffer.from("thumbnail-bytes");
-      const mediaId = await seedMedia(chId, {
-        thumbnailBytes: bytes,
-        thumbnailMimeType: "image/webp",
-      });
-
-      const res = await getMediaThumbnail(
-        makeRequest(`http://localhost:3000/api/images/media-thumbnail/${mediaId}`),
-        params(mediaId)
-      );
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Content-Type")).toBe("image/webp");
-      expect(res.headers.get("Cache-Control")).toBe(
-        "public, max-age=31536000, immutable"
-      );
-      expect(res.headers.get("ETag")).toBe(`"${mediaId}"`);
-      const body = Buffer.from(await res.arrayBuffer());
-      expect(body.equals(bytes)).toBe(true);
-    });
-
-    it("falls back to octet-stream when MIME type is null", async () => {
-      const chId = await seedChannel();
-      const mediaId = await seedMedia(chId, {
-        thumbnailBytes: Buffer.from("x"),
-        thumbnailMimeType: null,
-      });
-
-      const res = await getMediaThumbnail(
-        makeRequest(`http://localhost:3000/api/images/media-thumbnail/${mediaId}`),
-        params(mediaId)
-      );
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
-    });
-
-    it("returns 404 when the media has no thumbnail bytes", async () => {
-      const chId = await seedChannel();
-      const mediaId = await seedMedia(chId); // no thumbnailBytes
-
-      const res = await getMediaThumbnail(
-        makeRequest(`http://localhost:3000/api/images/media-thumbnail/${mediaId}`),
-        params(mediaId)
-      );
-
-      expect(res.status).toBe(404);
-    });
-
-    it("returns 404 when the media row does not exist", async () => {
-      const res = await getMediaThumbnail(
-        makeRequest("http://localhost:3000/api/images/media-thumbnail/does-not-exist"),
-        params("does-not-exist")
-      );
-
-      expect(res.status).toBe(404);
-    });
-
-    it("returns 400 for an empty id", async () => {
-      const res = await getMediaThumbnail(
-        makeRequest("http://localhost:3000/api/images/media-thumbnail/"),
-        params("")
-      );
-
-      expect(res.status).toBe(400);
-    });
-  });
 
   describe("GET /api/images/channel/[id]", () => {
     it("serves the avatar bytes with the stored MIME type", async () => {

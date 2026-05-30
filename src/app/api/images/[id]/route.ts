@@ -5,13 +5,14 @@ import { prisma } from "@/lib/prisma";
  * GET /api/images/[id]
  *
  * Generic image-serving endpoint. The id is an opaque row id returned by
- * POST /api/images; bytes live in the `PreviewImage` table — the generic
- * blob store for free-standing image uploads (preview gallery, thumbnails
- * uploaded before the owning row exists, etc.). Distinct from
- * /api/envelopes/[id], which serves encrypted content envelopes.
+ * POST /api/images; bytes live in the `MediaImage` table — thumbnails and
+ * preview-gallery images for media. Distinct from /api/envelopes/[id], which
+ * serves encrypted content envelopes.
  *
- * Owner-specific images (channel avatar, media thumbnail, logo) have
- * dedicated routes that read directly from the row's Bytes column.
+ * Only byte-backed rows serve here. Url-backed MediaImage rows (imported
+ * direct links, bytes null) 404 — they are referenced by their externalUrl,
+ * never via this route. Channel avatars and the settings logo keep their own
+ * Bytes columns and dedicated routes.
  */
 export async function GET(
   _req: NextRequest,
@@ -24,14 +25,14 @@ export async function GET(
   }
 
   try {
-    const image = await prisma.previewImage.findUnique({
+    const image = await prisma.mediaImage.findUnique({
       where: { id },
       select: { bytes: true, mimeType: true },
     });
-    if (image) {
+    if (image?.bytes) {
       return new Response(image.bytes, {
         headers: {
-          "Content-Type": image.mimeType,
+          "Content-Type": image.mimeType ?? "application/octet-stream",
           "Content-Length": image.bytes.length.toString(),
           "Cache-Control": "public, max-age=31536000, immutable",
           ETag: `"${id}"`,

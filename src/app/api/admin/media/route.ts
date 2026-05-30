@@ -256,15 +256,38 @@ export async function POST(req: NextRequest) {
         description: result.description || "",
         blob,
         mediaType,
-        // thumbnail_id is a PreviewImage row id served via /api/images/<id>.
-        thumbnailUrl: result.thumbnail_id
-          ? `/api/images/${result.thumbnail_id}`
-          : result.thumbnail_url || "",
-        previewImageUrls:
-          result.preview_image_ids?.map((pid) => `/api/images/${pid}`) ?? [],
         position: result.position ?? (maxPos?.position ?? 0) + 1,
       },
     });
+
+    // Link images to this Media. Uploaded thumbnails/previews already exist as
+    // free-standing MediaImage rows (created via POST /api/images with mediaId
+    // null); here we claim them and set kind + position. updateMany (not
+    // update) so a stale id links nothing instead of aborting the create. An
+    // external thumbnail_url with no upload becomes a url-backed row.
+    if (result.thumbnail_id) {
+      await tx.mediaImage.updateMany({
+        where: { id: result.thumbnail_id },
+        data: { mediaId: media.id, kind: "thumbnail", position: 0 },
+      });
+    } else if (result.thumbnail_url) {
+      await tx.mediaImage.create({
+        data: {
+          mediaId: media.id,
+          kind: "thumbnail",
+          externalUrl: result.thumbnail_url,
+          position: 0,
+        },
+      });
+    }
+
+    const previewIds = result.preview_image_ids ?? [];
+    for (let i = 0; i < previewIds.length; i++) {
+      await tx.mediaImage.updateMany({
+        where: { id: previewIds[i] },
+        data: { mediaId: media.id, kind: "preview", position: i },
+      });
+    }
 
     await tx.channel.update({
       where: { id: channel_id },
@@ -318,6 +341,12 @@ export async function POST(req: NextRequest) {
     console.error("Failed to encrypt for channel products:", err);
   }
 
+  // Thumbnail now lives in MediaImage; reconstruct the wire URL from the same
+  // inputs we just linked (uploaded id → /api/images/<id>, else external url).
+  const thumbnailUrl = result.thumbnail_id
+    ? `/api/images/${result.thumbnail_id}`
+    : result.thumbnail_url || "";
+
   // Surface a stable wire shape that still exposes source_url for older clients.
   // Server-internal storage is the JSONB blob; the wire shape is a translation.
   return NextResponse.json(
@@ -330,7 +359,7 @@ export async function POST(req: NextRequest) {
         description: media.description,
         source_url,
         media_type: media.mediaType,
-        thumbnail_url: media.thumbnailUrl,
+        thumbnail_url: thumbnailUrl,
         position: media.position,
         views_count: media.viewsCount,
         comments_count: media.commentsCount,

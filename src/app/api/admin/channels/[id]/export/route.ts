@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
 import { decryptBytes } from "@/lib/content-encryption";
@@ -44,6 +45,11 @@ export async function GET(
   const media = await prisma.media.findMany({
     where: { channelId: id, deletedAt: null },
     orderBy: { position: "asc" },
+    include: {
+      images: {
+        select: { id: true, kind: true, externalUrl: true, position: true },
+      },
+    },
   });
 
   const mediaIds = media.map((m) => m.id);
@@ -64,7 +70,7 @@ export async function GET(
       description: m.description || "",
       source_url: await sourceUrlForExport(m.blob),
       media_type: m.mediaType,
-      thumbnail_url: m.thumbnailUrl || "",
+      thumbnail_url: resolveMediaImages(m.images).thumbnailUrl,
       position: m.position,
     };
 

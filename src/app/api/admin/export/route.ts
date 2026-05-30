@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { resolveMediaImages } from "@/lib/images";
 import { requireAdminApi } from "@/lib/auth-helpers";
 import { audit } from "@/lib/audit";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
@@ -52,6 +53,11 @@ export async function GET() {
     ? await prisma.media.findMany({
         where: { channelId: { in: channelIds }, deletedAt: null },
         orderBy: { position: "asc" },
+        include: {
+          images: {
+            select: { id: true, kind: true, externalUrl: true, position: true },
+          },
+        },
       })
     : [];
 
@@ -125,6 +131,7 @@ export async function GET() {
           : {}),
         media: await Promise.all(channelMedia.map(async (m) => {
           const mp = mediaProductMap.get(m.id);
+          const { thumbnailUrl, previewUrls } = resolveMediaImages(m.images);
 
           return {
             ref: m.ref,
@@ -132,8 +139,8 @@ export async function GET() {
             description: m.description || "",
             source_url: await sourceUrlForExport(m.blob),
             media_type: m.mediaType,
-            thumbnail_url: m.thumbnailUrl || "",
-            preview_image_urls: m.previewImageUrls || [],
+            thumbnail_url: thumbnailUrl,
+            preview_image_urls: previewUrls,
             position: m.position,
             ...(mp?.productName
               ? {
