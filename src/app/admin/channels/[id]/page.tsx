@@ -198,7 +198,16 @@ export default async function ChannelDetailPage({
                   <td className="px-4 py-3 font-mono text-xs text-[var(--theme-text-secondary)]">
                     {m.ref != null ? `md_${m.ref}` : "—"}
                   </td>
-                  <td className="px-4 py-3 font-medium">{m.name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <div className="flex items-center gap-2">
+                      <span>{m.name}</span>
+                      {m.status === "error" && (
+                        <span title={m.statusReason ?? undefined}>
+                          <Badge color="red">{t(locale, "admin.media.status_error_badge")}</Badge>
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <Badge>{m.mediaType}</Badge>
                   </td>

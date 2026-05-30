@@ -51,6 +51,12 @@ export default function MediaLayout({
   const hasActiveAccess = access.status === "active";
   const remainingSeconds = access.status === "active" ? access.remainingSeconds : null;
 
+  // Access-first: while the hook is still verifying (only possible when the
+  // server-render found a stored macaroon for this media), hide the price
+  // pills. First-time viewers seed synchronously to "inactive" and never
+  // enter this state, so the paywall still shows immediately for them.
+  const checkingAccess = access.status === "loading";
+
   // Channel-of-one collapses to single column — empty rail is uglier than
   // no rail. siblingMedia is server-decided (page.tsx fetches all-but-current
   // media in the channel, capped at 20, sorted by views desc).
@@ -138,6 +144,7 @@ export default function MediaLayout({
             products={products}
             locale={locale}
             remainingSeconds={remainingSeconds}
+            checkingAccess={checkingAccess}
           />
 
           {/* YouTube-style meta row: views sit under the title, above the

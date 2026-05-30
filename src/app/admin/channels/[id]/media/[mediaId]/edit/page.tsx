@@ -5,6 +5,9 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import MediaForm from "../../MediaForm";
 import DeleteMediaButton from "./DeleteMediaButton";
+import MarkResolvedButton from "./MarkResolvedButton";
+import Badge from "@/components/ui/Badge";
+import { t } from "@/i18n";
 import { parseMediaBlob } from "@/lib/schemas/media-blob";
 import { decryptBytes } from "@/lib/content-encryption";
 import { unwrapDek } from "@/lib/content-dek";
@@ -135,6 +138,7 @@ export default async function EditMediaPage({
   if (!media) notFound();
 
   const currency = instanceConfig.currency;
+  const locale = instanceConfig.locale;
 
   // All blobs covering this media (direct-sale + channel-scoped), via the
   // unified MediaEncryptedBlob table.
@@ -200,6 +204,38 @@ export default async function EditMediaPage({
 
   return (
     <div>
+      {media.status === "error" && (
+        <div className="mb-6 rounded-xl border border-red-900/50 bg-red-950/20 p-5">
+          <div className="flex items-center gap-2">
+            <Badge color="red">{t(locale, "admin.media.status_error_badge")}</Badge>
+            <h2 className="text-sm font-semibold text-red-300">
+              {t(locale, "admin.media.status_error_title")}
+            </h2>
+          </div>
+          <p className="mt-2 text-sm text-[var(--theme-text-secondary)]">
+            {t(locale, "admin.media.status_error_description")}
+          </p>
+          <dl className="mt-3 space-y-1 text-sm">
+            {media.statusReason && (
+              <div className="flex gap-2">
+                <dt className="text-[var(--theme-text-secondary)]">
+                  {t(locale, "admin.media.status_reason")}:
+                </dt>
+                <dd>{t(locale, `admin.media.reason_${media.statusReason}`)}</dd>
+              </div>
+            )}
+            {media.statusChangedAt && (
+              <div className="flex gap-2">
+                <dt className="text-[var(--theme-text-secondary)]">
+                  {t(locale, "admin.media.status_flagged_at")}:
+                </dt>
+                <dd>{media.statusChangedAt.toISOString().replace("T", " ").slice(0, 19)} UTC</dd>
+              </div>
+            )}
+          </dl>
+          <MarkResolvedButton mediaId={mediaId} />
+        </div>
+      )}
       <MediaForm
         channelId={channelId}
         channelSlug={channel?.slug}

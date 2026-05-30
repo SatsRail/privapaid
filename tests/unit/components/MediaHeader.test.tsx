@@ -168,4 +168,44 @@ describe("MediaHeader", () => {
       expect(screen.getByText("$1")).toBeInTheDocument();
     });
   });
+
+  // -----------------------------------------------------------
+  // Access-first checking gate (Part A). While the parent hook is
+  // still resolving paid access, the header must not flash a price
+  // or lifetime pill — a returning paid viewer would briefly see
+  // "From $X" before the clock takes over. checkingAccess suppresses
+  // every pill until access resolves.
+  // -----------------------------------------------------------
+  describe("checkingAccess gate", () => {
+    it("hides every pill while checking, even with a price and an active clock", () => {
+      const products = [
+        makeProduct({ accessDurationSeconds: 604800, priceCents: 500, currency: "USD" }),
+      ];
+      render(
+        <MediaHeader
+          {...baseProps}
+          products={products}
+          remainingSeconds={604800}
+          checkingAccess
+        />
+      );
+      expect(screen.queryByText(/viewer\.media\.access_label/)).not.toBeInTheDocument();
+      expect(screen.queryByText("$5")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("lifetime-tag")).not.toBeInTheDocument();
+    });
+
+    it("hides the lifetime tag and price pill while checking", () => {
+      const products = [makeProduct({ priceCents: 500, currency: "USD" })];
+      render(<MediaHeader {...baseProps} products={products} checkingAccess />);
+      expect(screen.queryByTestId("lifetime-tag")).not.toBeInTheDocument();
+      expect(screen.queryByText("$5")).not.toBeInTheDocument();
+    });
+
+    it("renders the pills again once checkingAccess is false", () => {
+      const products = [makeProduct({ priceCents: 500, currency: "USD" })];
+      render(<MediaHeader {...baseProps} products={products} checkingAccess={false} />);
+      expect(screen.getByText("$5")).toBeInTheDocument();
+      expect(screen.getByTestId("lifetime-tag")).toBeInTheDocument();
+    });
+  });
 });

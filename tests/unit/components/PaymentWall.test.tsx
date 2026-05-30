@@ -327,15 +327,126 @@ describe("PaymentWall", () => {
       });
     });
 
-    it("renders pay buttons (not VerifyFailureCard) when access is loading", async () => {
-      // Loading should NOT immediately show the soft-fail card — that card
-      // is for confirmed transient portal hiccups. While loading we just
-      // render the paywall so the user can act.
+  });
+
+  // -------------------------------------------------------
+  // Part A — access-first checking gate
+  // -------------------------------------------------------
+  // While the parent hook is still resolving access (and during the brief
+  // active-but-still-decrypting window) we must show a neutral placeholder,
+  // never the buy buttons. A returning paid viewer used to see the paywall
+  // flash before content appeared; the gate eliminates that.
+  describe("access-first checking gate", () => {
+    it("shows the checking placeholder (not pay buttons) while access is loading", async () => {
       render(<PaymentWall {...defaultProps} access={LOADING_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getByTestId("checking-access")).toBeInTheDocument();
+      });
+      // No buy buttons while loading...
+      expect(screen.queryByText("Unlock with Bitcoin")).not.toBeInTheDocument();
+      // ...and loading is not a confirmed hiccup, so no verify-failure card.
+      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
+    });
+
+    it("shows the checking placeholder while access is active but still decrypting", async () => {
+      // This window also sits past the decryptedBytes early return. Honoring
+      // the access-first contract means a spinner here, not a button flash.
+      mockDecryptBlob.mockImplementation(() => new Promise<Uint8Array>(() => {}));
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
+      await waitFor(() => {
+        expect(screen.getByTestId("checking-access")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("content-renderer")).not.toBeInTheDocument();
+      expect(screen.queryByText("Unlock with Bitcoin")).not.toBeInTheDocument();
+    });
+
+    it("shows pay buttons (not the placeholder) once access resolves to inactive", async () => {
+      render(<PaymentWall {...defaultProps} access={NO_ACCESS} />);
       await waitFor(() => {
         expect(screen.getAllByText("Unlock with Bitcoin")[0]).toBeInTheDocument();
       });
-      expect(screen.queryByText("Couldn't verify your access")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("checking-access")).not.toBeInTheDocument();
+    });
+  });
+
+  // -------------------------------------------------------
+  // Part B — content-integrity error reporting
+  // -------------------------------------------------------
+  // On a confirmed-integrity decrypt failure the client best-effort POSTs
+  // /api/media/[id]/report-error so the server can re-decrypt, confirm, and
+  // flag the media. Transient (availability) failures must NOT report — a
+  // network blip should never take good content offline.
+  describe("integrity error reporting", () => {
+    function reportErrorCalls() {
+      return (global.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "/api/media/media-123/report-error"
+      );
+    }
+
+    it("reports an integrity decrypt failure on active access (OperationError → integrity_auth_failed)", async () => {
+      // Valid macaroon + key, but AES-GCM rejects with OperationError — the
+      // ciphertext or key is wrong (integrity). No payment happened this
+      // session (mount-time active access), so no orderId is sent.
+      mockDecryptBlob.mockRejectedValue(
+        new DOMException("OperationError: auth tag mismatch", "OperationError")
+      );
+
+      render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
+
+      await waitFor(() => expect(reportErrorCalls()).toHaveLength(1));
+      const init = reportErrorCalls()[0][1] as RequestInit;
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual({
+        reason: "integrity_auth_failed",
+        productId: "prod-1",
+      });
+    });
+
+    it("does NOT report a transient envelope-fetch failure (availability, not integrity)", async () => {
+      // photo media unwraps the DEK fine, then the envelope fetch 500s. That's
+      // availability — classifyDecryptFailure returns null, so we must not flag
+      // good content offline over a network blip.
+      mockFetch((url) => {
+        if (url.startsWith("/api/envelopes/")) {
+          return { ok: false, status: 500, json: async () => ({}) };
+        }
+        return undefined; // everything else → 404 default
+      });
+
+      render(
+        <PaymentWall
+          {...defaultProps}
+          access={ACTIVE_ACCESS}
+          mediaType="photo"
+          envelopeId="env-1"
+        />
+      );
+
+      // Wait for the failure card so the decrypt attempt has fully resolved.
+      await waitFor(() => {
+        expect(screen.getByText("Payment received")).toBeInTheDocument();
+      });
+      expect(reportErrorCalls()).toHaveLength(0);
+    });
+
+    it("reports a post-payment key fingerprint mismatch (key_fingerprint_mismatch + order id)", async () => {
+      const user = userEvent.setup();
+      setupFreshPaymentScenario();
+      mockVerifyKeyFingerprint.mockResolvedValue(false);
+
+      render(<StatefulPaymentWall {...defaultProps} />);
+      await waitFor(() => expect(screen.getAllByText(/HD Video/)[0]).toBeInTheDocument());
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await waitFor(() => expect(screen.getByTestId("checkout-overlay")).toBeInTheDocument());
+      await user.click(screen.getByTestId("complete-btn"));
+
+      await waitFor(() => expect(reportErrorCalls()).toHaveLength(1));
+      const init = reportErrorCalls()[0][1] as RequestInit;
+      expect(JSON.parse(init.body as string)).toEqual({
+        reason: "key_fingerprint_mismatch",
+        productId: "prod-1",
+        orderId: "uuid-abc-123",
+      });
     });
   });
 

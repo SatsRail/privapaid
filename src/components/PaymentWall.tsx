@@ -62,6 +62,42 @@ interface PaymentWallProps {
 /** Media types that should show artwork/thumbnail alongside the player */
 const ARTWORK_TYPES = new Set(["audio", "podcast"]);
 
+/**
+ * Allowlisted content-integrity reasons the client may report to
+ * /api/media/[id]/report-error. Mirrors the server's ALLOWED_REASONS. The
+ * fingerprint-mismatch case is reported directly (it isn't a thrown decrypt
+ * error), so it's not produced by classifyDecryptFailure below.
+ */
+type ReportReason =
+  | "integrity_auth_failed"
+  | "missing_envelope_id"
+  | "key_length_invalid"
+  | "blob_too_short";
+
+/**
+ * Map a decrypt failure to an allowlisted integrity reason, or null when the
+ * failure is transient/unknown and must NOT flag the media. A null result
+ * means "still capture in Sentry, but don't report" — the server only flags
+ * content it can independently confirm is broken, and we never want a network
+ * blip (e.g. the envelope fetch) to take good content offline.
+ */
+function classifyDecryptFailure(err: unknown): ReportReason | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  // Envelope fetch failure is availability, not content integrity.
+  if (msg.startsWith("Failed to fetch encrypted envelope")) return null;
+  if (msg.includes("missing its envelope id")) return "missing_envelope_id";
+  if (msg.includes("Key must be 32 bytes")) return "key_length_invalid";
+  if (msg.includes("Blob too short")) return "blob_too_short";
+  // Web Crypto rejects decrypt with an OperationError DOMException when the
+  // AES-GCM auth tag fails — the ciphertext or key is wrong (integrity).
+  if (err instanceof DOMException && err.name === "OperationError") {
+    return "integrity_auth_failed";
+  }
+  if (msg.includes("OperationError")) return "integrity_auth_failed";
+  // Unknown — be conservative; Sentry still has it.
+  return null;
+}
+
 export default function PaymentWall({
   mediaId,
   products,
@@ -125,6 +161,33 @@ export default function PaymentWall({
       });
     },
     [mediaId, activeProductId, mediaType]
+  );
+
+  // Best-effort report of a content-integrity failure to the server, which
+  // re-decrypts to confirm before it flags the media. Fire-and-forget: never
+  // blocks, never surfaces to the viewer, and swallows its own errors. Sentry
+  // remains the primary signal; this just lets a confirmed-broken asset flip
+  // to "unavailable" and stop hitting the portal. Only call with a reason that
+  // passed classifyDecryptFailure (or the fingerprint-mismatch case).
+  const reportDecryptError = useCallback(
+    (
+      reason: ReportReason | "key_fingerprint_mismatch",
+      productId: string | null,
+      orderId: string | null
+    ) => {
+      void fetch(`/api/media/${mediaId}/report-error`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason,
+          ...(productId ? { productId } : {}),
+          ...(orderId ? { orderId } : {}),
+        }),
+      }).catch(() => {
+        // Best-effort — reporting must never affect the viewer.
+      });
+    },
+    [mediaId]
   );
 
   // Unwrap encrypted content into displayable bytes. For url-backed media this
@@ -193,6 +256,14 @@ export default function PaymentWall({
           },
         });
         const last = lastPaymentRef.current;
+        // Report only confirmed-integrity failures — never transient ones
+        // (e.g. a failed envelope fetch). The server re-confirms before it
+        // flags the media, so a false report here is harmless, but filtering
+        // transients keeps the portal-protection signal clean.
+        const reason = classifyDecryptFailure(err);
+        if (reason) {
+          reportDecryptError(reason, access.productId, last?.orderId ?? null);
+        }
         setUnlockFailure({
           orderNumber: last?.orderNumber ?? null,
           orderId: last?.orderId ?? null,
@@ -337,6 +408,10 @@ export default function PaymentWall({
           "Key fingerprint mismatch after payment",
           "error"
         );
+        // The key the portal returned doesn't match the blob's fingerprint —
+        // a content-integrity mismatch the server can confirm. Report it so
+        // the media can flip to "unavailable" if the server agrees.
+        reportDecryptError("key_fingerprint_mismatch", activeProductId, orderId);
         recordFailure("fingerprintMismatch");
         return;
       }
@@ -360,7 +435,7 @@ export default function PaymentWall({
       });
       setCheckoutToken(null);
     },
-    [activeProductId, products, mediaId, reportException, reportMessage, onAccessClaim]
+    [activeProductId, products, mediaId, reportException, reportMessage, reportDecryptError, onAccessClaim]
   );
 
   if (decryptedBytes) {
@@ -484,10 +559,37 @@ export default function PaymentWall({
     </div>
   );
 
+  // Access-first placeholder. Shown while the hook is still verifying
+  // (`loading`) and during the brief `active`-but-still-decrypting window —
+  // both states sit past the `decryptedBytes` early return above. Honors the
+  // hook's documented "loading → render nothing (yet)" contract so a returning
+  // paid viewer never sees the buy buttons flash before content appears. The
+  // surrounding frame keeps min-h-[440px] + the blurred preview, so swapping
+  // this in for the buttons causes no layout shift.
+  const checkingPlaceholder = (
+    <div
+      role="status"
+      data-testid="checking-access"
+      className="flex w-full max-w-sm flex-col items-center justify-center gap-3 py-4"
+    >
+      <div
+        className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-[var(--theme-primary)]"
+        aria-hidden="true"
+      />
+      <span className="text-sm font-medium text-zinc-300">
+        {t("viewer.payment.checking_access")}
+      </span>
+    </div>
+  );
+
   const reload = () => window.location.reload();
   const reportCopyError = (err: unknown) =>
     Sentry.captureException(err, { tags: { context: "PaymentWall.copyReference" } });
 
+  // Failure cards win first (they own the "you paid, something broke" and
+  // "couldn't verify" states). Past those, product buttons render ONLY when
+  // access is definitively inactive — `loading`/`active`-decrypting fall
+  // through to the checking placeholder.
   const cardContent = unlockFailure ? (
     <UnlockFailureCard
       orderNumber={unlockFailure.orderNumber}
@@ -503,7 +605,11 @@ export default function PaymentWall({
       merchantName={merchantName}
       onReload={reload}
     />
-  ) : productButtons;
+  ) : access.status === "inactive" ? (
+    productButtons
+  ) : (
+    checkingPlaceholder
+  );
 
   // Payment wall
   return (

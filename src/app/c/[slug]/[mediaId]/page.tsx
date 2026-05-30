@@ -5,6 +5,8 @@ import config, { getInstanceConfig } from "@/config/instance";
 import { COOKIE_NAME, getStoredProductIds } from "@/lib/macaroon-cookie";
 import ViewerShell from "@/components/ViewerShell";
 import MediaLayout from "@/components/layout/MediaLayout";
+import MediaBreadcrumb from "@/components/MediaBreadcrumb";
+import UnavailableWall from "@/components/UnavailableWall";
 import { buildMediaSchema, buildBreadcrumbSchema } from "@/lib/jsonld";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -114,6 +116,37 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     where: { id: mediaId, channelId: channel.id },
   });
   if (!media) notFound();
+
+  // Part B short-circuit: a media flagged `error` has server-confirmed
+  // undecryptable content. Render the "temporarily unavailable" wall and
+  // return BEFORE the product query, the stored-macaroon lookup, and the
+  // access hook ever mount — so a broken asset stops hitting the SatsRail
+  // portal on every load (and on focus/visibility refreshes too, since the
+  // hook never mounts). Admin preview is exempt so an owner can still
+  // diagnose the failure through ?preview=admin.
+  if (media.status === "error" && preview !== "admin") {
+    return (
+      <ViewerShell>
+        <div className="mx-auto max-w-[1800px] px-6 py-8">
+          <MediaBreadcrumb
+            channelName={channel.name}
+            channelSlug={channel.slug}
+            mediaName={media.name}
+            locale={locale}
+          />
+          <div className="mt-6">
+            <UnavailableWall
+              variant="overlay"
+              reason="error"
+              thumbnailUrl={resolveMediaThumb(media)}
+              mediaName={media.name}
+              locale={locale}
+            />
+          </div>
+        </div>
+      </ViewerShell>
+    );
+  }
 
   // Every product (active + archived) that covers this media — channel-scoped
   // and media-scoped collapse into the same shape via MediaEncryptedBlob.

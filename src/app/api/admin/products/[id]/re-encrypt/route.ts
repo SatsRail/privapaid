@@ -137,6 +137,19 @@ export async function POST(
       // the admin should retry, and the old_key is still useful as a
       // crosscheck during that retry.
       if (errors === 0) {
+        // Re-encryption rewrote every blob for this product, so any media we
+        // previously flagged `error` over an undecryptable blob is now fixed.
+        // Lift the flag automatically — the admin shouldn't have to clear it
+        // by hand after a clean rotation. Non-critical: a failure here must
+        // not fail the rotation, so we don't increment `errors`.
+        try {
+          await prisma.media.updateMany({
+            where: { id: { in: mediaIds }, status: "error" },
+            data: { status: "ok", statusReason: null, statusChangedAt: new Date() },
+          });
+        } catch (err) {
+          console.error("Failed to clear media error status after re-encrypt:", err);
+        }
         try {
           await satsrail.clearOldKey(skLive, satsrailProductId);
         } catch (err) {

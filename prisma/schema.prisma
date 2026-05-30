@@ -47,6 +47,16 @@ enum MediaType {
   podcast
 }
 
+/// Decryptability health of a Media row. `error` is set ONLY after a
+/// server-confirmed content-integrity failure (see api/media/[id]/report-error):
+/// it blocks the viewer page and skips all portal/unlock work until an admin
+/// clears it (Mark resolved) or a re-encrypt fixes the blob. NOT the portal
+/// product status (active/inactive/archived) — that lives on Product.
+enum MediaStatus {
+  ok
+  error
+}
+
 // ── Models ─────────────────────────────────────────────────────────────────
 
 /// Admin — team display + role assignment. Auth handled by SatsRail.
@@ -143,6 +153,13 @@ model Media {
   likesCount        Int       @default(0)
   sharesCount       Int       @default(0)
   commentsCount     Int       @default(0)
+  /// Decryptability health. `error` is server-confirmed (report-error route
+  /// re-decrypts before flipping) and blocks the viewer page until an admin
+  /// clears it. Distinct from Product.productStatus.
+  status            MediaStatus @default(ok)
+  /// Last integrity-failure reason (allowlisted code). Null when status=ok.
+  statusReason      String?
+  statusChangedAt   DateTime?
   deletedAt         DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -155,6 +172,7 @@ model Media {
   @@index([channelId, position])
   @@index([channelId, viewsCount(sort: Desc)])
   @@index([createdAt(sort: Desc)])
+  @@index([channelId, status])
 }
 
 /// EncryptedEnvelope — ciphertext-at-rest for envelope-encrypted content

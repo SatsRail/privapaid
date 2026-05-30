@@ -15,6 +15,13 @@ interface MediaHeaderProps {
   viewsCount?: number;
   locale: string;
   remainingSeconds?: number | null;
+  /**
+   * True while the parent is still resolving paid access. Suppresses the
+   * price/lifetime pills so the title doesn't flash a "From $X" pill before
+   * we know whether the viewer already paid — same access-first contract the
+   * PaymentWall now honors.
+   */
+  checkingAccess?: boolean;
 }
 
 export default function MediaHeader({
@@ -22,6 +29,7 @@ export default function MediaHeader({
   products,
   locale,
   remainingSeconds,
+  checkingAccess,
 }: MediaHeaderProps) {
   const pricePill = (() => {
     if (products.length === 0) return null;
@@ -71,7 +79,8 @@ export default function MediaHeader({
   // would still claim its `mt-2`, opening a phantom gap between the title and
   // the views meta below. Gating it keeps the identity cluster tight.
   const hasPills =
-    hasActiveTimedAccess || hasLifetime || !!(showPricePill && pricePill);
+    !checkingAccess &&
+    (hasActiveTimedAccess || hasLifetime || !!(showPricePill && pricePill));
 
   return (
     // Title sits UNDER the video (YouTube reading order). mt-4 gives it

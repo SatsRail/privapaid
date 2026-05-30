@@ -5,6 +5,13 @@ interface UnavailableWallProps {
   thumbnailUrl?: string;
   mediaName: string;
   locale: string;
+  /**
+   * Which copy to show. "unavailable" (default) is the generic
+   * no-products-for-sale / locked state. "error" is the Part B
+   * server-confirmed decrypt-failure state — reassuring "temporarily
+   * unavailable, we're restoring it" wording rather than "not for sale".
+   */
+  reason?: "unavailable" | "error";
 }
 
 // Shared lock glyph so the card / overlay / no-thumbnail states stay visually
@@ -33,9 +40,18 @@ export default function UnavailableWall({
   thumbnailUrl,
   mediaName,
   locale,
+  reason = "unavailable",
 }: UnavailableWallProps) {
-  const title = t(locale, "viewer.media.not_available");
-  const description = t(locale, "viewer.media.not_available_description");
+  const title = t(
+    locale,
+    reason === "error" ? "viewer.media.error_title" : "viewer.media.not_available"
+  );
+  const description = t(
+    locale,
+    reason === "error"
+      ? "viewer.media.error_description"
+      : "viewer.media.not_available_description"
+  );
 
   if (variant === "card") {
     return (
