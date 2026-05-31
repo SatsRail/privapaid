@@ -62,6 +62,17 @@ export async function POST(
     );
   }
 
+  // Per-product failures (SatsRail key fetch / re-wrap) are returned to the
+  // button but also logged so Railway captures the exact reason — e.g.
+  // "SatsRail API error 404: {...}" when the product no longer exists on the
+  // portal, which re-encrypt can't fix (the product must be recreated).
+  if (result.errors.length > 0) {
+    console.error(
+      `media.reencrypt ${id}: ${result.errors.length}/${result.total} product(s) failed:`,
+      result.errors
+    );
+  }
+
   // A clean re-key means any `error` flag (a buyer-confirmed undecryptable blob)
   // is now stale — lift it so the admin doesn't have to also "Mark resolved".
   // Non-fatal: a failure here must not fail the repair the admin just ran.

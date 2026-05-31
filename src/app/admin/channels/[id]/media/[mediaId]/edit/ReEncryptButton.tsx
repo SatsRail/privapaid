@@ -43,6 +43,9 @@ export default function ReEncryptButton({ mediaId }: Props) {
             reencrypted: r.reencrypted,
             total: r.total,
             errors: r.errors.length,
+            // Surface the first product's actual failure (e.g. "SatsRail API
+            // error 404: …") instead of a bare count, so the admin can act.
+            reason: r.errors[0]?.error ?? "unknown",
           }),
         });
       } else {

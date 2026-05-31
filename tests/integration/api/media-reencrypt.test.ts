@@ -166,6 +166,8 @@ describe("POST /api/admin/media/[id]/re-encrypt", () => {
     expect(body.reencrypted).toBe(0);
     expect(body.errors).toHaveLength(1);
     expect(body.errors[0].satsrailProductId).toBe(productId);
+    // The real reason is carried through (the button surfaces it).
+    expect(body.errors[0].error).toContain("portal down");
   });
 
   it("returns 404 for a missing media", async () => {

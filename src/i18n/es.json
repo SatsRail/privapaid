@@ -99,7 +99,7 @@
   "admin.media.reencrypt_running": "Volviendo a cifrar…",
   "admin.media.reencrypt_done": "Reclaveado {reencrypted} de {total} producto(s).",
   "admin.media.reencrypt_none": "No hay productos que volver a cifrar para este contenido.",
-  "admin.media.reencrypt_partial": "Reclaveado {reencrypted} de {total}; {errors} fallaron. Inténtalo de nuevo.",
+  "admin.media.reencrypt_partial": "Reclaveado {reencrypted} de {total}; {errors} fallaron: {reason}",
   "admin.media.reencrypt_failed": "No se pudieron volver a cifrar las claves",
   "admin.channels.delete": "Eliminar canal",
   "admin.channels.delete_title": "¿Eliminar canal?",

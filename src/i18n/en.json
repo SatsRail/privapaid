@@ -99,7 +99,7 @@
   "admin.media.reencrypt_running": "Re-encrypting…",
   "admin.media.reencrypt_done": "Re-keyed {reencrypted} of {total} product(s).",
   "admin.media.reencrypt_none": "No products to re-encrypt for this media.",
-  "admin.media.reencrypt_partial": "Re-keyed {reencrypted} of {total}; {errors} failed. Try again.",
+  "admin.media.reencrypt_partial": "Re-keyed {reencrypted} of {total}; {errors} failed: {reason}",
   "admin.media.reencrypt_failed": "Failed to re-encrypt keys",
   "admin.channels.delete": "Delete channel",
   "admin.channels.delete_title": "Delete channel?",
