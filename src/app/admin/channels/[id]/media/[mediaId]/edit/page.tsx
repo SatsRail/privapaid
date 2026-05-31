@@ -99,19 +99,24 @@ function buildEncryptedBlobs(blobs: BlobWithProduct[]): EncryptedBlobInfo[] {
  * media's envelope (CONTENT_KEK). url → the URL, article → the markdown body,
  * photo → the envelope id pointer.
  *
- * Throws on any decryption / row-missing failure — the edit page surfaces that
- * as a 500 rather than silently rendering an empty form (which would have the
- * admin save empty content on submit).
+ * Returns "" rather than throwing when the source can't be recovered — a media
+ * with no envelope (e.g. a url media not re-imported after the envelope
+ * migration) or one that fails to decrypt (missing/rotated CONTENT_KEK). The
+ * edit page MUST still render so the admin can enter a URL and save (which
+ * mints/updates the envelope) — crashing the page would strand the media with
+ * no way to fix it from the UI.
  */
 async function sourceUrlForForm(media: {
   mediaType: string;
   envelope: { id: string; bytes: Uint8Array; wrappedDek: string | null } | null;
 }): Promise<string> {
-  if (!media.envelope) {
-    throw new Error("Media envelope missing — content unrecoverable");
-  }
+  if (!media.envelope) return "";
   if (media.mediaType === "photo") return media.envelope.id;
-  return decryptEnvelopePayload(media.envelope).toString("utf8");
+  try {
+    return decryptEnvelopePayload(media.envelope).toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 export default async function EditMediaPage({

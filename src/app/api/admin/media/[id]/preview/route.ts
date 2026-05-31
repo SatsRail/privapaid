@@ -39,10 +39,10 @@ export async function GET(
   });
 
   if (!media.envelope) {
-    return NextResponse.json(
-      { error: "Envelope row missing — content unrecoverable" },
-      { status: 500 }
-    );
+    // No envelope yet (e.g. a url media not re-imported after the migration) —
+    // nothing to preview. Return an empty source rather than 500 so the admin UI
+    // degrades gracefully; the admin can set a URL via the edit form.
+    return NextResponse.json({ source_url: "", media_type: media.mediaType });
   }
 
   // Recover the on-the-wire `source_url` by decrypting the media's envelope.
