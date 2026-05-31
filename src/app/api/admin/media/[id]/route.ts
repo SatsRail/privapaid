@@ -10,6 +10,7 @@ import {
   reencryptEnvelopeBytes,
   URL_ENVELOPE_MIME,
 } from "@/lib/media-envelope";
+import { reencryptMediaProductsForMedia } from "@/lib/media-product-reencrypt";
 import type { Prisma } from "@prisma/client";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
@@ -244,7 +245,33 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ data: media });
+  // Minting a FRESH envelope (mode "create") generates a new per-media DEK, so
+  // any existing MediaProduct rows now wrap a stale DEK — a buyer's product key
+  // would recover the wrong key and decryption would fail with "couldn't unlock
+  // on this device". Re-wrap those rows under the new DEK so re-saving the URL is
+  // a complete fix, not just a render-unbrick. (The "update" path preserves the
+  // DEK, so its products stay valid and this is skipped.) Network calls to
+  // SatsRail run OUTSIDE the transaction; a failure here does NOT fail the save
+  // (the envelope already minted) — it's surfaced in `reencrypt` so the admin can
+  // retry. Media with no products short-circuit cheaply inside the helper.
+  let reencrypt: Awaited<ReturnType<typeof reencryptMediaProductsForMedia>> | undefined;
+  if (envelopeWrite?.mode === "create") {
+    const sk = await getMerchantKey();
+    if (!sk) {
+      console.warn(`media.PATCH ${id}: no merchant key — minted envelope but left MediaProduct rows stale`);
+    } else {
+      try {
+        reencrypt = await reencryptMediaProductsForMedia(id, { sk });
+        if (reencrypt.errors.length > 0) {
+          console.error(`media.PATCH ${id}: re-encrypt had ${reencrypt.errors.length} error(s):`, reencrypt.errors);
+        }
+      } catch (err) {
+        console.error(`media.PATCH ${id}: re-encrypt failed:`, err);
+      }
+    }
+  }
+
+  return NextResponse.json({ data: media, ...(reencrypt ? { reencrypt } : {}) });
 }
 
 export async function DELETE(

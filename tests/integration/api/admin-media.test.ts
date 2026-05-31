@@ -534,6 +534,64 @@ describe("Admin Media API", () => {
       );
     });
 
+    it("re-keys stale MediaProduct rows when minting a fresh envelope (so the buyer path isn't left broken)", async () => {
+      const chId = await seedChannel();
+      // Envelope-less media that ALREADY has a product row (the post-migration
+      // state for a previously-sold url media): the fresh mint generates a new
+      // DEK, so the stale row must be re-wrapped or buyers can't decrypt.
+      const media = await prisma.media.create({
+        data: { ref: nextRef(), channelId: chId, name: "No Env w/ product", mediaType: "video", position: 1 },
+      });
+      await createMediaProduct({
+        mediaId: media.id,
+        satsrailProductId: "prod_freshmint",
+        encryptedSource: "stale_value",
+      });
+      mockSatsrailClient.getProductKey.mockResolvedValue({ key: "0".repeat(43) });
+
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${media.id}`, "PATCH", {
+        source_url: "https://example.com/restored.mp4",
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: media.id }) });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.reencrypt).toMatchObject({ total: 1, reencrypted: 1, errors: [] });
+
+      // The route fetched the product key and rewrote the row (encryptSourceUrl is
+      // mocked to a fixed value in this file — the point is the row CHANGED).
+      expect(mockSatsrailClient.getProductKey).toHaveBeenCalledWith("sk_test_key", "prod_freshmint");
+      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+      expect(mp!.encryptedDek).not.toBe("stale_value");
+      expect(mp!.encryptedDek).toBe("encrypted_blob_base64");
+    });
+
+    it("still mints the envelope (and leaves products for retry) when no merchant key is configured", async () => {
+      const chId = await seedChannel();
+      const media = await prisma.media.create({
+        data: { ref: nextRef(), channelId: chId, name: "No Env no key", mediaType: "video", position: 1 },
+      });
+      await createMediaProduct({
+        mediaId: media.id,
+        satsrailProductId: "prod_freshmint_nokey",
+        encryptedSource: "stale_value",
+      });
+      vi.mocked(getMerchantKey).mockResolvedValueOnce(null);
+
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${media.id}`, "PATCH", {
+        source_url: "https://example.com/restored.mp4",
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: media.id }) });
+      // Save still succeeds (envelope minted); re-encrypt is skipped, not fatal.
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.reencrypt).toBeUndefined();
+      expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+      expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe("https://example.com/restored.mp4");
+      const mp = await prisma.mediaProduct.findFirst({ where: { mediaId: media.id } });
+      expect(mp!.encryptedDek).toBe("stale_value");
+    });
+
     it("claims an uploaded thumbnail_id as a byte-backed MediaImage", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);
