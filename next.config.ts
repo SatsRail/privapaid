@@ -42,7 +42,7 @@ const nextConfig: NextConfig = {
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: blob: https:",
             "media-src 'self' blob: https:",
-            "frame-src 'self' https://satsrail.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.mediadelivery.net https://*.b-cdn.net https://stream.mux.com https://*.cloudflarestream.com https://videodelivery.net https://player.live-video.net",
+            "frame-src 'self' https://satsrail.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.mediadelivery.net https://*.bunnycdn.com https://*.b-cdn.net https://stream.mux.com https://*.cloudflarestream.com https://videodelivery.net https://player.live-video.net",
             "connect-src 'self' https://satsrail.com https://www.google-analytics.com https://www.googletagmanager.com https://*.sentry.io",
           ].join("; "),
         },

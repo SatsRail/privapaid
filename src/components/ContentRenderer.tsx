@@ -59,7 +59,7 @@ interface ContentRendererProps {
 function isEmbedUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    return /youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|iframe\.mediadelivery\.net|bunny\.net|stream\.mux\.com|mux\.com|customer-[a-z0-9]+\.cloudflarestream\.com|cloudflarestream\.com|videodelivery\.net|player\.live-video\.net/.test(u.hostname);
+    return /youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|iframe\.mediadelivery\.net|bunny\.net|bunnycdn\.com|stream\.mux\.com|mux\.com|customer-[a-z0-9]+\.cloudflarestream\.com|cloudflarestream\.com|videodelivery\.net|player\.live-video\.net/.test(u.hostname);
   } catch {
     return false;
   }
