@@ -5,7 +5,11 @@ import { audit } from "@/lib/audit";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
-import { reencryptEnvelopeBytes, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
+import {
+  createEnvelopeArtifacts,
+  reencryptEnvelopeBytes,
+  URL_ENVELOPE_MIME,
+} from "@/lib/media-envelope";
 import type { Prisma } from "@prisma/client";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
@@ -161,31 +165,40 @@ export async function PATCH(
   // Thumbnail + preview images live in MediaImage now and are reconciled inside
   // the transaction below (reconcileMediaImages), not via Media columns.
 
-  // A source_url change re-encrypts the media's envelope bytes under its
-  // existing DEK. The DEK — and every MediaProduct row that wraps it — stays
-  // valid, so no per-product re-encryption is needed. Photo bytes are immutable
-  // on PATCH (re-upload via /api/admin/photos), so a photo source_url is ignored.
-  let newEnvelopeBytes: Buffer | null = null;
+  // A source_url change re-encrypts the media's envelope. If an envelope already
+  // exists, re-encrypt the bytes under its existing DEK — the DEK, and every
+  // MediaProduct row that wraps it, stays valid, so no per-product re-encryption
+  // is needed. If the media has NO envelope yet (e.g. a url media not re-imported
+  // after the envelope migration), mint a fresh one so updating the URL restores
+  // its content. (A media with stale products would then need a re-encrypt to
+  // re-wrap the new DEK — but an envelope-less media has no decryptable products
+  // to begin with.) Photo bytes are immutable on PATCH (re-upload via
+  // /api/admin/photos), so a photo source_url is ignored.
+  let envelopeWrite:
+    | { mode: "update"; bytes: Buffer }
+    | { mode: "create"; bytes: Buffer; wrappedDek: string }
+    | null = null;
   if (validated.source_url !== undefined && newType !== "photo") {
     const envelope = await prisma.mediaEnvelope.findUnique({
       where: { mediaId: id },
       select: { wrappedDek: true },
     });
-    if (!envelope) {
-      return NextResponse.json(
-        { error: "Media has no envelope to update" },
-        { status: 422 }
-      );
-    }
+    const payload = Buffer.from(validated.source_url, "utf8");
     try {
-      newEnvelopeBytes = reencryptEnvelopeBytes(
-        envelope,
-        Buffer.from(validated.source_url, "utf8")
-      );
+      if (envelope) {
+        envelopeWrite = { mode: "update", bytes: reencryptEnvelopeBytes(envelope, payload) };
+      } else {
+        const artifacts = createEnvelopeArtifacts(payload);
+        envelopeWrite = {
+          mode: "create",
+          bytes: artifacts.bytes,
+          wrappedDek: artifacts.wrappedDek,
+        };
+      }
     } catch (err) {
       return NextResponse.json(
         {
-          error: `Failed to re-encrypt envelope: ${err instanceof Error ? err.message : "unknown"}`,
+          error: `Failed to encrypt envelope: ${err instanceof Error ? err.message : "unknown"}`,
         },
         { status: 422 }
       );
@@ -196,15 +209,25 @@ export async function PATCH(
   try {
     media = await prisma.$transaction(async (tx) => {
       const updated = await tx.media.update({ where: { id }, data: updates });
-      if (newEnvelopeBytes) {
-        await tx.mediaEnvelope.update({
-          where: { mediaId: id },
-          data: {
+      if (envelopeWrite) {
+        const mimeType = newType === "article" ? ARTICLE_MIME : URL_ENVELOPE_MIME;
+        if (envelopeWrite.mode === "update") {
+          await tx.mediaEnvelope.update({
+            where: { mediaId: id },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            bytes: newEnvelopeBytes as any,
-            mimeType: newType === "article" ? ARTICLE_MIME : URL_ENVELOPE_MIME,
-          },
-        });
+            data: { bytes: envelopeWrite.bytes as any, mimeType },
+          });
+        } else {
+          await tx.mediaEnvelope.create({
+            data: {
+              mediaId: id,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              bytes: envelopeWrite.bytes as any,
+              mimeType,
+              wrappedDek: envelopeWrite.wrappedDek,
+            },
+          });
+        }
       }
       await reconcileMediaImages(tx, id, {
         thumbnailId: validated.thumbnail_id,

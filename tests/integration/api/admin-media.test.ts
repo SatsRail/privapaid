@@ -509,6 +509,31 @@ describe("Admin Media API", () => {
       );
     });
 
+    it("mints a fresh envelope when updating source_url on an envelope-less media", async () => {
+      const chId = await seedChannel();
+      // A url media with NO envelope — the post-migration state for url media not
+      // yet re-imported. Updating the URL should restore content by minting a
+      // fresh envelope rather than failing.
+      const media = await prisma.media.create({
+        data: { ref: nextRef(), channelId: chId, name: "No Env", mediaType: "video", position: 1 },
+      });
+      expect(
+        await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } })
+      ).toBeNull();
+
+      const req = jsonRequest(`http://localhost:3000/api/admin/media/${media.id}`, "PATCH", {
+        source_url: "https://example.com/restored.mp4",
+      });
+      const res = await updateMedia(req, { params: Promise.resolve({ id: media.id }) });
+      expect(res.status).toBe(200);
+
+      const envelope = await prisma.mediaEnvelope.findUnique({ where: { mediaId: media.id } });
+      expect(envelope).not.toBeNull();
+      expect(decryptEnvelopePayload(envelope!).toString("utf8")).toBe(
+        "https://example.com/restored.mp4"
+      );
+    });
+
     it("claims an uploaded thumbnail_id as a byte-backed MediaImage", async () => {
       const chId = await seedChannel();
       const mediaId = await seedMedia(chId);

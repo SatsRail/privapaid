@@ -172,4 +172,34 @@ describe("Viewer page Part B short-circuit (Media.status = error)", () => {
     expect(findByType(result, MediaLayout)).not.toBeNull();
     expect(findManySpy).toHaveBeenCalled();
   });
+
+  it("short-circuits to UnavailableWall when the media has no MediaEnvelope (incomplete content)", async () => {
+    const findManySpy = vi.spyOn(prisma.mediaProduct, "findMany");
+    // A media with NO envelope — e.g. an interrupted import/seed. Every media
+    // must have exactly one MediaEnvelope holding its content; a missing one is
+    // broken content with nothing to unlock, so it renders unavailable.
+    const channel = await prisma.channel.create({
+      data: { ref: nextRef(), slug: `sc-${nextRef()}`, name: "SC Channel", active: true },
+    });
+    const media = await prisma.media.create({
+      data: {
+        ref: nextRef(),
+        channelId: channel.id,
+        name: "No Envelope Media",
+        mediaType: "video",
+        status: "ok",
+      },
+    });
+
+    const result = await MediaPlayerPage({
+      params: Promise.resolve({ slug: channel.slug, mediaId: media.id }),
+      searchParams: Promise.resolve({}),
+    });
+
+    expect(findByType(result, UnavailableWall)).not.toBeNull();
+    expect(findByType(result, MediaLayout)).toBeNull();
+    // Same portal-protection win: no product lookup, no macaroon read.
+    expect(findManySpy).not.toHaveBeenCalled();
+    expect(mockCookies).not.toHaveBeenCalled();
+  });
 });

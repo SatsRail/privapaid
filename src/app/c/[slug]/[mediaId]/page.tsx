@@ -118,7 +118,12 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   // portal on every load (and on focus/visibility refreshes too, since the
   // hook never mounts). Admin preview is exempt so an owner can still
   // diagnose the failure through ?preview=admin.
-  if (media.status === "error" && preview !== "admin") {
+  //
+  // Also short-circuit a media with no MediaEnvelope: every media must have
+  // exactly one envelope holding its (encrypted) content, so a missing one means
+  // incomplete/broken content (e.g. an interrupted import or seed). There is
+  // nothing to unlock, so render unavailable rather than a dead content player.
+  if ((media.status === "error" || !media.envelope) && preview !== "admin") {
     return (
       <ViewerShell>
         <div className="mx-auto max-w-[1800px] px-6 py-8">
