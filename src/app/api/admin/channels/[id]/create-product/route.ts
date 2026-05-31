@@ -4,6 +4,7 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { satsrail } from "@/lib/satsrail";
 import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 /**
  * Create a SatsRail product for a channel and wrap every media's DEK under that
@@ -24,6 +25,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await requireAdminApi();
+  if (authResult instanceof NextResponse) return authResult;
+
   const { id: channelId } = await params;
   const body = await req.json();
 

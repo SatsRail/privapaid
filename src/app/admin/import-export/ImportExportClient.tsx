@@ -451,8 +451,10 @@ export default function ImportExportClient() {
       <section>
         <h2 className="mb-3 text-lg font-semibold">Export</h2>
         <p className="mb-4 text-sm text-[var(--theme-text-secondary)]">
-          Download all categories, channels, and media as a JSON file. Edit it
-          externally and re-import to update your content.
+          Download all categories, channels, and media as a JSON file. Each
+          media item can carry a <code>thumbnail_url</code> plus a{" "}
+          <code>preview_image_urls</code> list — add several preview images per
+          video. Edit it externally and re-import to update your content.
         </p>
         <Button onClick={handleExport} disabled={exporting}>
           {exporting ? "Exporting..." : "Export All Content"}

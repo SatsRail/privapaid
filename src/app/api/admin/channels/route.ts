@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
+import { requireAdminApi } from "@/lib/auth-helpers";
 import type { Prisma } from "@prisma/client";
 
 function slugify(text: string): string {
@@ -13,6 +14,9 @@ function slugify(text: string): string {
 }
 
 export async function GET(req: NextRequest) {
+  const authResult = await requireAdminApi();
+  if (authResult instanceof NextResponse) return authResult;
+
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "20");
@@ -42,6 +46,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authResult = await requireAdminApi();
+  if (authResult instanceof NextResponse) return authResult;
+
   const result = await validateBody(req, schemas.channelCreate);
   if (isValidationError(result)) return result;
 

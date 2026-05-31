@@ -4,9 +4,6 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   compress: false, // Let nginx/CDN handle compression; required for SSE streaming
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   headers: async () => [
     {
       source: "/(.*)",

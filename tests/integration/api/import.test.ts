@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 import { NextRequest } from "next/server";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { findMediaProducts } from "../../helpers/factories";
-import { createCategory, createChannel, createMedia } from "../../helpers/factories";
+import { createCategory, createChannel, createMedia, createMediaImage } from "../../helpers/factories";
 import { decryptEnvelopePayload } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
 
@@ -262,6 +262,196 @@ describe("POST /api/admin/import", () => {
     expect(media[0].name).toBe("Video 1");
     expect(media[1].name).toBe("Audio 1");
     expect(media[0].ref).toBeDefined();
+  });
+
+  it("imports thumbnail_url and multiple preview_image_urls as MediaImage rows", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "gallery-ch",
+            name: "Gallery Channel",
+            media: [
+              {
+                name: "Gallery Video",
+                source_url: "https://example.com/gallery.mp4",
+                media_type: "video",
+                thumbnail_url: "https://cdn.example.com/thumb.jpg",
+                preview_image_urls: [
+                  "https://cdn.example.com/p1.jpg",
+                  "https://cdn.example.com/p2.jpg",
+                  "https://cdn.example.com/p3.jpg",
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    const body = await readSSEResult(res);
+    expect((body.results.media as { created: number }).created).toBe(1);
+
+    const media = await prisma.media.findFirst({ where: { name: "Gallery Video" } });
+    const thumb = await prisma.mediaImage.findMany({
+      where: { mediaId: media!.id, kind: "thumbnail" },
+    });
+    expect(thumb).toHaveLength(1);
+    expect(thumb[0].externalUrl).toBe("https://cdn.example.com/thumb.jpg");
+    expect(thumb[0].position).toBe(0);
+
+    const previews = await prisma.mediaImage.findMany({
+      where: { mediaId: media!.id, kind: "preview" },
+      orderBy: { position: "asc" },
+    });
+    expect(previews).toHaveLength(3);
+    expect(previews.map((p) => p.externalUrl)).toEqual([
+      "https://cdn.example.com/p1.jpg",
+      "https://cdn.example.com/p2.jpg",
+      "https://cdn.example.com/p3.jpg",
+    ]);
+    expect(previews.map((p) => p.position)).toEqual([0, 1, 2]);
+  });
+
+  it("replaces preview images on re-import", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const channel = await createChannel({ slug: "replace-ch", name: "Replace Channel" });
+    const seeded = await createMedia(channel.id, {
+      name: "Replace Video",
+      ref: 300,
+      blob: { kind: "url", url: "https://example.com/v.mp4" },
+    });
+    await createMediaImage(seeded.id, { kind: "preview", externalUrl: "https://old.example.com/a.jpg", position: 0 });
+    await createMediaImage(seeded.id, { kind: "preview", externalUrl: "https://old.example.com/b.jpg", position: 1 });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "replace-ch",
+            name: "Replace Channel",
+            media: [
+              {
+                ref: 300,
+                name: "Replace Video",
+                source_url: "https://example.com/v.mp4",
+                media_type: "video",
+                preview_image_urls: [
+                  "https://new.example.com/x.jpg",
+                  "https://new.example.com/y.jpg",
+                  "https://new.example.com/z.jpg",
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    const body = await readSSEResult(res);
+    expect((body.results.media as { updated: number }).updated).toBe(1);
+
+    const previews = await prisma.mediaImage.findMany({
+      where: { mediaId: seeded.id, kind: "preview" },
+      orderBy: { position: "asc" },
+    });
+    expect(previews).toHaveLength(3);
+    expect(previews.map((p) => p.externalUrl)).toEqual([
+      "https://new.example.com/x.jpg",
+      "https://new.example.com/y.jpg",
+      "https://new.example.com/z.jpg",
+    ]);
+  });
+
+  it("leaves existing preview images untouched when import omits preview_image_urls", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const channel = await createChannel({ slug: "keep-ch", name: "Keep Channel" });
+    const seeded = await createMedia(channel.id, {
+      name: "Keep Video",
+      ref: 301,
+      blob: { kind: "url", url: "https://example.com/k.mp4" },
+    });
+    await createMediaImage(seeded.id, { kind: "preview", externalUrl: "https://keep.example.com/a.jpg", position: 0 });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "keep-ch",
+            name: "Keep Channel",
+            // No preview_image_urls field → existing previews must survive.
+            media: [
+              { ref: 301, name: "Keep Video", source_url: "https://example.com/k.mp4", media_type: "video" },
+            ],
+          },
+        ],
+      })
+    );
+
+    await readSSEResult(res);
+    const previews = await prisma.mediaImage.findMany({
+      where: { mediaId: seeded.id, kind: "preview" },
+    });
+    expect(previews).toHaveLength(1);
+    expect(previews[0].externalUrl).toBe("https://keep.example.com/a.jpg");
+  });
+
+  it("skips empty-string image URLs on import", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const res = await POST(
+      importRequest({
+        version: "1.0",
+        channels: [
+          {
+            slug: "empty-img-ch",
+            name: "Empty Img Channel",
+            media: [
+              {
+                name: "Mixed Video",
+                source_url: "https://example.com/m.mp4",
+                media_type: "video",
+                thumbnail_url: "",
+                preview_image_urls: [
+                  "https://cdn.example.com/real.jpg",
+                  "",
+                  "https://cdn.example.com/real2.jpg",
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    await readSSEResult(res);
+    const media = await prisma.media.findFirst({ where: { name: "Mixed Video" } });
+    const thumb = await prisma.mediaImage.findMany({ where: { mediaId: media!.id, kind: "thumbnail" } });
+    expect(thumb).toHaveLength(0); // empty thumbnail_url → no row stored
+
+    const previews = await prisma.mediaImage.findMany({
+      where: { mediaId: media!.id, kind: "preview" },
+      orderBy: { position: "asc" },
+    });
+    expect(previews.map((p) => p.externalUrl)).toEqual([
+      "https://cdn.example.com/real.jpg",
+      "https://cdn.example.com/real2.jpg",
+    ]);
   });
 
   it("creates SatsRail products and encrypts source URLs for media with product", async () => {

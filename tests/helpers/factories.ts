@@ -90,6 +90,24 @@ export async function createMedia(
   });
 }
 
+export async function createMediaImage(
+  mediaId: string,
+  overrides: Partial<{
+    kind: "thumbnail" | "preview";
+    externalUrl: string;
+    position: number;
+  }> = {}
+) {
+  return prisma.mediaImage.create({
+    data: {
+      mediaId,
+      kind: overrides.kind ?? "preview",
+      externalUrl: overrides.externalUrl ?? "https://example.com/image.jpg",
+      position: overrides.position ?? 0,
+    },
+  });
+}
+
 export async function createSettings(
   overrides: Partial<{
     instanceName: string;

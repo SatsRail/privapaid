@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
-import { createCategory, createChannel, createMedia } from "../../helpers/factories";
+import { createCategory, createChannel, createMedia, createMediaImage } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 
 // Mock auth
@@ -282,6 +282,69 @@ describe("GET /api/admin/export", () => {
     const res = await GET();
     const body = JSON.parse(await res.text());
     expect(body.channels[0].media[0].product).toBeUndefined();
+  });
+
+  it("exports thumbnail_url and ordered preview_image_urls from MediaImage rows", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const channel = await createChannel({ name: "Imgs", slug: "imgs-ch" });
+    const media = await createMedia(channel.id, {
+      name: "Gallery Video",
+      blob: { kind: "url", url: "https://example.com/gallery.mp4" },
+    });
+    await createMediaImage(media.id, {
+      kind: "thumbnail",
+      externalUrl: "https://cdn.example.com/thumb.jpg",
+      position: 0,
+    });
+    // Insert previews out of order to prove the export sorts by position.
+    await createMediaImage(media.id, {
+      kind: "preview",
+      externalUrl: "https://cdn.example.com/p3.jpg",
+      position: 2,
+    });
+    await createMediaImage(media.id, {
+      kind: "preview",
+      externalUrl: "https://cdn.example.com/p1.jpg",
+      position: 0,
+    });
+    await createMediaImage(media.id, {
+      kind: "preview",
+      externalUrl: "https://cdn.example.com/p2.jpg",
+      position: 1,
+    });
+
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+
+    const exported = body.channels[0].media[0];
+    expect(exported.thumbnail_url).toBe("https://cdn.example.com/thumb.jpg");
+    expect(exported.preview_image_urls).toEqual([
+      "https://cdn.example.com/p1.jpg",
+      "https://cdn.example.com/p2.jpg",
+      "https://cdn.example.com/p3.jpg",
+    ]);
+  });
+
+  it("exports empty thumbnail_url and preview_image_urls when media has no images", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
+    });
+
+    const channel = await createChannel({ name: "NoImgs", slug: "no-imgs-ch" });
+    await createMedia(channel.id, {
+      name: "Plain Video",
+      blob: { kind: "url", url: "https://example.com/plain.mp4" },
+    });
+
+    const res = await GET();
+    const body = JSON.parse(await res.text());
+
+    const exported = body.channels[0].media[0];
+    expect(exported.thumbnail_url).toBe("");
+    expect(exported.preview_image_urls).toEqual([]);
   });
 
   it("excludes deleted channels and media", async () => {

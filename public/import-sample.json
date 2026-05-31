@@ -34,6 +34,11 @@
           "source_url": "https://storage.example.com/videos/ep1-satoshis-ramen.mp4",
           "media_type": "video",
           "thumbnail_url": "https://storage.example.com/thumbs/ep1.jpg",
+          "preview_image_urls": [
+            "https://storage.example.com/previews/ep1-frame1.jpg",
+            "https://storage.example.com/previews/ep1-frame2.jpg",
+            "https://storage.example.com/previews/ep1-frame3.jpg"
+          ],
           "position": 1,
           "product": {
             "name": "Satoshi's Ramen - Full Episode",
@@ -48,6 +53,10 @@
           "source_url": "https://storage.example.com/videos/ep2-lightning-tacos.mp4",
           "media_type": "video",
           "thumbnail_url": "https://storage.example.com/thumbs/ep2.jpg",
+          "preview_image_urls": [
+            "https://storage.example.com/previews/ep2-frame1.jpg",
+            "https://storage.example.com/previews/ep2-frame2.jpg"
+          ],
           "position": 2,
           "product": {
             "name": "Lightning Tacos - Full Episode",
