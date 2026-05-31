@@ -6,6 +6,7 @@ import { satsrail } from "@/lib/satsrail";
 import MediaForm from "../../MediaForm";
 import DeleteMediaButton from "./DeleteMediaButton";
 import MarkResolvedButton from "./MarkResolvedButton";
+import ReEncryptButton from "./ReEncryptButton";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
 import { decryptEnvelopePayload } from "@/lib/media-envelope";
@@ -248,6 +249,11 @@ export default async function EditMediaPage({
         products={productDetails}
         encryptedBlobs={encryptedBlobs}
       />
+      {encryptedBlobs.length > 0 && (
+        <div className="mt-10">
+          <ReEncryptButton mediaId={mediaId} />
+        </div>
+      )}
       <div className="mt-10">
         <DeleteMediaButton mediaId={mediaId} name={media.name} channelId={channelId} />
       </div>
