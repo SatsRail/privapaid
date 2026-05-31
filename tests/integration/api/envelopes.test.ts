@@ -85,10 +85,54 @@ describe("GET /api/envelopes/[id]", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     expect(res.headers.get("Content-Length")).toBe(String(ciphertext.length));
-    expect(res.headers.get("ETag")).toBe(`"${blob.id}"`);
+    // ETag is content-addressed (a hash), NOT the id — so re-saved content busts
+    // the cache. And the response must NOT be `immutable` (it served stale
+    // content forever after a url re-save).
+    const etag = res.headers.get("ETag");
+    expect(etag).toBeTruthy();
+    expect(etag).not.toBe(`"${blob.id}"`);
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
+    expect(res.headers.get("Cache-Control")).not.toContain("immutable");
 
     const buf = Buffer.from(await res.arrayBuffer());
     expect(buf.equals(ciphertext)).toBe(true);
+  });
+
+  it("changes the ETag when the envelope bytes change (re-saved url busts the cache)", async () => {
+    const blob = await prisma.mediaEnvelope.create({
+      data: { bytes: Buffer.from("old-url-ciphertext"), mimeType: "text/url" },
+      select: { id: true },
+    });
+    const [req1, ctx1] = buildRequest(blob.id);
+    const etagBefore = (await GET(req1, ctx1)).headers.get("ETag");
+
+    // Re-saving the source re-encrypts the payload in place (same id, new bytes).
+    await prisma.mediaEnvelope.update({
+      where: { id: blob.id },
+      data: { bytes: Buffer.from("new-url-ciphertext-different") },
+    });
+    const [req2, ctx2] = buildRequest(blob.id);
+    const etagAfter = (await GET(req2, ctx2)).headers.get("ETag");
+
+    expect(etagAfter).not.toBe(etagBefore);
+  });
+
+  it("returns 304 when If-None-Match matches the current content ETag", async () => {
+    const blob = await prisma.mediaEnvelope.create({
+      data: { bytes: Buffer.from([0x01, 0x02, 0x03, 0x04]), mimeType: "text/url" },
+      select: { id: true },
+    });
+    const [req1, ctx1] = buildRequest(blob.id);
+    const first = await GET(req1, ctx1);
+    const etag = first.headers.get("ETag")!;
+
+    const conditional = new NextRequest(
+      new URL(`http://localhost:3000/api/envelopes/${blob.id}`),
+      { method: "GET", headers: { "If-None-Match": etag } }
+    );
+    const res = await GET(conditional, { params: Promise.resolve({ id: blob.id }) });
+    expect(res.status).toBe(304);
+    expect(res.headers.get("ETag")).toBe(etag);
   });
 
   it("returns the full byte payload regardless of size", async () => {

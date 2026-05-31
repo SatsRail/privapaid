@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -22,7 +23,7 @@ const MAX_ENVELOPE_BYTES = 10 * 1024 * 1024;
  * Rate-limited to discourage scraping; clients only need this once per view.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const limited = await rateLimit("envelope_fetch", 120);
@@ -37,7 +38,7 @@ export async function GET(
   try {
     const envelope = await prisma.mediaEnvelope.findUnique({
       where: { id },
-      select: { bytes: true, mimeType: true },
+      select: { bytes: true },
     });
 
     if (!envelope) {
@@ -51,6 +52,23 @@ export async function GET(
       );
     }
 
+    // Content-addressed ETag. The envelope id is stable, but its bytes are
+    // MUTABLE — re-saving a url media's source (or editing an article body)
+    // re-encrypts the payload in place under the same id. An id-based
+    // `immutable` cache therefore served stale content forever: a re-saved url
+    // would keep playing the OLD source in every browser/CDN that had fetched
+    // it once. Hashing the bytes makes the ETag change exactly when the content
+    // changes, so revalidation returns fresh bytes the moment it's edited.
+    const etag = `"${createHash("sha256").update(envelope.bytes).digest("base64url").slice(0, 22)}"`;
+    const cacheControl = "public, max-age=0, must-revalidate";
+
+    if (req.headers.get("if-none-match") === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: { ETag: etag, "Cache-Control": cacheControl },
+      });
+    }
+
     return new Response(envelope.bytes, {
       headers: {
         // Always opaque/octet-stream — the bytes are AES-GCM ciphertext.
@@ -58,8 +76,10 @@ export async function GET(
         // row but only the client (after DEK decrypt) can surface it.
         "Content-Type": "application/octet-stream",
         "Content-Length": envelope.bytes.length.toString(),
-        "Cache-Control": "public, max-age=31536000, immutable",
-        ETag: `"${id}"`,
+        // Revalidate every view: a cheap 304 when unchanged (content ETag),
+        // fresh bytes the instant the content changes. NOT `immutable`.
+        "Cache-Control": cacheControl,
+        ETag: etag,
       },
     });
   } catch (err) {
