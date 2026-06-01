@@ -35,11 +35,12 @@ vi.mock("@/lib/content-encryption", async (importActual) => ({
   encryptSourceUrl: mockEncryptSourceUrl,
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { POST } from "@/app/api/admin/media/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
 import { dekBase64urlFromEnvelope } from "@/lib/media-envelope";
 import { prisma } from "@/lib/prisma";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildRequest(
   mediaId: string,
@@ -69,6 +70,18 @@ describe("Admin Media Create Product", () => {
     await clearCollections();
     vi.clearAllMocks();
     mockGetMerchantKey.mockResolvedValue("sk_test_key");
+  });
+
+  it("returns 401 when the caller is not an admin", async () => {
+    vi.mocked(requireAdminApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    );
+    const [req, ctx] = buildRequest("any-media-id", {
+      name: "Media Access",
+      price_cents: 500,
+    });
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(401);
   });
 
   it("creates a media product and encrypts source URL", async () => {

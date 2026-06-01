@@ -45,9 +45,10 @@ vi.mock("@/lib/merchant-key", () => ({
   getMerchantKey: vi.fn().mockResolvedValue("sk_test_key"),
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GET, POST } from "@/app/api/admin/channels/route";
 import { createChannel, createCategory } from "../../helpers/factories";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildGetRequest(query: string = ""): NextRequest {
   return new NextRequest(new URL(`http://localhost:3000/api/admin/channels${query}`), {
@@ -84,6 +85,24 @@ describe("Admin Channels list/create routes", () => {
       id: "pt_123",
       name: "Test",
       external_ref: "ch_1",
+    });
+  });
+
+  describe("authorization", () => {
+    it("GET returns 401 when the caller is not an admin", async () => {
+      vi.mocked(requireAdminApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      );
+      const res = await GET(buildGetRequest());
+      expect(res.status).toBe(401);
+    });
+
+    it("POST returns 401 when the caller is not an admin", async () => {
+      vi.mocked(requireAdminApi).mockResolvedValueOnce(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      );
+      const res = await POST(buildPostRequest({ name: "Test" }));
+      expect(res.status).toBe(401);
     });
   });
 

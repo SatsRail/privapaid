@@ -45,10 +45,11 @@ vi.mock("@/lib/content-dek", async (importActual) => ({
   unwrapDekToBase64url: mockUnwrapDekToBase64url,
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { POST } from "@/app/api/admin/channels/[id]/create-product/route";
 import { createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
+import { requireAdminApi } from "@/lib/auth-helpers";
 
 function buildRequest(
   channelId: string,
@@ -78,6 +79,18 @@ describe("Admin Channel Create Product", () => {
     await clearCollections();
     vi.clearAllMocks();
     mockGetMerchantKey.mockResolvedValue("sk_test_key");
+  });
+
+  it("returns 401 when the caller is not an admin", async () => {
+    vi.mocked(requireAdminApi).mockResolvedValueOnce(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    );
+    const [req, ctx] = buildRequest("any-channel-id", {
+      name: "Channel Access",
+      price_cents: 1000,
+    });
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(401);
   });
 
   it("creates a channel product and encrypts media", async () => {
