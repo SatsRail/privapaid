@@ -61,13 +61,13 @@ Every media item has a `media_type` that controls how content is stored, encrypt
 
 | Type | What `source_url` holds | Viewer renders | Encryption |
 |------|-------------------------|----------------|------------|
-| `video` | Direct file URL or embed (YouTube, Vimeo, Twitch, Bunny, Cloudflare Stream, Mux, Dailymotion) | `<video>` or `<iframe>` | URL encrypted under product key |
-| `audio` | Direct audio URL | `<audio>` player with optional thumbnail artwork | URL encrypted under product key |
-| `article` | Markdown text | Rendered GFM in a closed shadow DOM (sanitized via DOMPurify); URLs render as an external link card | Envelope: markdown ciphertext in `EncryptedEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
-| `photo` | `EncryptedEnvelope.id` | `<img>` after client-side decryption | Envelope: image ciphertext in `EncryptedEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
-| `podcast` | Audio URL | Same as audio plus podcast-style JSON-LD metadata | URL encrypted under product key |
+| `video` | Direct file URL or embed (YouTube, Vimeo, Twitch, Bunny, Cloudflare Stream, Mux, Dailymotion) | `<video>` or `<iframe>` | Envelope: source-URL ciphertext in `MediaEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
+| `audio` | Direct audio URL | `<audio>` player with optional thumbnail artwork | Envelope: source-URL ciphertext in `MediaEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
+| `article` | Markdown text | Rendered GFM in a closed shadow DOM (sanitized via DOMPurify); URLs render as an external link card | Envelope: markdown ciphertext in `MediaEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
+| `photo` | `MediaEnvelope.id` | `<img>` after client-side decryption | Envelope: image ciphertext in `MediaEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
+| `podcast` | Audio URL | Same as audio plus podcast-style JSON-LD metadata | Envelope: source-URL ciphertext in `MediaEnvelope`; DEK wrapped under `CONTENT_KEK` and per-product |
 
-Articles and photos use envelope encryption — the operator-held `CONTENT_KEK` wraps each per-content DEK, so the operator can rotate product keys and admin-preview content without depending on SatsRail. URL-backed media skips the envelope (the URL is the plaintext).
+Every media kind uses the same envelope encryption — url-backed (video/audio/podcast), article, and photo alike. The content payload (the source URL or the file bytes) is AES-256-GCM ciphertext in `MediaEnvelope.bytes`, and the operator-held `CONTENT_KEK` wraps each per-media DEK, so the operator can rotate product keys and admin-preview content without depending on SatsRail. There is no plaintext content at rest — a full Postgres dump reveals no source URL, no article body, and no photo bytes.
 
 Full architecture and threat model: **[docs/ENCRYPTION.md](docs/ENCRYPTION.md)**.
 
@@ -92,7 +92,7 @@ Format reference and examples: **[wiki / Content Import](https://github.com/Sats
 
 ## Architecture
 
-The short version: every piece of content has an encrypted buyer-facing copy in Postgres under the SatsRail product key (AES-256-GCM with the product UUID as AAD, so a blob for product A is mathematically useless in the context of product B). Photo and article bytes live encrypted in `EncryptedEnvelope` under a per-content DEK, which is itself wrapped twice: under `CONTENT_KEK` for operator-side recovery, and under each product key for buyer delivery. URL-backed media skips the envelope layer.
+The short version: every piece of content is encrypted once into a single `MediaEnvelope` per media — the source URL for link media, the file bytes for photos and articles — under a per-media DEK (AES-256-GCM). The DEK is persisted only wrapped: under `CONTENT_KEK` for operator-side recovery, and under each SatsRail product key (AES-256-GCM with the product UUID as AAD, so a wrapped key for product A is mathematically useless in the context of product B) for buyer delivery. Nothing content-related is stored in plaintext at rest.
 
 Decryption happens entirely client-side after payment — the server never decrypts for a buyer.
 
