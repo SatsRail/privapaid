@@ -121,9 +121,10 @@ model Channel {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  media    Media[]
-  products Product[]
+  category          Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  media             Media[]
+  products          Product[]
+  pushSubscriptions PushSubscription[]
 
   @@index([categoryId])
   @@index([active])
@@ -368,4 +369,26 @@ model WebhookEvent {
   processedAt DateTime @default(now())
 
   @@index([processedAt])
+}
+
+/// PushSubscription — anonymous, per-browser Web Push address scoped to one
+/// Channel. No viewer identity: `endpoint` is the opaque push-service URL the
+/// browser minted; `p256dh`/`auth` are the RFC 8291 payload-encryption keys.
+/// One row per (browser endpoint × channel) — a browser following N channels
+/// has N rows. Operator-owned engagement data; never sent to SatsRail. Opt-in
+/// only (explicit click + browser permission), PII-free (no email/account/UA).
+/// Dead endpoints are pruned on 404/410 at send time.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  channelId  String
+  endpoint   String
+  p256dh     String
+  auth       String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, endpoint])
+  @@index([channelId])
 }

@@ -18,8 +18,9 @@ interface ChannelBlockProps {
  * sub-label) — clicking anywhere takes the viewer to the channel page.
  * The larger avatar + secondary count line give the block enough weight to
  * read as the page's "who made this" anchor rather than a throwaway byline.
- * No Subscribe button: channels expose an RSS feed for auto-discovery (see
- * ActionRow's doc comment).
+ * No follow control here: the channel page header hosts the RSS link and the
+ * opt-in Web Push "Notify me" button (see NotifyButton). This block stays a
+ * pure attribution row.
  */
 export default function ChannelBlock({ name, slug, profileImageUrl, mediaCount }: ChannelBlockProps) {
   const { t } = useLocale();

@@ -29,7 +29,7 @@ Encryption keys and auth secrets are generated automatically on first run and pe
 
 ### Railway (one click)
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/53Raga?referralCode=6xvEI7&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/ZUGM7T?referralCode=MYk1Il&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 The template spins up the app + Postgres and auto-generates all required secrets (`NEXTAUTH_SECRET`, `SK_ENCRYPTION_KEY`, `CONTENT_KEK`) via Railway's `${{secret(...)}}` syntax. Once the healthcheck on `/api/health` passes, open the public URL and complete the setup wizard.
 

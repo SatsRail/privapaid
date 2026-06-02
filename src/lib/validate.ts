@@ -186,6 +186,26 @@ export const schemas = {
       .transform((s) => s.trim()),
   }),
 
+  // Web Push subscribe — anonymous per-browser endpoint scoped to a channel.
+  // `subscription` is the browser's PushSubscription JSON (endpoint + keys).
+  // No viewer identity is captured.
+  pushSubscribe: z.object({
+    channel_slug: slug,
+    subscription: z.object({
+      endpoint: z.string().url().max(2000),
+      keys: z.object({
+        p256dh: z.string().min(1).max(255),
+        auth: z.string().min(1).max(255),
+      }),
+    }),
+  }),
+
+  // Web Push unsubscribe — endpoint possession is the authorization.
+  pushUnsubscribe: z.object({
+    endpoint: z.string().url().max(2000),
+    channel_slug: slug.optional(),
+  }),
+
   // Admin create
   adminCreate: z.object({
     email: z.string().email("Invalid email"),

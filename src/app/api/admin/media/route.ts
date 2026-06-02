@@ -7,6 +7,7 @@ import { getMerchantKey } from "@/lib/merchant-key";
 import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
+import { sendNewContentNotifications } from "@/lib/push";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
 
@@ -224,6 +225,22 @@ export async function POST(req: NextRequest) {
     targetType: "media",
     targetId: media.id,
     details: { name: media.name, channel_id },
+  });
+
+  // Best-effort: notify viewers who opted into push for this channel that new
+  // content dropped. Fire-and-forget (not awaited), exactly like audit() above
+  // — the admin's create must never block on, or fail from, the push fan-out.
+  // No-ops when VAPID env is unset or the channel has no subscriptions.
+  void sendNewContentNotifications({
+    channelId: channel.id,
+    channelSlug: channel.slug,
+    channelName: channel.name,
+    channelImage: channel.profileImageBytes
+      ? `/api/images/channel/${channel.id}`
+      : channel.profileImageUrl || null,
+    media: { id: media.id, name: media.name },
+  }).catch((err) => {
+    console.error("Failed to send new-content notifications:", err);
   });
 
   // Encrypt for existing channel-scoped products

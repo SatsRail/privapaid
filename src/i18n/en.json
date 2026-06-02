@@ -354,6 +354,16 @@
   "viewer.exchange_guide.need_bitcoin": "Need Bitcoin?",
   "viewer.exchange_guide.featured": "Featured",
 
+  "viewer.rss.label": "RSS",
+  "viewer.rss.title": "Subscribe via RSS",
+  "viewer.notify.subscribe": "Notify me of new content",
+  "viewer.notify.subscribed": "Notifications on",
+  "viewer.notify.working": "Just a sec…",
+  "viewer.notify.denied": "Notifications are blocked in your browser settings.",
+  "viewer.notify.ios_hint": "Add this site to your Home Screen to get notifications.",
+  "viewer.notify.disclosure": "We store an anonymous browser address to notify you — no email, no account. Turn it off anytime.",
+  "viewer.notify.error": "Couldn't enable notifications. Please try again.",
+
   "common.active": "Active",
   "common.inactive": "Inactive",
   "common.edit": "Edit",

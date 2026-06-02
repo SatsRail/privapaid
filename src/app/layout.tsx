@@ -36,6 +36,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(siteUrl),
+    manifest: "/manifest.webmanifest",
     title: {
       template: `%s — ${instanceConfig.name}`,
       default: instanceConfig.name,

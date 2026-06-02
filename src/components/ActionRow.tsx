@@ -34,13 +34,13 @@ interface ActionRowProps {
  * like/dislike buttons render with `disabled` + a "Pay to react" title,
  * and click handlers no-op without hitting the API.
  *
- * Channel subscription: there's no visible "Subscribe" button here.
- * Channels expose an RSS feed at /c/{slug}/feed.xml and the channel page
- * carries a `<link rel="alternate" type="application/rss+xml">` tag in
- * its `<head>`, so RSS reader browser extensions and standalone readers
- * auto-discover the feed when the viewer visits the channel. We
- * deliberately keep the visible UI free of an XML-opening button to
- * avoid confusing casual viewers without an RSS reader.
+ * Channel subscription lives on the channel page, not here: the channel
+ * header carries a visible RSS link and an opt-in Web Push "Notify me"
+ * button (NotifyButton), plus a `<link rel="alternate"
+ * type="application/rss+xml">` tag in its `<head>` for RSS-reader
+ * auto-discovery. This action row stays media-scoped (Like / Dislike /
+ * Share) — channel-follow affordances belong with the channel identity,
+ * not the per-video controls.
  */
 export default function ActionRow({
   mediaId,

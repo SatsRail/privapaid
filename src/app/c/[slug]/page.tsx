@@ -8,6 +8,8 @@ import { t } from "@/i18n";
 import MediaCard from "@/components/MediaCard";
 import ViewerShell from "@/components/ViewerShell";
 import ServerPagination from "@/components/ui/ServerPagination";
+import NotifyButton from "@/components/NotifyButton";
+import { buttonClasses } from "@/components/ui/buttonStyles";
 import { buildChannelSchema } from "@/lib/jsonld";
 import type { Metadata } from "next";
 
@@ -155,6 +157,16 @@ export default async function ChannelPage({ params, searchParams }: Props) {
     ? `/api/images/channel/${channel.id}`
     : channel.profileImageUrl || "";
 
+  // Web Push is available only when the operator configured all three VAPID env
+  // vars. We pass the public key + an enabled flag to the client island; the
+  // private key never leaves the server.
+  const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
+  const pushEnabled = !!(
+    vapidPublicKey &&
+    process.env.VAPID_PRIVATE_KEY &&
+    process.env.VAPID_SUBJECT
+  );
+
   const channelJsonLd = buildChannelSchema(
     {
       name: channel.name,
@@ -210,6 +222,37 @@ export default async function ChannelPage({ params, searchParams }: Props) {
                   </a>
                 ))}
               </div>
+            )}
+            {/* New-content discovery: a visible RSS link (server-rendered) and
+                an opt-in Web Push button (client island). Both let viewers
+                follow the channel for new uploads without an account. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <a
+                href={`/c/${slug}/feed.xml`}
+                target="_blank"
+                rel="noopener"
+                title={t(locale, "viewer.rss.title")}
+                className={buttonClasses({ variant: "outline", size: "sm" })}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d="M4 11a9 9 0 0 1 9 9h2.5A11.5 11.5 0 0 0 4 8.5V11z" />
+                  <path d="M4 4a16 16 0 0 1 16 16h2.5A18.5 18.5 0 0 0 4 1.5V4z" />
+                  <circle cx="5.5" cy="18.5" r="2.5" />
+                </svg>
+                <span>{t(locale, "viewer.rss.label")}</span>
+              </a>
+            </div>
+            {pushEnabled && (
+              <NotifyButton
+                channelSlug={channel.slug}
+                vapidPublicKey={vapidPublicKey}
+              />
             )}
           </div>
         </div>

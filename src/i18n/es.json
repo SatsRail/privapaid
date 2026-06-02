@@ -354,6 +354,16 @@
   "viewer.exchange_guide.need_bitcoin": "¿Necesitas Bitcoin?",
   "viewer.exchange_guide.featured": "Destacado",
 
+  "viewer.rss.label": "RSS",
+  "viewer.rss.title": "Suscríbete por RSS",
+  "viewer.notify.subscribe": "Avísame cuando haya contenido nuevo",
+  "viewer.notify.subscribed": "Notificaciones activadas",
+  "viewer.notify.working": "Un momento…",
+  "viewer.notify.denied": "Las notificaciones están bloqueadas en los ajustes de tu navegador.",
+  "viewer.notify.ios_hint": "Añade este sitio a tu pantalla de inicio para recibir notificaciones.",
+  "viewer.notify.disclosure": "Guardamos una dirección anónima del navegador para avisarte: sin correo ni cuenta. Desactívalo cuando quieras.",
+  "viewer.notify.error": "No se pudieron activar las notificaciones. Inténtalo de nuevo.",
+
   "common.active": "Activo",
   "common.inactive": "Inactivo",
   "common.edit": "Editar",

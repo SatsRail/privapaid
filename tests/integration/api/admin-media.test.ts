@@ -16,6 +16,10 @@ vi.mock("@/lib/auth-helpers", () => ({
 }));
 vi.mock("@/lib/satsrail", () => ({ satsrail: mockSatsrailClient }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue("sk_test_key") }));
+const { mockSendNewContentNotifications } = vi.hoisted(() => ({
+  mockSendNewContentNotifications: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/push", () => ({ sendNewContentNotifications: mockSendNewContentNotifications }));
 // Keep the real encryptBytes/decryptBytes so the createMedia factory + envelope
 // helpers (which mint real MediaEnvelope ciphertext) still work; only spy on the
 // URL/DEK wrappers exercised by the routes.
@@ -426,6 +430,39 @@ describe("Admin Media API", () => {
       const res = await createMediaRoute(req);
       expect(res.status).toBe(201);
       expect(mockSatsrailClient.getProductKey).not.toHaveBeenCalled();
+    });
+
+    it("fans out a push notification after creating media", async () => {
+      const chId = await seedChannel();
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "Notify Video",
+        source_url: "https://example.com/n.mp4",
+        media_type: "video",
+      });
+      const res = await createMediaRoute(req);
+      expect(res.status).toBe(201);
+      expect(mockSendNewContentNotifications).toHaveBeenCalledTimes(1);
+      expect(mockSendNewContentNotifications).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelId: chId,
+          channelName: "Test Channel",
+          media: expect.objectContaining({ name: "Notify Video" }),
+        })
+      );
+    });
+
+    it("still returns 201 when the push fan-out rejects (best-effort)", async () => {
+      const chId = await seedChannel();
+      mockSendNewContentNotifications.mockRejectedValueOnce(new Error("push down"));
+      const req = jsonRequest("http://localhost:3000/api/admin/media", "POST", {
+        channel_id: chId,
+        name: "Resilient Video",
+        source_url: "https://example.com/r2.mp4",
+        media_type: "video",
+      });
+      const res = await createMediaRoute(req);
+      expect(res.status).toBe(201);
     });
   });
 
