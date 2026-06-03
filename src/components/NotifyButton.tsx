@@ -177,7 +177,7 @@ export default function NotifyButton({
   if (state === "ios-hint") {
     return (
       <p
-        className="mt-3 text-xs"
+        className="text-xs max-w-xs"
         style={{ color: "var(--theme-text-secondary)" }}
       >
         {t("viewer.notify.ios_hint")}
@@ -196,7 +196,7 @@ export default function NotifyButton({
       : t("viewer.notify.subscribe");
 
   return (
-    <div className="mt-3 flex flex-col gap-1">
+    <div className="flex flex-col items-start gap-1">
       <button
         type="button"
         data-testid="notify-button"
@@ -226,14 +226,14 @@ export default function NotifyButton({
       </button>
 
       {denied && (
-        <p className="text-xs" style={{ color: "var(--theme-text-secondary)" }}>
+        <p className="text-xs max-w-xs" style={{ color: "var(--theme-text-secondary)" }}>
           {t("viewer.notify.denied")}
         </p>
       )}
 
       {/* Opt-in disclosure: shown before the viewer commits, hidden once on. */}
       {!subscribed && !denied && (
-        <p className="text-xs" style={{ color: "var(--theme-text-secondary)" }}>
+        <p className="text-xs max-w-xs" style={{ color: "var(--theme-text-secondary)" }}>
           {t("viewer.notify.disclosure")}
         </p>
       )}

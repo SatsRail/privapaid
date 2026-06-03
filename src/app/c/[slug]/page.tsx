@@ -226,7 +226,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
             {/* New-content discovery: a visible RSS link (server-rendered) and
                 an opt-in Web Push button (client island). Both let viewers
                 follow the channel for new uploads without an account. */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-start gap-2">
               <a
                 href={`/c/${slug}/feed.xml`}
                 target="_blank"
@@ -247,13 +247,13 @@ export default async function ChannelPage({ params, searchParams }: Props) {
                 </svg>
                 <span>{t(locale, "viewer.rss.label")}</span>
               </a>
+              {pushEnabled && (
+                <NotifyButton
+                  channelSlug={channel.slug}
+                  vapidPublicKey={vapidPublicKey}
+                />
+              )}
             </div>
-            {pushEnabled && (
-              <NotifyButton
-                channelSlug={channel.slug}
-                vapidPublicKey={vapidPublicKey}
-              />
-            )}
           </div>
         </div>
 
