@@ -2,7 +2,7 @@
 
 Deployment guides have moved to the [wiki](https://github.com/SatsRail/privapaid/wiki):
 
-- **[Deploy on Railway](https://github.com/SatsRail/privapaid/wiki/Deploy-on-Railway)** — one-click template, fastest path to production
+- **[Deploy on Railway](https://github.com/SatsRail/privapaid/wiki/Deploy-on-Railway)** — one-click template (app + Postgres, secrets auto-generated) or GitHub-fork deploy; fastest cloud path
 - **[Deploy on EC2](https://github.com/SatsRail/privapaid/wiki/Deploy-on-EC2)** — `t3.small` + Docker Compose + Nginx
 - **[Deploy on Elastic Beanstalk](https://github.com/SatsRail/privapaid/wiki/Deploy-on-Elastic-Beanstalk)** — for teams already on AWS EB
 - **[Postgres: managed vs local](https://github.com/SatsRail/privapaid/wiki/Postgres:-managed-vs-local)**
