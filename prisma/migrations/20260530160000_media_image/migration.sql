@@ -11,8 +11,8 @@
 --      any external thumbnail / preview URLs (imports store direct URLs).
 --   4. Drop the now-migrated Media columns.
 --
--- Data-preserving and atomic. See plan:
--- /Users/rafael/.claude/plans/privapaid-previewimage-needs-to-elegant-dongarra.md
+-- Data-preserving and atomic. See internal plan:
+--   privapaid-previewimage-to-mediaimage (.claude/plans, local-only)
 
 BEGIN;
 

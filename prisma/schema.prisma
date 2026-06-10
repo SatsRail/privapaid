@@ -1,10 +1,10 @@
 // PrivaPaid Stream — PostgreSQL schema
 //
-// Migration from MongoDB/Mongoose. See plan:
-// /Users/rafael/.claude/plans/privapaid-app-uses-mongodb-we-precious-harbor.md
+// Migration from MongoDB/Mongoose. See internal plan:
+//   privapaid-app-uses-mongodb (.claude/plans, local-only)
 //
-// Product/blob flattening: see plan:
-// /Users/rafael/.claude/plans/privapaid-in-the-app-cryptic-russell.md
+// Product/blob flattening: see internal plan:
+//   privapaid-in-the-app-flatten-product-blob (.claude/plans, local-only)
 //
 // Hard constraints:
 //   1. SatsRail always holds the encryption keys (never in this DB).

@@ -11,7 +11,7 @@
 --   (b) Existing installs: legacy tables are read, data is copied into the
 --       new shape, then the legacy tables are dropped.
 --
--- See plan: /Users/rafael/.claude/plans/privapaid-in-the-app-cryptic-russell.md
+-- See internal plan: privapaid-in-the-app-flatten-product-blob (.claude/plans, local-only)
 
 BEGIN;
 
