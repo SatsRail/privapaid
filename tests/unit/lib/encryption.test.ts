@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { encryptSecretKey, decryptSecretKey } from "@/lib/encryption";
 
 describe("encryption", () => {

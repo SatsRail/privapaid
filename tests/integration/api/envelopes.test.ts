@@ -181,9 +181,29 @@ describe("GET /api/envelopes/[id]", () => {
     expect(res.status).toBe(200);
   });
 
+  it("returns 413 for an oversized row WITHOUT fetching its bytes into memory", async () => {
+    // A corrupted multi-GB row must be rejected by the SQL length probe alone.
+    // We seed just over the 10 MB cap and assert the bytes fetch never runs.
+    const oversized = Buffer.alloc(10 * 1024 * 1024 + 1, 0xab);
+    const blob = await prisma.mediaEnvelope.create({
+      data: { bytes: oversized, mimeType: "image/jpeg" },
+      select: { id: true },
+    });
+
+    const fetchSpy = vi.spyOn(prisma.mediaEnvelope, "findUnique");
+    const [req, ctx] = buildRequest(blob.id);
+    const res = await GET(req, ctx);
+    const body = await res.json();
+
+    expect(res.status).toBe(413);
+    expect(body.error).toMatch(/exceeds size limit/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it("returns 500 with a structured error when the DB lookup throws", async () => {
     const spy = vi
-      .spyOn(prisma.mediaEnvelope, "findUnique")
+      .spyOn(prisma, "$queryRaw")
       .mockRejectedValueOnce(new Error("db broke"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -195,5 +215,21 @@ describe("GET /api/envelopes/[id]", () => {
 
     spy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  it("returns 404 when the row vanishes between the size probe and the fetch", async () => {
+    const blob = await prisma.mediaEnvelope.create({
+      data: { bytes: Buffer.from([0x01]), mimeType: "image/jpeg" },
+      select: { id: true },
+    });
+    // Simulate a concurrent delete: the probe sees the row, the fetch doesn't.
+    const spy = vi
+      .spyOn(prisma.mediaEnvelope, "findUnique")
+      .mockResolvedValueOnce(null);
+
+    const [req, ctx] = buildRequest(blob.id);
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(404);
+    spy.mockRestore();
   });
 });

@@ -231,6 +231,59 @@ describe("macaroon-cookie", () => {
       expect(serializeMacaroonCookie(out).length).toBeLessThanOrEqual(MAX_BYTES);
     });
 
+    it("reports evictedLive when cap pressure forces out a still-valid macaroon", () => {
+      // When everything in a full cookie is still LIVE, eviction costs a
+      // paying user access they still hold — the route alarms on evictedLive.
+      const NOW = new Date("2026-05-23T21:00:00.000Z");
+      const FUTURE = new Date("2026-12-01T00:00:00.000Z");
+      const pad = "x".repeat(400);
+      const map: Record<string, { m: string; t: number }> = {};
+      let i = 0;
+      while (serializeMacaroonCookie(map).length < MAX_BYTES - 100) {
+        map[`live_${i}`] = {
+          m: makeMacaroon({ productId: `live_${i}_${pad}`, outerExp: FUTURE }),
+          t: i,
+        };
+        i++;
+      }
+
+      const { evicted, evictedLive } = insertWithCap(
+        map,
+        "new_prod",
+        makeMacaroon({ productId: `new_${pad}`, outerExp: FUTURE }),
+        NOW.getTime()
+      );
+
+      expect(evicted).toBeGreaterThan(0);
+      expect(evictedLive).toBe(evicted);
+    });
+
+    it("reports evictedLive=0 when only DEAD macaroons were shed", () => {
+      const NOW = new Date("2026-05-23T21:00:00.000Z");
+      const PAST = new Date("2026-05-20T00:00:00.000Z");
+      const FUTURE = new Date("2026-12-01T00:00:00.000Z");
+      const pad = "x".repeat(400);
+      const map: Record<string, { m: string; t: number }> = {};
+      let i = 0;
+      while (serializeMacaroonCookie(map).length < MAX_BYTES - 100) {
+        map[`dead_${i}`] = {
+          m: makeMacaroon({ productId: `dead_${i}_${pad}`, outerExp: PAST }),
+          t: i,
+        };
+        i++;
+      }
+
+      const { evicted, evictedLive } = insertWithCap(
+        map,
+        "new_prod",
+        makeMacaroon({ productId: `new_${pad}`, outerExp: FUTURE }),
+        NOW.getTime()
+      );
+
+      expect(evicted).toBeGreaterThan(0);
+      expect(evictedLive).toBe(0);
+    });
+
     it("falls back to oldest-stored eviction when no entry is expired", () => {
       // With no parseable/expired exp, behavior is unchanged from the original
       // oldest-first policy — opaque tokens are never assumed dead.
@@ -324,6 +377,36 @@ describe("macaroon-cookie", () => {
       const mac = `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
       const got = parseMacaroonExp(mac);
       expect(got?.toISOString()).toBe(new Date(1778280839 * 1000).toISOString());
+    });
+
+    it("rejects an inner exp in MILLISECONDS as unparseable (would never expire locally)", () => {
+      // exp mistakenly encoded in ms (e.g. 2026 in ms ≈ year 57000 in s):
+      // multiplying by 1000 again would make the entry look live forever,
+      // skipping local expiry checks. Out-of-bounds ⇒ null (unknown expiry).
+      const body = {
+        _rails: { data: { order_id: "o", product_id: "p", exp: Date.UTC(2026, 5, 1) } },
+      };
+      const mac = `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
+      expect(parseMacaroonExp(mac)).toBeNull();
+    });
+
+    it("rejects an inner exp before the year 2000 as unparseable", () => {
+      const body = { _rails: { data: { order_id: "o", product_id: "p", exp: 12345 } } };
+      const mac = `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
+      expect(parseMacaroonExp(mac)).toBeNull();
+    });
+
+    it("accepts inner exp values at the plausibility bounds", () => {
+      const mk = (exp: number) => {
+        const body = { _rails: { data: { order_id: "o", product_id: "p", exp } } };
+        return `${Buffer.from(JSON.stringify(body)).toString("base64")}--sig`;
+      };
+      const min = 946684800; // 2000-01-01
+      const max = 4102444800; // 2100-01-01
+      expect(parseMacaroonExp(mk(min))?.toISOString()).toBe("2000-01-01T00:00:00.000Z");
+      expect(parseMacaroonExp(mk(max))?.toISOString()).toBe("2100-01-01T00:00:00.000Z");
+      expect(parseMacaroonExp(mk(min - 1))).toBeNull();
+      expect(parseMacaroonExp(mk(max + 1))).toBeNull();
     });
 
     it("returns null for an empty string", () => {

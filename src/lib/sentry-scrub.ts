@@ -1,4 +1,4 @@
-import type { ErrorEvent, EventHint, Breadcrumb } from "@sentry/nextjs";
+import type { ErrorEvent, Breadcrumb } from "@sentry/nextjs";
 
 /**
  * Keys whose values must never reach Sentry. Matched case-insensitively
@@ -89,7 +89,7 @@ function scrubInPlace(node: unknown, depth: number): void {
  * sensitive values before transmission. Returns the event so the
  * Sentry SDK can transmit it.
  */
-export function scrubEvent(event: ErrorEvent, _hint?: EventHint): ErrorEvent {
+export function scrubEvent(event: ErrorEvent): ErrorEvent {
   if (event.request) {
     if (event.request.data) scrubInPlace(event.request.data, 0);
     if (event.request.headers) scrubInPlace(event.request.headers, 0);
@@ -118,10 +118,7 @@ export function scrubEvent(event: ErrorEvent, _hint?: EventHint): ErrorEvent {
  * (Sentry drops it if null is returned, which we don't want — we want
  * the breadcrumb, just without the plaintext).
  */
-export function scrubBreadcrumb(
-  breadcrumb: Breadcrumb,
-  _hint?: EventHint
-): Breadcrumb {
+export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
   if (breadcrumb.data) scrubInPlace(breadcrumb.data, 0);
   return breadcrumb;
 }

@@ -8,6 +8,7 @@ import { satsrail } from "@/lib/satsrail";
 import { encryptSourceUrl } from "@/lib/content-encryption";
 import { createEnvelopeArtifacts, URL_ENVELOPE_MIME } from "@/lib/media-envelope";
 import { sendNewContentNotifications } from "@/lib/push";
+import * as Sentry from "@sentry/nextjs";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
 
@@ -241,6 +242,10 @@ export async function POST(req: NextRequest) {
     media: { id: media.id, name: media.name },
   }).catch((err) => {
     console.error("Failed to send new-content notifications:", err);
+    Sentry.captureException(err, {
+      tags: { context: "media.create.push_notifications" },
+      extra: { mediaId: media.id, channelId: channel.id },
+    });
   });
 
   // Encrypt for existing channel-scoped products
@@ -273,8 +278,15 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (err) {
-    // Media creation succeeds even if channel product encryption fails
+    // Media creation succeeds even if channel product encryption fails — but
+    // buyers of those channel products CANNOT decrypt this media until the
+    // wraps exist (repair: scripts/repair-media-products.ts), so alarm loudly.
     console.error("Failed to encrypt for channel products:", err);
+    Sentry.captureException(err, {
+      level: "error",
+      tags: { context: "media.create.channel_product_encrypt" },
+      extra: { mediaId: media.id, channelId: channel_id },
+    });
   }
 
   // Thumbnail now lives in MediaImage; reconstruct the wire URL from the same

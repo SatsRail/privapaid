@@ -224,6 +224,40 @@ describe("schemas", () => {
       const result = schema.safeParse({ media_id: "", product_id: "prod_123" });
       expect(result.success).toBe(false);
     });
+
+    it("accepts a SatsRail UUID product_id and a cuid media_id", () => {
+      const result = schema.safeParse({
+        media_id: "clxyz0123456789abcdefghij",
+        product_id: "550e8400-e29b-41d4-a716-446655440000",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects product_id with characters outside the ID alphabet", () => {
+      // IDs are cuids/UUIDs — quotes, spaces, slashes etc. are garbage that
+      // must never reach the payment gateway.
+      for (const bad of ["prod 123", 'prod"123', "prod/123", "prod;--", "프로덕트"]) {
+        const result = schema.safeParse({ media_id: "abc123", product_id: bad });
+        expect(result.success).toBe(false);
+      }
+    });
+
+    it("rejects an oversized product_id", () => {
+      const result = schema.safeParse({
+        media_id: "abc123",
+        product_id: "a".repeat(101),
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an oversized or malformed media_id", () => {
+      expect(
+        schema.safeParse({ media_id: "a".repeat(65), product_id: "p1" }).success
+      ).toBe(false);
+      expect(
+        schema.safeParse({ media_id: "abc 123", product_id: "p1" }).success
+      ).toBe(false);
+    });
   });
 
   describe("setup", () => {

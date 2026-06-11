@@ -434,7 +434,7 @@ export default function PaymentWall({
       });
       setCheckoutToken(null);
     },
-    [activeProductId, products, mediaId, reportException, reportMessage, reportDecryptError, onAccessClaim]
+    [activeProductId, products, reportException, reportMessage, reportDecryptError, onAccessClaim]
   );
 
   // Single source of truth for which surface renders — see resolvePaywallView
@@ -454,6 +454,7 @@ export default function PaymentWall({
       <div className="mb-6">
         {ARTWORK_TYPES.has(mediaType) && thumbnailUrl && (
           <div className="mb-4 flex justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumbnailUrl}
               alt="Artwork"
@@ -635,6 +636,7 @@ export default function PaymentWall({
           <>
             {thumbnailUrl ? (
               <div className="relative flex min-h-[440px] flex-col items-center justify-center px-4 pt-20 pb-16">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={thumbnailUrl}
                   alt="Preview"

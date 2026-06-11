@@ -37,7 +37,7 @@ describe("validateEnv", () => {
   it("exits when SK_ENCRYPTION_KEY is missing", async () => {
     delete process.env.SK_ENCRYPTION_KEY;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const { validateEnv } = await import("@/lib/env-check");
     validateEnv();
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -47,7 +47,7 @@ describe("validateEnv", () => {
     delete process.env.AUTH_SECRET;
     delete process.env.NEXTAUTH_SECRET;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const { validateEnv } = await import("@/lib/env-check");
     validateEnv();
     expect(exitSpy).toHaveBeenCalledWith(1);

@@ -138,8 +138,6 @@ describe("MediaCard", () => {
     const { container } = render(
       <MediaCard channelSlug="test-channel" media={defaultMedia} />
     );
-    // No price badge element with the specific class
-    const priceBadges = container.querySelectorAll("[class*='left-1.5']");
     // The price badge has left-1.5 positioning; it shouldn't exist
     const priceSpans = Array.from(container.querySelectorAll("span")).filter(
       (el) => el.className.includes("left-1.5")

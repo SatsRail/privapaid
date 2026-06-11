@@ -47,7 +47,14 @@ export function isValidationError(
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color (#RRGGBB)");
 
-const recordId = z.string().min(1, "ID is required");
+// Local record IDs are Prisma cuids; SatsRail product IDs are UUIDs. Both fit
+// a short URL-safe alphabet — anything else (whitespace, quotes, multi-KB
+// strings) is garbage that should never reach the DB or the payment gateway.
+const recordId = z
+  .string()
+  .min(1, "ID is required")
+  .max(64, "ID too long")
+  .regex(/^[A-Za-z0-9_-]+$/, "Invalid ID format");
 
 const slug = z
   .string()
@@ -133,7 +140,11 @@ export const schemas = {
   // Checkout
   checkout: z.object({
     media_id: recordId,
-    product_id: z.string().min(1, "product_id is required"),
+    product_id: z
+      .string()
+      .min(1, "product_id is required")
+      .max(100, "product_id too long")
+      .regex(/^[A-Za-z0-9_-]+$/, "Invalid product_id format"),
   }),
 
   // Setup

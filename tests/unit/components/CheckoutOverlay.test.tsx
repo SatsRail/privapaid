@@ -75,11 +75,18 @@ describe("CheckoutOverlay", () => {
       });
     });
 
-    it("renders QR SVG when loaded", async () => {
+    it("renders the QR as an <img> data URI — never injected as live SVG markup", async () => {
       const { container } = render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
-        const svgContainer = container.querySelector("[class*='bg-white']");
-        expect(svgContainer?.innerHTML).toContain("QR");
+        const img = container.querySelector(
+          "[class*='bg-white'] img"
+        ) as HTMLImageElement | null;
+        expect(img).toBeTruthy();
+        expect(img!.src).toMatch(/^data:image\/svg\+xml,/);
+        expect(decodeURIComponent(img!.src)).toContain("QR");
+        // The XSS contract: the endpoint's SVG must NOT land in the DOM as
+        // parsed markup (an <img> can't run scripts; injected SVG could).
+        expect(container.querySelector("[class*='bg-white'] svg")).toBeNull();
       });
     });
 

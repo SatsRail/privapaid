@@ -258,12 +258,18 @@ export default function CheckoutOverlay({
               </div>
             ) : null}
 
-            {/* QR Code */}
+            {/* QR Code — rendered via an <img> data URI, never injected as
+                markup: SVG in an <img> can't run scripts or load external
+                resources, so even a compromised QR endpoint can't XSS here. */}
             {qrSvg ? (
-              <div
-                className="rounded-xl bg-white p-4 [&_svg]:h-[250px] [&_svg]:w-[250px]"
-                dangerouslySetInnerHTML={{ __html: qrSvg }}
-              />
+              <div className="rounded-xl bg-white p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:image/svg+xml,${encodeURIComponent(qrSvg)}`}
+                  alt={t("viewer.checkout.title")}
+                  className="h-[250px] w-[250px]"
+                />
+              </div>
             ) : (
               <div className="flex h-[250px] w-[250px] items-center justify-center rounded-xl" style={{ backgroundColor: "var(--theme-bg-secondary)" }}>
                 <div className="h-6 w-6 animate-spin rounded-full border-2" style={{ borderColor: "var(--theme-border)", borderTopColor: "var(--theme-primary)" }} />

@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useLocale } from "@/i18n/useLocale";
 import SearchBar from "@/components/SearchBar";
 import { useSidebar } from "@/components/SidebarContext";
 import AboutModal from "@/components/AboutModal";
@@ -18,7 +17,6 @@ const HIDDEN_PATHS = ["/setup", "/admin", "/login"];
 
 export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps) {
   const pathname = usePathname();
-  const { t } = useLocale();
   const { toggle } = useSidebar();
   const [aboutOpen, setAboutOpen] = useState(false);
 

@@ -75,7 +75,7 @@ describe("createRedisRateLimitStore", () => {
         calls.push("incr");
         return calls.filter((c) => c === "incr").length;
       }),
-      pexpire: vi.fn().mockImplementation(async (_k: string, _ms: number, _mode?: string) => {
+      pexpire: vi.fn().mockImplementation(async () => {
         calls.push("pexpire");
         return 1;
       }),

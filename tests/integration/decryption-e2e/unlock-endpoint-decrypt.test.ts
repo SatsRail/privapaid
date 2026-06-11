@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
 import { createMediaProduct } from "../../helpers/factories";
 import { encryptSourceUrl, encryptBytes } from "@/lib/content-encryption";
+import { wrapDek } from "@/lib/content-dek";
 import {
   base64urlToBytes,
   bytesToBase64url,
@@ -118,6 +119,9 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             bytes: envelopeBytes as any,
             mimeType,
+            // Linked envelopes must carry the CONTENT_KEK-wrapped DEK — the
+            // MediaEnvelope_linked_has_wrappedDek constraint enforces it.
+            wrappedDek: wrapDek(opts.dek),
           },
         },
       },

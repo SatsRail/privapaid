@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/components/CategoryChips", () => ({
-  default: ({ categories, activeCategory, onSelect }: { categories: { _id: string; name: string }[]; activeCategory: string | null; onSelect: (id: string | null) => void }) => (
+  default: ({ categories, onSelect }: { categories: { _id: string; name: string }[]; activeCategory: string | null; onSelect: (id: string | null) => void }) => (
     <div data-testid="category-chips">
       {categories.map((c) => (
         <button key={c._id} onClick={() => onSelect(c._id)}>{c.name}</button>

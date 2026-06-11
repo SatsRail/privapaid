@@ -56,6 +56,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Fail the build on known high/critical advisories so vulnerable
+      # dependencies can't merge silently (Dependabot only alerts after the
+      # fact). `high` rather than `moderate` keeps the gate low-noise.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Enable citext extension
         run: |
           PGPASSWORD=privapaid psql -h localhost -U privapaid -d privapaid_test \

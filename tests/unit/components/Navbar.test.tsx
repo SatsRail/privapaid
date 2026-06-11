@@ -25,7 +25,7 @@ vi.mock("@/components/SearchBar", () => ({
 }));
 
 vi.mock("@/components/AboutModal", () => ({
-  default: ({ open, onClose, aboutText, instanceName }: { open: boolean; onClose: () => void; aboutText: string; instanceName: string }) => {
+  default: ({ open, aboutText, instanceName }: { open: boolean; onClose: () => void; aboutText: string; instanceName: string }) => {
     if (!open) return null;
     return <div data-testid="about-modal">{instanceName}: {aboutText}</div>;
   },
