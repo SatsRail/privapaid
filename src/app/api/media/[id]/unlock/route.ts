@@ -14,16 +14,16 @@ interface RouteContext {
 export async function GET(_req: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
-    const media = await prisma.media.findUnique({
-      where: { id },
+    const media = await prisma.media.findFirst({
+      where: { id, deletedAt: null },
       select: { id: true, channelId: true },
     });
     if (!media) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
 
-    const channel = await prisma.channel.findUnique({
-      where: { id: media.channelId },
+    const channel = await prisma.channel.findFirst({
+      where: { id: media.channelId, deletedAt: null },
       select: { active: true },
     });
     if (!channel || !channel.active) {

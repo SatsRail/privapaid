@@ -54,6 +54,14 @@ export const MAX_BYTES = 2500;
  */
 export const EXPIRY_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/**
+ * Plausibility bounds for the inner numeric `exp` (Unix seconds). Anything
+ * outside [2000-01-01, 2100-01-01] is treated as unparseable rather than as a
+ * real expiry — see parseMacaroonExp.
+ */
+const EXP_SECONDS_MIN = 946684800; // 2000-01-01T00:00:00Z
+const EXP_SECONDS_MAX = 4102444800; // 2100-01-01T00:00:00Z
+
 const EntrySchema = z.union([
   z.string(),
   z.object({ m: z.string(), t: z.number() }),
@@ -116,7 +124,9 @@ export function serializeMacaroonCookie(map: MacaroonMap): string {
  * no longer grant access before it ever touches one they still hold.
  * With nothing expired this degrades to the original oldest-stored eviction.
  *
- * Returns the mutated map and a count of evicted entries.
+ * Returns the mutated map, a count of evicted entries, and how many of
+ * those were still LIVE (not expired) — evicting a live macaroon means a
+ * paying user lost access they still held, which callers should alarm on.
  *
  * Throws when the new entry alone exceeds `MAX_BYTES` — that shouldn't
  * happen for valid macaroons (~250 bytes) but we surface it loudly so
@@ -127,7 +137,7 @@ export function insertWithCap(
   productId: string,
   macaroon: string,
   now: number
-): { map: MacaroonMap; evicted: number } {
+): { map: MacaroonMap; evicted: number; evictedLive: number } {
   const next: MacaroonMap = { ...map, [productId]: { m: macaroon, t: now } };
 
   // Quick check on the new entry alone.
@@ -137,6 +147,7 @@ export function insertWithCap(
   }
 
   let evicted = 0;
+  let evictedLive = 0;
   while (
     Object.keys(next).length > MAX_ENTRIES ||
     serializeMacaroonCookie(next).length > MAX_BYTES
@@ -170,9 +181,10 @@ export function insertWithCap(
     if (!victimPid) break;
     delete next[victimPid];
     evicted++;
+    if (!victimExpired) evictedLive++;
   }
 
-  return { map: next, evicted };
+  return { map: next, evicted, evictedLive };
 }
 
 /**
@@ -226,6 +238,14 @@ export function parseMacaroonExp(macaroon: string): Date | null {
     }
     const innerExp = parsed?._rails?.data?.exp;
     if (typeof innerExp === "number") {
+      // The inner exp is Unix SECONDS. Guard against a malformed value in
+      // milliseconds (or other junk): seconds-as-ms lands in the year ~57000,
+      // which would make the entry look perpetually live and skip every local
+      // expiry check (eviction priority, pruning, the renewal banner). Out of
+      // bounds ⇒ unknown expiry, left for the portal to judge.
+      if (innerExp < EXP_SECONDS_MIN || innerExp > EXP_SECONDS_MAX) {
+        return null;
+      }
       return new Date(innerExp * 1000);
     }
     return null;

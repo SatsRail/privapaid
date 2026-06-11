@@ -11,6 +11,7 @@ import {
   URL_ENVELOPE_MIME,
 } from "@/lib/media-envelope";
 import { reencryptMediaProductsForMedia } from "@/lib/media-product-reencrypt";
+import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 
 type MediaType = "video" | "audio" | "article" | "photo" | "podcast";
@@ -264,9 +265,18 @@ export async function PATCH(
         reencrypt = await reencryptMediaProductsForMedia(id, { sk });
         if (reencrypt.errors.length > 0) {
           console.error(`media.PATCH ${id}: re-encrypt had ${reencrypt.errors.length} error(s):`, reencrypt.errors);
+          Sentry.captureMessage("media.PATCH: product re-encrypt had errors", {
+            level: "error",
+            tags: { context: "media.patch.product_reencrypt" },
+            extra: { mediaId: id, errors: reencrypt.errors },
+          });
         }
       } catch (err) {
         console.error(`media.PATCH ${id}: re-encrypt failed:`, err);
+        Sentry.captureException(err, {
+          tags: { context: "media.patch.product_reencrypt" },
+          extra: { mediaId: id },
+        });
       }
     }
   }

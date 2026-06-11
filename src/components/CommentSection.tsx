@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/i18n/useLocale";
 
 interface Comment {
   id: string;
@@ -15,6 +16,7 @@ interface CommentSectionProps {
 }
 
 export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: CommentSectionProps) {
+  const { t } = useLocale();
   const [comments, setComments] = useState<Comment[]>([]);
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
@@ -51,12 +53,12 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
       });
       if (res.status === 401) {
         onUnauthorized?.();
-        setError("Payment required to comment.");
+        setError(t("viewer.comments.payment_required"));
         return;
       }
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setError(json.error || "Failed to post comment.");
+        setError(json.error || t("viewer.comments.post_failed"));
         return;
       }
       const created: Comment = await res.json();
@@ -69,7 +71,7 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
 
   return (
     <section className="mt-8">
-      <h2 className="mb-3 text-lg font-semibold">Comments</h2>
+      <h2 className="mb-3 text-lg font-semibold">{t("viewer.comments.heading")}</h2>
 
       {hasAccess ? (
         <form onSubmit={handleSubmit} className="mb-6">
@@ -78,7 +80,7 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
             onChange={(e) => setBody(e.target.value)}
             maxLength={2000}
             rows={3}
-            placeholder="Leave a comment…"
+            placeholder={t("viewer.comments.body_placeholder")}
             className="w-full rounded-md border p-2"
             style={{
               backgroundColor: "var(--theme-bg-secondary)",
@@ -97,22 +99,22 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
             className="mt-2 rounded-md px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
             style={{ backgroundColor: "var(--theme-primary)", color: "var(--theme-bg, #000)" }}
           >
-            {submitting ? "Posting…" : "Post"}
+            {submitting ? t("viewer.comments.posting") : t("viewer.comments.post")}
           </button>
         </form>
       ) : (
         <p className="mb-6 text-sm" style={{ color: "var(--theme-text-secondary)" }}>
-          Pay to unlock this content to leave a comment.
+          {t("viewer.comments.paywall_message")}
         </p>
       )}
 
       {loading ? (
         <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>
-          Loading…
+          {t("common.loading")}
         </p>
       ) : comments.length === 0 ? (
         <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>
-          No comments yet.
+          {t("viewer.comments.empty")}
         </p>
       ) : (
         <ul className="space-y-3">

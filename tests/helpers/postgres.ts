@@ -64,6 +64,20 @@ export async function setupTestDB(): Promise<void> {
     stdio: "pipe",
   });
 
+  // `db push` renders schema.prisma only — CHECK constraints that live in raw
+  // migration SQL are invisible to it. Re-apply the ones tests rely on so the
+  // test DB enforces what production enforces.
+  await prisma.$executeRawUnsafe(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'MediaEnvelope_linked_has_wrappedDek'
+      ) THEN
+        ALTER TABLE "MediaEnvelope" ADD CONSTRAINT "MediaEnvelope_linked_has_wrappedDek"
+          CHECK ("mediaId" IS NULL OR "wrappedDek" IS NOT NULL) NOT VALID;
+      END IF;
+    END $$;
+  `);
+
   pushed = true;
 }
 

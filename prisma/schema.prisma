@@ -178,6 +178,12 @@ model Media {
 /// /api/admin/photos) before the Media row exists, then link it on save. The
 /// @@unique enforces 1:1 for linked rows (Postgres treats multiple NULLs as
 /// distinct, so unlinked staged rows don't collide).
+///
+/// wrappedDek is nullable ONLY for legacy pre-migration url-media rows whose
+/// plaintext source was dropped (remediation: re-import / re-save the URL —
+/// see scripts/audit-media-envelopes.ts). A CHECK constraint (raw SQL,
+/// `MediaEnvelope_linked_has_wrappedDek`, NOT VALID) forbids creating any NEW
+/// linked row without a wrapped DEK; Prisma can't express it in this schema.
 model MediaEnvelope {
   id         String   @id @default(cuid())
   mediaId    String?  @unique

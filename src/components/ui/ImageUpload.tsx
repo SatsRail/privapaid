@@ -97,6 +97,7 @@ export default function ImageUpload({
 
       <div className="flex items-center gap-4">
         {displaySrc && (
+          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             /* displaySrc is URL-scheme-guarded above (blob:/http(s)/relative only). */
             /* codeql[js/xss-through-dom] */

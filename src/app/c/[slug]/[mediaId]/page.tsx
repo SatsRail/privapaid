@@ -32,13 +32,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, mediaId } = await params;
 
   const channel = await prisma.channel.findFirst({
-    where: { slug, active: true },
+    where: { slug, active: true, deletedAt: null },
     select: { id: true, name: true },
   });
   if (!channel) return { title: "Not Found" };
 
-  const media = await prisma.media.findUnique({
-    where: { id: mediaId },
+  const media = await prisma.media.findFirst({
+    where: { id: mediaId, deletedAt: null },
     select: {
       name: true,
       description: true,
@@ -92,7 +92,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   const { locale } = instanceConfig;
 
   const channel = await prisma.channel.findFirst({
-    where: { slug, active: true },
+    where: { slug, active: true, deletedAt: null },
   });
   if (!channel) notFound();
   if (!config.nsfw && channel.nsfw) notFound();
@@ -101,7 +101,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
   // as `envelope_id` so it can fetch the ciphertext after unwrapping the DEK.
   // The envelope id is safe to expose: its bytes are useless without the DEK.
   const media = await prisma.media.findFirst({
-    where: { id: mediaId, channelId: channel.id },
+    where: { id: mediaId, channelId: channel.id, deletedAt: null },
     include: {
       images: {
         select: { id: true, kind: true, externalUrl: true, position: true },
@@ -245,6 +245,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
     where: {
       channelId: channel.id,
       id: { not: media.id },
+      deletedAt: null,
     },
     select: {
       id: true,

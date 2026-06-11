@@ -74,6 +74,7 @@ export default function ExchangeModal({ open, onClose }: ExchangeModalProps) {
               className="flex items-center gap-3 rounded-lg border border-[var(--theme-border)] p-3 transition hover:border-[var(--theme-primary)]"
             >
               {exchange.logo_url ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                   src={exchange.logo_url}
                   alt={exchange.name}

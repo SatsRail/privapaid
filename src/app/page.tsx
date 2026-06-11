@@ -43,6 +43,7 @@ export default async function HomePage() {
   const channels = await prisma.channel.findMany({
     where: {
       active: true,
+      deletedAt: null,
       ...(instanceConfig.nsfw ? {} : { nsfw: false }),
     },
     orderBy: { createdAt: "desc" },
@@ -60,7 +61,7 @@ export default async function HomePage() {
   // Fetch media for active channels
   const channelIds = channels.map((ch) => ch.id);
   const mediaItems = await prisma.media.findMany({
-    where: { channelId: { in: channelIds } },
+    where: { channelId: { in: channelIds }, deletedAt: null },
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {

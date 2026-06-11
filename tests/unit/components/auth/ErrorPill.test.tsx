@@ -15,7 +15,7 @@ describe("ErrorPill", () => {
   });
 
   it("uses default theme colors when no theme provided", () => {
-    const { container } = render(<ErrorPill message="Error" />);
+    render(<ErrorPill message="Error" />);
     const span = screen.getByText("Error");
     expect(span.style.color).toBe("rgb(248, 113, 113)"); // #f87171
   });

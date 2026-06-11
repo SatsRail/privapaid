@@ -33,7 +33,7 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const channel = await prisma.channel.findFirst({
-    where: { slug, active: true },
+    where: { slug, active: true, deletedAt: null },
     select: {
       id: true,
       name: true,
@@ -89,7 +89,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
   const activeSort = SORT_OPTIONS.find((o) => o.key === sortParam) || SORT_OPTIONS[0];
 
   const channel = await prisma.channel.findFirst({
-    where: { slug, active: true },
+    where: { slug, active: true, deletedAt: null },
     include: { category: { select: { name: true } } },
   });
 
@@ -101,7 +101,7 @@ export default async function ChannelPage({ params, searchParams }: Props) {
   const page = Math.min(parsedPage, totalPages);
 
   const media = await prisma.media.findMany({
-    where: { channelId: channel.id },
+    where: { channelId: channel.id, deletedAt: null },
     // Exclude sourceUrl from the listing — it's never needed for cards and
     // we don't want to leak content URLs.
     select: {

@@ -111,23 +111,23 @@ export async function PUT(request: Request) {
     }
 
     // The Settings table is a singleton — there should be exactly one row when
-    // setupCompleted=true. We look it up explicitly so we can target a single
-    // row (Prisma updateMany doesn't return the updated record).
-    const existing = await prisma.settings.findFirst({
+    // setupCompleted=true. updateMany targets it in a single statement so two
+    // concurrent PUTs can't race a find-then-update (each request's fields land
+    // atomically; column-level last-write-wins is the intended PUT semantics).
+    const updated = await prisma.settings.updateMany({
       where: { setupCompleted: true },
-      select: { id: true },
+      data: updates,
     });
 
-    if (!existing) {
+    if (updated.count === 0) {
       return NextResponse.json(
         { error: "Settings not found" },
         { status: 404 }
       );
     }
 
-    const settings = await prisma.settings.update({
-      where: { id: existing.id },
-      data: updates,
+    const settings = await prisma.settings.findFirstOrThrow({
+      where: { setupCompleted: true },
       select: SETTINGS_SELECT,
     });
 

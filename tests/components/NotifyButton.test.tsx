@@ -97,8 +97,8 @@ describe("NotifyButton", () => {
     render(<NotifyButton channelSlug="ch" vapidPublicKey="key" />);
 
     const btn = await screen.findByTestId("notify-button");
-    expect(btn.textContent).toContain("viewer.notify.subscribe");
-    expect(screen.getByText("viewer.notify.disclosure")).toBeInTheDocument();
+    expect(btn.textContent).toContain("Notify me of new content");
+    expect(screen.getByText("We store an anonymous browser address to notify you \u2014 no email, no account. Turn it off anytime.")).toBeInTheDocument();
   });
 
   it("shows a denied hint and disables the button when permission is denied", async () => {
@@ -107,7 +107,7 @@ describe("NotifyButton", () => {
 
     const btn = await screen.findByTestId("notify-button");
     expect(btn).toBeDisabled();
-    expect(screen.getByText("viewer.notify.denied")).toBeInTheDocument();
+    expect(screen.getByText("Notifications are blocked in your browser settings.")).toBeInTheDocument();
   });
 
   it("subscribes on click: requests permission, registers the SW, POSTs the subscription", async () => {
@@ -119,7 +119,7 @@ describe("NotifyButton", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("notify-button").textContent).toContain(
-        "viewer.notify.subscribed"
+        "Notifications on"
       )
     );
 
@@ -153,7 +153,7 @@ describe("NotifyButton", () => {
     });
     render(<NotifyButton channelSlug="ch" vapidPublicKey="key" />);
     expect(
-      await screen.findByText("viewer.notify.ios_hint")
+      await screen.findByText("Add this site to your Home Screen to get notifications.")
     ).toBeInTheDocument();
   });
 
@@ -166,14 +166,14 @@ describe("NotifyButton", () => {
     // Starts subscribed (granted permission + stored flag for this channel).
     const btn = await screen.findByTestId("notify-button");
     await waitFor(() =>
-      expect(btn.textContent).toContain("viewer.notify.subscribed")
+      expect(btn.textContent).toContain("Notifications on")
     );
 
     fireEvent.click(btn);
 
     await waitFor(() =>
       expect(screen.getByTestId("notify-button").textContent).toContain(
-        "viewer.notify.subscribe"
+        "Notify me of new content"
       )
     );
 
@@ -201,9 +201,9 @@ describe("NotifyButton", () => {
     const btn = await screen.findByTestId("notify-button");
     fireEvent.click(btn);
 
-    expect(await screen.findByText("viewer.notify.error")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't enable notifications. Please try again.")).toBeInTheDocument();
     expect(screen.getByTestId("notify-button").textContent).toContain(
-      "viewer.notify.subscribe"
+      "Notify me of new content"
     );
     expect(localStorage.getItem("privapaid:notify:ch")).toBeNull();
   });
@@ -217,7 +217,7 @@ describe("NotifyButton", () => {
     fireEvent.click(btn);
 
     await waitFor(() =>
-      expect(screen.getByText("viewer.notify.denied")).toBeInTheDocument()
+      expect(screen.getByText("Notifications are blocked in your browser settings.")).toBeInTheDocument()
     );
     expect(mocks.subscribe).not.toHaveBeenCalled();
   });
@@ -229,7 +229,7 @@ describe("NotifyButton", () => {
 
     const btn = await screen.findByTestId("notify-button");
     await waitFor(() =>
-      expect(btn.textContent).toContain("viewer.notify.subscribed")
+      expect(btn.textContent).toContain("Notifications on")
     );
 
     vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
@@ -237,7 +237,7 @@ describe("NotifyButton", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("notify-button").textContent).toContain(
-        "viewer.notify.subscribe"
+        "Notify me of new content"
       )
     );
     expect(localStorage.getItem("privapaid:notify:my-channel")).toBeNull();

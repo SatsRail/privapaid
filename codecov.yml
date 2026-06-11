@@ -1,12 +1,15 @@
+# Targets match the thresholds vitest enforces locally (vitest.config.ts: 85%
+# lines/statements/functions/branches) so a PR can't pass one gate and slip
+# under the other.
 coverage:
   status:
     project:
       default:
-        target: 80%
-        threshold: 5%
+        target: 85%
+        threshold: 2%
     patch:
       default:
-        target: 80%
+        target: 85%
 comment:
   layout: "reach,diff,flags,files"
   behavior: default

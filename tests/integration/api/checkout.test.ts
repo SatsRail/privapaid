@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
+import {
+  createMediaProduct,
+  createChannelProduct,
+  createChannel,
+  createMedia,
+} from "../../helpers/factories";
 import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
@@ -157,6 +162,22 @@ describe("Checkout API — POST /api/checkout", () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for soft-deleted media — no checkout against removed content", async () => {
+    const channel = await createChannel({ active: true });
+    const media = await createMedia(channel.id, { name: "Ghost Media" });
+    await prisma.media.update({
+      where: { id: media.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const req = buildRequest({ media_id: media.id, product_id: "prod_1" });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.error).toBe("Media not found");
   });
 
   it("returns 404 when media not found", async () => {

@@ -1,9 +1,36 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createSettings } from "../../helpers/factories";
+import { createSettings, createChannel, createMedia } from "../../helpers/factories";
 import { prisma } from "@/lib/prisma";
 import { encryptSecretKey } from "@/lib/encryption";
-import { checkEncryptionKeyMatchesDb } from "@/lib/startup-checks";
+import {
+  checkEncryptionKeyMatchesDb,
+  warnOnBrokenMediaEnvelopes,
+} from "@/lib/startup-checks";
+
+const WRAPPED_DEK_CONSTRAINT = "MediaEnvelope_linked_has_wrappedDek";
+
+/**
+ * Seed the LEGACY broken state: a linked envelope with no wrapped DEK.
+ * The CHECK constraint (correctly) forbids creating this via normal writes —
+ * such rows only exist because they predate the constraint (NOT VALID skips
+ * them) — so the seed drops and re-adds it around the insert.
+ */
+async function createLegacyEnvelopeWithoutDek(mediaId: string) {
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "MediaEnvelope" DROP CONSTRAINT "${WRAPPED_DEK_CONSTRAINT}"`
+  );
+  try {
+    await prisma.mediaEnvelope.create({
+      data: { mediaId, bytes: Buffer.from([0x01]), mimeType: "text/url" },
+    });
+  } finally {
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "MediaEnvelope" ADD CONSTRAINT "${WRAPPED_DEK_CONSTRAINT}"
+       CHECK ("mediaId" IS NULL OR "wrappedDek" IS NOT NULL) NOT VALID`
+    );
+  }
+}
 
 describe("startup-checks", () => {
   const originalKey = process.env.SK_ENCRYPTION_KEY;
@@ -111,7 +138,7 @@ describe("startup-checks", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi
       .spyOn(process, "exit")
-      .mockImplementation(((..._args: unknown[]) => {
+      .mockImplementation((() => {
         throw new Error("process.exit was called");
       }) as never);
 
@@ -123,5 +150,99 @@ describe("startup-checks", () => {
     expect(err.mock.calls.flat().join(" ")).toContain(
       "SK_ENCRYPTION_KEY does not decrypt"
     );
+  });
+
+  describe("warnOnBrokenMediaEnvelopes", () => {
+    it("stays silent when every media has a healthy envelope", async () => {
+      const channel = await createChannel();
+      await createMedia(channel.id);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await warnOnBrokenMediaEnvelopes();
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("warns when a media has no envelope at all", async () => {
+      const channel = await createChannel();
+      // Bypass the factory (it always mints an envelope) — this is the
+      // broken state the probe exists to catch.
+      await prisma.media.create({
+        data: { channelId: channel.id, name: "envelope-less", mediaType: "video" },
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await warnOnBrokenMediaEnvelopes();
+
+      expect(warn).toHaveBeenCalled();
+      const msg = warn.mock.calls.flat().join(" ");
+      expect(msg).toContain("1 without an envelope");
+      expect(msg).toContain("audit-media-envelopes");
+    });
+
+    it("warns when a linked envelope is missing its wrapped DEK (legacy url media)", async () => {
+      const channel = await createChannel();
+      const media = await prisma.media.create({
+        data: { channelId: channel.id, name: "legacy-url", mediaType: "video" },
+      });
+      await createLegacyEnvelopeWithoutDek(media.id);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await warnOnBrokenMediaEnvelopes();
+
+      const msg = warn.mock.calls.flat().join(" ");
+      expect(msg).toContain("1 without a wrapped DEK");
+    });
+
+    it("adds the CONTENT_KEK warning only when broken media exist AND the KEK is unset", async () => {
+      vi.stubEnv("CONTENT_KEK", "");
+      const channel = await createChannel();
+      await prisma.media.create({
+        data: { channelId: channel.id, name: "envelope-less", mediaType: "video" },
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await warnOnBrokenMediaEnvelopes();
+
+      const msg = warn.mock.calls.flat().join(" ");
+      expect(msg).toContain("CONTENT_KEK is not set");
+    });
+
+    it("warns and bails out when Postgres is unreachable — never blocks boot", async () => {
+      vi.spyOn(prisma.media, "count").mockRejectedValue(
+        new Error("ECONNREFUSED 127.0.0.1:5432")
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await expect(warnOnBrokenMediaEnvelopes()).resolves.toBeUndefined();
+      expect(warn.mock.calls.flat().join(" ")).toContain(
+        "skipping media-envelope probe"
+      );
+    });
+  });
+
+  describe("MediaEnvelope_linked_has_wrappedDek constraint", () => {
+    it("rejects creating a NEW linked envelope without a wrapped DEK", async () => {
+      const channel = await createChannel();
+      const media = await prisma.media.create({
+        data: { channelId: channel.id, name: "m", mediaType: "video" },
+      });
+
+      await expect(
+        prisma.mediaEnvelope.create({
+          data: { mediaId: media.id, bytes: Buffer.from([0x01]), mimeType: "text/url" },
+        })
+      ).rejects.toThrow();
+    });
+
+    it("allows a STAGED envelope (no mediaId) without a wrapped DEK", async () => {
+      // Photo uploads stage the envelope before the Media row exists; only
+      // LINKING without a DEK is forbidden.
+      await expect(
+        prisma.mediaEnvelope.create({
+          data: { bytes: Buffer.from([0x01]), mimeType: "image/jpeg" },
+        })
+      ).resolves.toBeTruthy();
+    });
   });
 });

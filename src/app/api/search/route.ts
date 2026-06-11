@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   // mode: "insensitive") treats the query as a literal substring.
   const channelWhere: Record<string, unknown> = {
     active: true,
+    deletedAt: null,
     OR: [
       { name: { contains: q, mode: "insensitive" } },
       { bio: { contains: q, mode: "insensitive" } },
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
     }),
     prisma.media.findMany({
       where: {
+        deletedAt: null,
         OR: [
           { name: { contains: q, mode: "insensitive" } },
           { description: { contains: q, mode: "insensitive" } },
@@ -61,6 +63,7 @@ export async function GET(req: NextRequest) {
         where: {
           id: { in: channelIds },
           active: true,
+          deletedAt: null,
           ...(config.nsfw ? {} : { nsfw: false }),
         },
         select: { id: true, slug: true, name: true },

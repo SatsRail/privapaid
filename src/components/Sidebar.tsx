@@ -2,26 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
-import { resolveImageUrl } from "@/lib/images";
+import { useSession } from "next-auth/react";
 import { useSidebar } from "@/components/SidebarContext";
 import { useLocale } from "@/i18n/useLocale";
-import type { Locale } from "@/i18n";
-
-interface SidebarChannel {
-  _id: string;
-  slug: string;
-  name: string;
-  profile_image_url: string;
-  profile_image_id?: string;
-  media_count: number;
-  is_live: boolean;
-}
-
-interface SidebarCategory {
-  _id: string;
-  name: string;
-}
+import UserSection from "@/components/sidebar/UserSection";
+import ChannelItem from "@/components/sidebar/ChannelItem";
+import ExploreSection from "@/components/sidebar/ExploreSection";
+import LanguageSection from "@/components/sidebar/LanguageSection";
+import type { SidebarChannel, SidebarCategory } from "@/components/sidebar/types";
 
 interface SidebarProps {
   channels: SidebarChannel[];
@@ -39,18 +27,13 @@ export default function Sidebar({
   const pathname = usePathname();
   const { data: session } = useSession();
   const { collapsed, toggle } = useSidebar();
-  const { t, locale, setLocale } = useLocale();
+  const { t } = useLocale();
 
   const isActive = (slug: string) => pathname === `/c/${slug}` || pathname.startsWith(`/c/${slug}/`);
   const isHome = pathname === "/";
   const isAdminPage = pathname.startsWith("/admin");
   const isLoggedIn = !!session?.user;
   const isAdmin = isLoggedIn && (session.user as { type?: string }).type === "admin";
-
-  const languages: { code: Locale; labelKey: string }[] = [
-    { code: "en", labelKey: "viewer.sidebar.lang_en" },
-    { code: "es", labelKey: "viewer.sidebar.lang_es" },
-  ];
 
   return (
     <>
@@ -219,102 +202,11 @@ export default function Sidebar({
 
           {/* Section C: Explore (Categories) — expanded desktop only */}
           {!collapsed && categories.length > 0 && (
-            <div className="hidden lg:block">
-              <div
-                className="mx-3 my-1 border-t"
-                style={{ borderColor: "var(--theme-border)" }}
-              />
-              <div className="px-2 pt-1 pb-2">
-                <div className="px-3 pb-1 pt-2">
-                  <span
-                    className="text-sm font-medium"
-                    style={{ color: "var(--theme-heading)" }}
-                  >
-                    {t("viewer.sidebar.explore")}
-                  </span>
-                </div>
-                {categories.map((cat) => (
-                  <Link
-                    key={cat._id}
-                    href={`/?category=${cat._id}`}
-                    className="flex items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--theme-bg-secondary)]"
-                    style={{ color: "var(--theme-text)" }}
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      style={{ color: "var(--theme-text-secondary)" }}
-                    >
-                      <rect x="3" y="3" width="7" height="7" rx="1" />
-                      <rect x="14" y="3" width="7" height="7" rx="1" />
-                      <rect x="3" y="14" width="7" height="7" rx="1" />
-                      <rect x="14" y="14" width="7" height="7" rx="1" />
-                    </svg>
-                    <span>{cat.name}</span>
-                  </Link>
-                ))}
-              </div>
-            </div>
+            <ExploreSection categories={categories} />
           )}
 
           {/* Language Switcher — visible when sidebar is expanded (any screen size) */}
-          {!collapsed && (
-            <>
-              <div
-                className="mx-3 my-1 border-t"
-                style={{ borderColor: "var(--theme-border)" }}
-              />
-              <div className="px-2 pb-3 pt-1">
-                <div className="px-3 pb-1 pt-2">
-                  <span
-                    className="text-sm font-medium"
-                    style={{ color: "var(--theme-heading)" }}
-                  >
-                    {t("viewer.sidebar.language")}
-                  </span>
-                </div>
-                {languages.map((lang) => (
-                  <button
-                    key={lang.code}
-                    onClick={() => setLocale(lang.code)}
-                    className={`flex w-full items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors ${
-                      locale === lang.code
-                        ? "bg-[var(--theme-bg-secondary)]"
-                        : "hover:bg-[var(--theme-bg-secondary)]"
-                    }`}
-                    style={{
-                      color: locale === lang.code ? "var(--theme-heading)" : "var(--theme-text)",
-                    }}
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      style={{ color: locale === lang.code ? "var(--theme-heading)" : "var(--theme-text-secondary)" }}
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="2" y1="12" x2="22" y2="12" />
-                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                    </svg>
-                    <span className={locale === lang.code ? "font-medium" : ""}>
-                      {t(lang.labelKey)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+          {!collapsed && <LanguageSection />}
         </div>
 
         {/* Bottom: About (pinned) */}
@@ -352,123 +244,5 @@ export default function Sidebar({
           <main> reclaim the horizontal real estate the icon rail used to
           consume on desktop. */}
     </>
-  );
-}
-
-function UserSection({
-  isLoggedIn,
-  collapsed,
-  userName,
-  t,
-}: {
-  isLoggedIn: boolean;
-  collapsed: boolean;
-  userName: string | null | undefined;
-  t: (key: string) => string;
-}) {
-  const initial = (userName || "?").charAt(0).toUpperCase();
-  const avatarStyle = { backgroundColor: "var(--theme-primary)", color: "#000" };
-
-  if (!isLoggedIn) {
-    return (
-      <Link
-        href="/login"
-        className="flex items-center gap-5 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-[var(--theme-bg-secondary)]"
-        style={{ color: "var(--theme-text)" }}
-        title={collapsed ? t("viewer.navbar.login") : undefined}
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--theme-text-secondary)" }}>
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-          <circle cx="12" cy="7" r="4" />
-        </svg>
-        {!collapsed && <span>{t("viewer.navbar.login")}</span>}
-      </Link>
-    );
-  }
-
-  const avatar = (
-    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold" style={avatarStyle} title={userName || "Admin"}>
-      {initial}
-    </div>
-  );
-
-  const nameEl = (
-    <span className="truncate text-sm font-medium" style={{ color: "var(--theme-text)" }}>
-      {userName}
-    </span>
-  );
-
-  return (
-    <div className="flex items-center gap-5 rounded-lg px-3 py-2">
-      {avatar}
-      {!collapsed && (
-        <div className="min-w-0 flex-1 flex flex-col">
-          {nameEl}
-          <button
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className="text-xs text-left transition-colors hover:opacity-80"
-            style={{ color: "var(--theme-text-secondary)" }}
-          >
-            {t("viewer.navbar.logout")}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ChannelItem({
-  channel,
-  active,
-  collapsed,
-}: {
-  channel: SidebarChannel;
-  active: boolean;
-  collapsed: boolean;
-}) {
-  const avatarSrc = resolveImageUrl(channel.profile_image_id, channel.profile_image_url);
-
-  return (
-    <Link
-      href={`/c/${channel.slug}`}
-      className={`flex items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors ${
-        active ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-bg-secondary)]"
-      }`}
-      title={collapsed ? channel.name : undefined}
-    >
-      {avatarSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={avatarSrc}
-          alt={channel.name}
-          className="h-6 w-6 shrink-0 rounded-full object-cover"
-        />
-      ) : (
-        <div
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-          style={{
-            backgroundColor: "var(--theme-bg-secondary)",
-            color: "var(--theme-text-secondary)",
-          }}
-        >
-          {channel.name.charAt(0).toUpperCase()}
-        </div>
-      )}
-      {!collapsed && (
-        <div className="min-w-0 flex-1 flex items-center gap-2">
-          <span
-            className="truncate"
-            style={{
-              color: active ? "var(--theme-heading)" : "var(--theme-text)",
-            }}
-          >
-            {channel.name}
-          </span>
-          {channel.is_live && (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Live" />
-          )}
-        </div>
-      )}
-    </Link>
   );
 }

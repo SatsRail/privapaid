@@ -36,6 +36,25 @@ export async function GET(
   }
 
   try {
+    // Probe the size in SQL before fetching: a corrupted multi-GB row must be
+    // rejected without ever buffering its bytes into process memory.
+    const sized = await prisma.$queryRaw<Array<{ len: number }>>`
+      SELECT octet_length("bytes")::int AS len
+      FROM "MediaEnvelope"
+      WHERE "id" = ${id}
+    `;
+
+    if (sized.length === 0) {
+      return NextResponse.json({ error: "Envelope not found" }, { status: 404 });
+    }
+
+    if (sized[0].len > MAX_ENVELOPE_BYTES) {
+      return NextResponse.json(
+        { error: "Envelope exceeds size limit" },
+        { status: 413 }
+      );
+    }
+
     const envelope = await prisma.mediaEnvelope.findUnique({
       where: { id },
       select: { bytes: true },
@@ -43,13 +62,6 @@ export async function GET(
 
     if (!envelope) {
       return NextResponse.json({ error: "Envelope not found" }, { status: 404 });
-    }
-
-    if (envelope.bytes.length > MAX_ENVELOPE_BYTES) {
-      return NextResponse.json(
-        { error: "Envelope exceeds size limit" },
-        { status: 413 }
-      );
     }
 
     // Content-addressed ETag. The envelope id is stable, but its bytes are

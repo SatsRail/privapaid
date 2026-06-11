@@ -17,16 +17,16 @@ export async function POST(req: Request) {
     const { media_id, product_id } = result;
 
     // Find the media and its channel
-    const media = await prisma.media.findUnique({
-      where: { id: media_id },
+    const media = await prisma.media.findFirst({
+      where: { id: media_id, deletedAt: null },
       select: { id: true, channelId: true },
     });
     if (!media) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
 
-    const channel = await prisma.channel.findUnique({
-      where: { id: media.channelId },
+    const channel = await prisma.channel.findFirst({
+      where: { id: media.channelId, deletedAt: null },
       select: { active: true },
     });
     if (!channel || !channel.active) {

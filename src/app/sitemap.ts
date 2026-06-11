@@ -21,6 +21,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const channels = await prisma.channel.findMany({
     where: {
       active: true,
+      deletedAt: null,
       ...(nsfw ? {} : { nsfw: false }),
     },
     select: { id: true, slug: true, updatedAt: true },
@@ -38,7 +39,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Media items for active channels
   const channelIds = channels.map((ch) => ch.id);
   const mediaItems = await prisma.media.findMany({
-    where: { channelId: { in: channelIds } },
+    where: { channelId: { in: channelIds }, deletedAt: null },
     select: { id: true, channelId: true, updatedAt: true },
   });
 

@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated coverage report — linting it produces spurious warnings on
+    // any machine that has run `npm run test:coverage`.
+    "coverage/**",
   ]),
 ]);
 

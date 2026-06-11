@@ -8,10 +8,10 @@ export async function register() {
     // Trial-decrypt the stored merchant key against SK_ENCRYPTION_KEY.
     // Skipped in test runs (vitest setup creates fresh memory Mongo).
     if (process.env.NODE_ENV !== "test") {
-      const { checkEncryptionKeyMatchesDb } = await import(
-        "@/lib/startup-checks"
-      );
+      const { checkEncryptionKeyMatchesDb, warnOnBrokenMediaEnvelopes } =
+        await import("@/lib/startup-checks");
       await checkEncryptionKeyMatchesDb();
+      await warnOnBrokenMediaEnvelopes();
     }
 
     // Opt-in distributed rate limiting. Without REDIS_URL the in-memory

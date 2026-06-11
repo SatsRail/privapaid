@@ -95,12 +95,16 @@ export async function POST(req: NextRequest) {
   // running out of room. With Sentry dashboards filterable by level, a
   // sudden spike of warnings here would alert us to either raise MAX_BYTES
   // or shrink the per-macaroon size (the latter requires portal changes).
+  // Evicting a LIVE (non-expired) macaroon is worse — a paying user just
+  // lost access they still held — so that escalates to "error".
   Sentry.captureMessage("macaroons.POST: stored", {
-    level: next.evicted > 0 ? "warning" : "info",
+    level:
+      next.evictedLive > 0 ? "error" : next.evicted > 0 ? "warning" : "info",
     tags: {
       context: "macaroons.POST",
       // `evictedAny` makes Sentry filtering trivial: tag:macaroons.POST evictedAny:true
       evictedAny: String(next.evicted > 0),
+      evictedLive: String(next.evictedLive > 0),
     },
     extra: {
       product_id,
@@ -110,6 +114,7 @@ export async function POST(req: NextRequest) {
       existingProductsCount: Object.keys(next.map).length,
       isNewProduct: wasNewProduct,
       evicted: next.evicted,
+      evictedLive: next.evictedLive,
       cookieSecure: process.env.NODE_ENV === "production",
     },
   });

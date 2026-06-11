@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { setupTestDB, teardownTestDB, clearCollections } from "../../helpers/postgres";
-import { createMediaProduct, createChannelProduct } from "../../helpers/factories";
+import {
+  createMediaProduct,
+  createChannelProduct,
+  createChannel,
+  createMedia,
+} from "../../helpers/factories";
 import { envelopeCreateForUrl } from "../../helpers/crypto";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────
@@ -140,6 +145,36 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
 
     expect(res.status).toBe(404);
     expect(body.error).toBe("Media not found");
+  });
+
+  it("returns 404 for soft-deleted media — the soft-delete contract", async () => {
+    const channel = await createChannel({ active: true });
+    const media = await createMedia(channel.id, { name: "Ghost Media" });
+    await prisma.media.update({
+      where: { id: media.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const res = await GET(makeRequest(media.id), makeContext(media.id));
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.error).toBe("Media not found");
+  });
+
+  it("returns 404 when the channel is soft-deleted, even if still active", async () => {
+    const channel = await createChannel({ active: true });
+    const media = await createMedia(channel.id, { name: "Orphaned Media" });
+    await prisma.channel.update({
+      where: { id: channel.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const res = await GET(makeRequest(media.id), makeContext(media.id));
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.error).toBe("Channel not found");
   });
 
   it("returns 404 when channel is inactive", async () => {

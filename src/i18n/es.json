@@ -336,6 +336,10 @@
   "viewer.checkout.cancel": "Cancelar",
 
   "viewer.comments.title": "Comentarios ({count})",
+  "viewer.comments.heading": "Comentarios",
+  "viewer.comments.posting": "Publicando…",
+  "viewer.comments.payment_required": "Se requiere pago para comentar.",
+  "viewer.comments.post_failed": "No se pudo publicar el comentario.",
   "viewer.comments.nickname_placeholder": "Tu nickname",
   "viewer.comments.body_placeholder": "Comparte tu opinión...",
   "viewer.comments.nickname_required": "Ingresa un nickname",
@@ -371,5 +375,8 @@
   "common.save": "Guardar",
   "common.delete": "Eliminar",
   "common.loading": "Cargando...",
+  "common.error_boundary.message": "Algo salió mal al cargar esta sección.",
+  "common.error_boundary.retry": "Reintentar ({count} restantes)",
+  "common.error_boundary.exhausted": "Esta sección no se pudo cargar tras {count} intentos. Recarga la página.",
   "common.error": "Algo salió mal"
 }

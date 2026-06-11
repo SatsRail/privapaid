@@ -129,10 +129,10 @@ describe("Admin Settings routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("returns 500 when Prisma settings.update throws", async () => {
+    it("returns 500 when the Prisma settings write throws", async () => {
       await createSettings({ instanceName: "x" });
       const spy = vi
-        .spyOn(prisma.settings, "update")
+        .spyOn(prisma.settings, "updateMany")
         .mockImplementationOnce(() => {
           throw new Error("db offline");
         });
