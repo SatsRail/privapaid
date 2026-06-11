@@ -336,6 +336,10 @@
   "viewer.checkout.cancel": "Cancel",
 
   "viewer.comments.title": "Comments ({count})",
+  "viewer.comments.heading": "Comments",
+  "viewer.comments.posting": "Posting…",
+  "viewer.comments.payment_required": "Payment required to comment.",
+  "viewer.comments.post_failed": "Failed to post comment.",
   "viewer.comments.nickname_placeholder": "Your nickname",
   "viewer.comments.body_placeholder": "Share your thoughts...",
   "viewer.comments.nickname_required": "Please enter a nickname",
@@ -371,5 +375,8 @@
   "common.save": "Save",
   "common.delete": "Delete",
   "common.loading": "Loading...",
+  "common.error_boundary.message": "Something went wrong loading this section.",
+  "common.error_boundary.retry": "Try again ({count} left)",
+  "common.error_boundary.exhausted": "This section failed to load after {count} attempts. Please reload the page.",
   "common.error": "Something went wrong"
 }

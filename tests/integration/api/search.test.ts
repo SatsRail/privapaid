@@ -27,6 +27,7 @@ vi.mock("@/config/instance", () => ({
 import { GET } from "@/app/api/search/route";
 import { NextRequest } from "next/server";
 import { createChannel, createMedia } from "../../helpers/factories";
+import { prisma } from "@/lib/prisma";
 
 function buildSearchRequest(query: string): NextRequest {
   return new NextRequest(`http://localhost:3000/api/search?q=${encodeURIComponent(query)}`, {
@@ -103,6 +104,41 @@ describe("GET /api/search", () => {
     const mediaResults = body.results.filter((r: { type: string }) => r.type === "media");
     expect(mediaResults).toHaveLength(1);
     expect(mediaResults[0].name).toBe("JavaScript Tutorial");
+  });
+
+  it("excludes soft-deleted channels and media — the soft-delete contract", async () => {
+    const liveChannel = await createChannel({
+      name: "Visible Cooking",
+      slug: "visible-cooking",
+      active: true,
+    });
+    const deletedChannel = await createChannel({
+      name: "Deleted Cooking",
+      slug: "deleted-cooking",
+      active: true,
+    });
+    await prisma.channel.update({
+      where: { id: deletedChannel.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await createMedia(liveChannel.id, { name: "Cooking Tips Live" });
+    const deletedMedia = await createMedia(liveChannel.id, { name: "Cooking Tips Removed" });
+    await prisma.media.update({
+      where: { id: deletedMedia.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const req = buildSearchRequest("Cooking");
+    const res = await GET(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const names = body.results.map((r: { name: string }) => r.name);
+    expect(names).toContain("Visible Cooking");
+    expect(names).toContain("Cooking Tips Live");
+    expect(names).not.toContain("Deleted Cooking");
+    expect(names).not.toContain("Cooking Tips Removed");
   });
 
   it("respects NSFW filter", async () => {

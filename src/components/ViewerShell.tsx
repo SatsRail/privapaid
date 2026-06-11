@@ -18,6 +18,7 @@ export default async function ViewerShell({ children }: ViewerShellProps) {
   const channels = await prisma.channel.findMany({
     where: {
       active: true,
+      deletedAt: null,
       ...(instanceConfig.nsfw ? {} : { nsfw: false }),
     },
     select: {

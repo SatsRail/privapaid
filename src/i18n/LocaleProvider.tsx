@@ -11,7 +11,10 @@ interface LocaleContextValue {
 
 export const LocaleContext = createContext<LocaleContextValue>({
   locale: "en",
-  t: (key: string) => key,
+  // English fallback outside a provider (isolated renders, class components
+  // before mount) — never surface raw translation keys to the user.
+  t: (key: string, params?: Record<string, string | number>) =>
+    translate("en", key, params),
   setLocale: () => {},
 });
 

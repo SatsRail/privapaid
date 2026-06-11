@@ -15,7 +15,7 @@ export async function GET(
 ) {
   const { id } = await params;
   const comments = await prisma.comment.findMany({
-    where: { mediaId: id },
+    where: { mediaId: id, media: { deletedAt: null } },
     orderBy: { createdAt: "desc" },
     take: 100,
     select: { id: true, mediaId: true, body: true, createdAt: true },
@@ -44,8 +44,8 @@ export async function POST(
 
   const { body } = validated;
 
-  const media = await prisma.media.findUnique({
-    where: { id },
+  const media = await prisma.media.findFirst({
+    where: { id, deletedAt: null },
     select: { id: true, channelId: true },
   });
   if (!media) {

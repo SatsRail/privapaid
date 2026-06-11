@@ -120,8 +120,8 @@ export async function POST(req: Request, context: RouteContext) {
     const orderId = typeof body.orderId === "string" ? body.orderId : undefined;
 
     // Load media + channel — mirror the unlock route's guards.
-    const media = await prisma.media.findUnique({
-      where: { id },
+    const media = await prisma.media.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true,
         channelId: true,
@@ -133,8 +133,8 @@ export async function POST(req: Request, context: RouteContext) {
       return NextResponse.json({ error: "Media not found" }, { status: 404 });
     }
 
-    const channel = await prisma.channel.findUnique({
-      where: { id: media.channelId },
+    const channel = await prisma.channel.findFirst({
+      where: { id: media.channelId, deletedAt: null },
       select: { active: true },
     });
     if (!channel || !channel.active) {

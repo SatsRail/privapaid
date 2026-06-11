@@ -27,8 +27,8 @@ export async function POST(
   const { action } = validated;
 
   // Verify media exists up-front so we can use its channel for product lookup.
-  const media = await prisma.media.findUnique({
-    where: { id },
+  const media = await prisma.media.findFirst({
+    where: { id, deletedAt: null },
     select: { id: true, channelId: true, likesCount: true },
   });
   if (!media) {
