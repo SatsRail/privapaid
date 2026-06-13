@@ -1,4 +1,4 @@
-# PrivaPaid Stream
+# PrivaPaid
 
 [![Tests](https://github.com/SatsRail/privapaid/actions/workflows/test.yml/badge.svg)](https://github.com/SatsRail/privapaid/actions/workflows/test.yml)
 [![CodeQL](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml/badge.svg)](https://github.com/SatsRail/privapaid/actions/workflows/codeql.yml)
