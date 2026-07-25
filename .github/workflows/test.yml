@@ -59,8 +59,14 @@ jobs:
       # Fail the build on known high/critical advisories so vulnerable
       # dependencies can't merge silently (Dependabot only alerts after the
       # fact). `high` rather than `moderate` keeps the gate low-noise.
+      #
+      # `--omit=dev` scopes the gate to what actually ships. The dev toolchain
+      # (eslint, testcontainers) pulls a transitive brace-expansion DoS
+      # advisory (GHSA-mh99-v99m-4gvg) with no fix available upstream, which
+      # would otherwise block every PR on something that never runs in prod.
+      # Dev advisories still surface via Dependabot.
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: Enable citext extension
         run: |
