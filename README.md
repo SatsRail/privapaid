@@ -6,7 +6,7 @@
 
 Source-available, encryption-first content platform powered by [SatsRail](https://www.satsrail.com/) Bitcoin Lightning payments. Sell any type of media — video, audio, articles, photos, podcasts — with instant, non-custodial payments. No payment processor accounts, no chargebacks, no middlemen.
 
-The buyer-facing copy of every piece of content is encrypted at rest, and decryption happens entirely in the buyer's browser after payment — the server never decrypts content for a buyer. SatsRail manages encryption keys and payment verification but never sees your content. PrivaPaid never touches customer funds.
+Every piece of content is encrypted at rest — there is no unencrypted copy stored anywhere — and decryption happens entirely in the buyer's browser after payment — the server never decrypts content for a buyer. SatsRail manages encryption keys and payment verification but never sees your content. PrivaPaid never touches customer funds.
 
 Fork it, deploy it, sell whatever you want through it.
 
