@@ -19,7 +19,7 @@ const { mockGetMerchantKey, mockSatsrail, mockRateLimit } = vi.hoisted(() => ({
       status: "active",
     }),
     createCheckoutSession: vi.fn().mockResolvedValue({
-      checkout_url: "https://satsrail.com/checkout/sess_abc",
+      checkout_url: "https://app.satsrail.com/checkout/sess_abc",
       token: "sess_abc",
     }),
   },
@@ -79,7 +79,7 @@ describe("Checkout API — POST /api/checkout", () => {
       status: "active",
     });
     mockSatsrail.createCheckoutSession.mockResolvedValue({
-      checkout_url: "https://satsrail.com/checkout/sess_abc",
+      checkout_url: "https://app.satsrail.com/checkout/sess_abc",
       token: "sess_abc",
     });
   });
@@ -277,7 +277,7 @@ describe("Checkout API — POST /api/checkout", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.url).toBe("https://satsrail.com/checkout/sess_abc");
+    expect(body.url).toBe("https://app.satsrail.com/checkout/sess_abc");
     expect(body.token).toBe("sess_abc");
     expect(mockSatsrail.createCheckoutSession).toHaveBeenCalledWith("sk_test_key", {
       checkout_session: { product_id: "test-product" },

@@ -332,7 +332,7 @@ model Settings {
   logoBytes               Bytes? // replaces logo_image_id GridFS pointer
   logoMimeType            String?
   aboutText               String    @default("")
-  satsrailApiUrl          String    @default("https://satsrail.com/api/v1")
+  satsrailApiUrl          String    @default("https://app.satsrail.com/api/v1")
   satsrailApiKeyEncrypted String?
   merchantId              String?
   merchantName            String?

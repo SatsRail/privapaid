@@ -36,7 +36,7 @@ describe("Settings model", () => {
 
   it("sets SatsRail defaults", async () => {
     const settings = await createSettings();
-    expect(settings.satsrailApiUrl).toBe("https://satsrail.com/api/v1");
+    expect(settings.satsrailApiUrl).toBe("https://app.satsrail.com/api/v1");
     expect(settings.satsrailApiKeyEncrypted).toBeNull();
     expect(settings.merchantId).toBeNull();
     expect(settings.merchantCurrency).toBe("USD");

@@ -86,7 +86,7 @@ jobs:
           AUTH_SECRET: "test-auth-secret-at-least-32-characters-long"
           NEXTAUTH_URL: "http://localhost:3000"
           SATSRAIL_WEBHOOK_SECRET: "test-webhook-secret"
-          SATSRAIL_API_URL: "https://satsrail.com/api/v1"
+          SATSRAIL_API_URL: "https://app.satsrail.com/api/v1"
 
       - name: Upload coverage to Codecov
         if: always()

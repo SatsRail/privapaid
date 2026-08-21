@@ -6,7 +6,7 @@ vi.mock("global", () => ({}));
 vi.mock("@/config/instance", () => ({
   default: {
     satsrail: {
-      apiUrl: "https://satsrail.com/api/v1",
+      apiUrl: "https://app.satsrail.com/api/v1",
     },
   },
 }));
@@ -42,7 +42,7 @@ describe("SatsRailClient", () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products",
+        "https://app.satsrail.com/api/v1/m/products",
         {
           method: "POST",
           headers: {
@@ -64,7 +64,7 @@ describe("SatsRailClient", () => {
       await satsrail.getProduct(secretKey, "prod_1");
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1",
+        "https://app.satsrail.com/api/v1/m/products/prod_1",
         expect.objectContaining({ method: "GET" })
       );
     });
@@ -166,7 +166,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.listProducts(secretKey);
       expect(result).toEqual(response);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products",
+        "https://app.satsrail.com/api/v1/m/products",
         expect.any(Object)
       );
     });
@@ -207,7 +207,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getProductKey(secretKey, "prod_1");
       expect(result).toEqual(keyData);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1/key",
+        "https://app.satsrail.com/api/v1/m/products/prod_1/key",
         expect.any(Object)
       );
     });
@@ -225,7 +225,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.rotateProductKey(secretKey, "prod_1");
       expect(result).toEqual(keyData);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1/rotate_key",
+        "https://app.satsrail.com/api/v1/m/products/prod_1/rotate_key",
         expect.objectContaining({ method: "POST" })
       );
     });
@@ -243,7 +243,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.clearOldKey(secretKey, "prod_1");
       expect(result).toEqual(product);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1/clear_old_key",
+        "https://app.satsrail.com/api/v1/m/products/prod_1/clear_old_key",
         expect.objectContaining({ method: "POST" })
       );
     });
@@ -263,7 +263,7 @@ describe("SatsRailClient", () => {
       });
       expect(result).toEqual(product);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1",
+        "https://app.satsrail.com/api/v1/m/products/prod_1",
         expect.objectContaining({
           method: "PATCH",
           body: JSON.stringify({ product: { name: "Updated" } }),
@@ -368,7 +368,7 @@ describe("SatsRailClient", () => {
 
       await satsrail.deleteProduct(secretKey, "prod_1");
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/products/prod_1",
+        "https://app.satsrail.com/api/v1/m/products/prod_1",
         expect.objectContaining({ method: "DELETE" })
       );
     });
@@ -405,7 +405,7 @@ describe("SatsRailClient", () => {
       });
       expect(result).toEqual(pt);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/product_types",
+        "https://app.satsrail.com/api/v1/m/product_types",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
@@ -480,7 +480,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getTokenUsage(secretKey, "tok_1");
       expect(result).toEqual(usage);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/api_tokens/tok_1/usage",
+        "https://app.satsrail.com/api/v1/m/api_tokens/tok_1/usage",
         expect.any(Object)
       );
     });
@@ -500,7 +500,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.verifyAccess("sk_live_test", "mac_token_123");
       expect(result).toEqual(response);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/access/verify",
+        "https://app.satsrail.com/api/v1/m/access/verify",
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
@@ -536,7 +536,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.listPayments(secretKey);
       expect(result).toEqual(payments);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/payments",
+        "https://app.satsrail.com/api/v1/m/payments",
         expect.any(Object)
       );
     });
@@ -616,7 +616,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.createSession("user@test.com", "pass123");
       expect(result).toEqual(session);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/m/sessions",
+        "https://app.satsrail.com/api/v1/m/sessions",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -692,7 +692,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getCheckoutQr("tok_abc");
       expect(result).toBe("<svg>qr</svg>");
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/checkout/tok_abc/qr"
+        "https://app.satsrail.com/checkout/tok_abc/qr"
       );
     });
 
@@ -722,7 +722,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getCheckoutStatus("tok_abc");
       expect(result).toEqual(status);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/checkout/tok_abc/status"
+        "https://app.satsrail.com/checkout/tok_abc/status"
       );
     });
 
@@ -752,7 +752,7 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getExchanges();
       expect(result).toEqual(exchanges);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://satsrail.com/api/v1/pub/exchanges"
+        "https://app.satsrail.com/api/v1/pub/exchanges"
       );
     });
 

@@ -18,7 +18,7 @@ vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue
 
 vi.mock("@/config/instance", () => ({
   default: {
-    satsrail: { apiUrl: "https://api.satsrail.com" },
+    satsrail: { apiUrl: "https://app.satsrail.com" },
   },
 }));
 
@@ -59,7 +59,7 @@ describe("Exchanges API", () => {
     vi.doMock("@/lib/merchant-key", () => ({ getMerchantKey: vi.fn().mockResolvedValue("sk_test_key") }));
     vi.doMock("@/config/instance", () => ({
       default: {
-        satsrail: { apiUrl: "https://api.satsrail.com" },
+        satsrail: { apiUrl: "https://app.satsrail.com" },
       },
     }));
 

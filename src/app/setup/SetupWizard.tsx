@@ -377,7 +377,7 @@ export default function SetupWizard() {
             >
               Don&apos;t have an account?{" "}
               <a
-                href="https://satsrail.com/merchants/sign_up"
+                href="https://www.satsrail.com/merchants/sign_up"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{

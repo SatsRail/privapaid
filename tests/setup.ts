@@ -21,4 +21,4 @@ process.env.AUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
 process.env.NEXTAUTH_SECRET = "test-auth-secret-at-least-32-characters-long";
 process.env.NEXTAUTH_URL = "http://localhost:3000";
 process.env.SATSRAIL_WEBHOOK_SECRET = "test-webhook-secret";
-process.env.SATSRAIL_API_URL = "https://satsrail.com/api/v1";
+process.env.SATSRAIL_API_URL = "https://app.satsrail.com/api/v1";

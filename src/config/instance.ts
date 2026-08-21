@@ -55,7 +55,7 @@ const config: InstanceConfig = {
     logo: process.env.LOGO_URL || DEFAULT_THEME.logo,
   },
   satsrail: {
-    apiUrl: process.env.SATSRAIL_API_URL || "https://satsrail.com/api/v1",
+    apiUrl: process.env.SATSRAIL_API_URL || "https://app.satsrail.com/api/v1",
   },
   googleAnalyticsId: process.env.GOOGLE_ANALYTICS_ID || "",
   googleSiteVerification: process.env.GOOGLE_SITE_VERIFICATION || "",

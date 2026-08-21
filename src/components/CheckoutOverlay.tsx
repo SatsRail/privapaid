@@ -328,7 +328,7 @@ export default function CheckoutOverlay({
 
             {/* Powered by */}
             <a
-              href="https://satsrail.com"
+              href="https://www.satsrail.com"
               target="_blank"
               rel="noopener noreferrer"
               className="mt-4 text-xs transition-colors hover:underline"

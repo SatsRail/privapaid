@@ -246,7 +246,7 @@ describe("CheckoutOverlay", () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
         const link = screen.getByText("powered by SatsRail.com");
-        expect(link).toHaveAttribute("href", "https://satsrail.com");
+        expect(link).toHaveAttribute("href", "https://www.satsrail.com");
         expect(link).toHaveAttribute("target", "_blank");
       });
     });

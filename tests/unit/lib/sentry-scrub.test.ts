@@ -159,7 +159,7 @@ describe("sentry-scrub", () => {
           {
             category: "fetch",
             data: {
-              url: "https://satsrail.com/api/v1/products",
+              url: "https://app.satsrail.com/api/v1/products",
               satsrail_api_key: "sk_live_real",
             },
           },
@@ -168,7 +168,7 @@ describe("sentry-scrub", () => {
       scrubEvent(event);
       const data = event.breadcrumbs![0].data as Record<string, unknown>;
       expect(String(data.satsrail_api_key)).toContain(SCRUB_MARKER);
-      expect(data.url).toBe("https://satsrail.com/api/v1/products");
+      expect(data.url).toBe("https://app.satsrail.com/api/v1/products");
     });
 
     it("scrubs event.contexts", () => {
