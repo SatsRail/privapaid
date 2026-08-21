@@ -40,6 +40,45 @@ const DEFAULT_THEME: ThemeConfig = {
   logo: "",
 };
 
+/**
+ * SatsRail's merchant API is served from `app.satsrail.com`. Earlier example
+ * env files shipped `https://satsrail.com/api/v1`, but the bare apex has no
+ * DNS record at all, so every request against it fails to resolve before it
+ * ever leaves the box. Downstream that surfaced as a misleading "Product not
+ * found on SatsRail", because the callers could not tell a dead hostname from
+ * a genuine 404.
+ *
+ * Rewrite the two marketing hostnames onto the API host and supply the
+ * `/api/v1` prefix when the URL carries no path. Custom or self-hosted portal
+ * URLs are left exactly as configured.
+ */
+const SATSRAIL_API_HOST = "app.satsrail.com";
+const LEGACY_SATSRAIL_HOSTS = new Set(["satsrail.com", "www.satsrail.com"]);
+
+export const DEFAULT_SATSRAIL_API_URL = `https://${SATSRAIL_API_HOST}/api/v1`;
+
+export function normalizeSatsRailApiUrl(raw?: string | null): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return DEFAULT_SATSRAIL_API_URL;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return DEFAULT_SATSRAIL_API_URL;
+  }
+
+  if (LEGACY_SATSRAIL_HOSTS.has(url.hostname.toLowerCase())) {
+    url.hostname = SATSRAIL_API_HOST;
+  }
+
+  // Drop any trailing slash; a bare origin gets the versioned API prefix.
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path === "" ? "/api/v1" : path;
+
+  return `${url.origin}${url.pathname}`;
+}
+
 // Synchronous fallback using env vars (used at build time and as defaults)
 const config: InstanceConfig = {
   name: process.env.INSTANCE_NAME || "Media Platform",
@@ -55,7 +94,7 @@ const config: InstanceConfig = {
     logo: process.env.LOGO_URL || DEFAULT_THEME.logo,
   },
   satsrail: {
-    apiUrl: process.env.SATSRAIL_API_URL || "https://app.satsrail.com/api/v1",
+    apiUrl: normalizeSatsRailApiUrl(process.env.SATSRAIL_API_URL),
   },
   googleAnalyticsId: process.env.GOOGLE_ANALYTICS_ID || "",
   googleSiteVerification: process.env.GOOGLE_SITE_VERIFICATION || "",
@@ -96,7 +135,9 @@ export async function getInstanceConfig(): Promise<InstanceConfig> {
             : settings.logoUrl || DEFAULT_THEME.logo,
         },
         satsrail: {
-          apiUrl: settings.satsrailApiUrl || config.satsrail.apiUrl,
+          apiUrl: settings.satsrailApiUrl
+            ? normalizeSatsRailApiUrl(settings.satsrailApiUrl)
+            : config.satsrail.apiUrl,
         },
         googleAnalyticsId: settings.googleAnalyticsId || config.googleAnalyticsId,
         googleSiteVerification: settings.googleSiteVerification || config.googleSiteVerification,

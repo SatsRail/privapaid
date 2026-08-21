@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import { satsrail } from "@/lib/satsrail";
+import { normalizeSatsRailApiUrl } from "@/config/instance";
 
 declare module "next-auth" {
   interface User {
@@ -49,7 +50,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const session = await satsrail.createSession(
             credentials.email as string,
             credentials.password as string,
-            settings.satsrailApiUrl
+            normalizeSatsRailApiUrl(settings.satsrailApiUrl)
           );
 
           const merchant = session.merchants.find(

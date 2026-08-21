@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecretKey } from "@/lib/encryption";
 import { isSetupComplete } from "@/lib/setup";
 import { validateBody, isValidationError, schemas } from "@/lib/validate";
+import { normalizeSatsRailApiUrl } from "@/config/instance";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +41,7 @@ export async function POST(request: Request) {
       logoUrl: logo_url?.trim() || "",
       nsfwEnabled: nsfw_enabled === true,
       themePrimary: theme_primary || "#3b82f6",
-      satsrailApiUrl:
-        process.env.SATSRAIL_API_URL || "https://app.satsrail.com/api/v1",
+      satsrailApiUrl: normalizeSatsRailApiUrl(process.env.SATSRAIL_API_URL),
       satsrailApiKeyEncrypted: encryptSecretKey(satsrail_api_key.trim()),
       merchantId: merchant_id.trim(),
       merchantName: merchant_name?.trim() || "",

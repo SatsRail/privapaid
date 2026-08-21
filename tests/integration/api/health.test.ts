@@ -83,7 +83,7 @@ describe("GET /api/health", () => {
     expect(body.satsrail).toBe("http_500");
   });
 
-  it("reports satsrail:unreachable and degrades status when fetch throws", async () => {
+  it("reports satsrail:unreachable without failing the container healthcheck", async () => {
     global.fetch = vi
       .fn()
       .mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
@@ -93,12 +93,15 @@ describe("GET /api/health", () => {
     const res = await GET();
     const body = await res.json();
 
-    expect(res.status).toBe(503);
-    expect(body.status).toBe("degraded");
+    // A portal outage must not restart the app (railway.toml restarts
+    // ON_FAILURE against this path), so it is reported, not fatal.
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("ok");
     expect(body.satsrail).toBe("unreachable");
   });
 
-  it("reports satsrail:not_configured when SATSRAIL_API_URL is unset", async () => {
+  it("probes the built-in default when SATSRAIL_API_URL is unset", async () => {
+    vi.resetModules();
     delete process.env.SATSRAIL_API_URL;
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
 
@@ -106,8 +109,29 @@ describe("GET /api/health", () => {
     const res = await GET();
     const body = await res.json();
 
+    // Previously this reported "not_configured" and skipped the probe, which
+    // meant a default deployment could not tell whether it was reaching the
+    // portal at all.
     expect(res.status).toBe(200);
-    expect(body.satsrail).toBe("not_configured");
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(body.satsrail).toBe("reachable");
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it("reports the URL it probed, with the legacy host normalized", async () => {
+    // `@/config/instance` reads env once at module load, so the registry has
+    // to be reset for a fresh SATSRAIL_API_URL to take effect.
+    vi.resetModules();
+    process.env.SATSRAIL_API_URL = "https://satsrail.com/api/v1";
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch;
+
+    const { GET } = await import("@/app/api/health/route");
+    const body = await (await GET()).json();
+
+    // The bare apex does not resolve; config rewrites it onto the API host.
+    expect(body.satsrail_url).toBe("https://app.satsrail.com/api/v1");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://app.satsrail.com/api/v1/pub/exchanges",
+      expect.anything()
+    );
   });
 });

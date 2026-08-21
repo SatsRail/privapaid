@@ -169,10 +169,12 @@ describe("auth", () => {
         role: "owner",
         type: "admin",
       });
+      // The stored URL is a bare origin, so it is normalized before use —
+      // createSession appends `/m/sessions`, which needs the `/api/v1` prefix.
       expect(mockCreateSession).toHaveBeenCalledWith(
         "user@test.com",
         "pass123",
-        "https://api.test.com"
+        "https://api.test.com/api/v1"
       );
     });
 
