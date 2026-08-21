@@ -113,6 +113,27 @@ interface SatsRailExchange {
 }
 
 /**
+ * Raised when SatsRail answers with a non-2xx status. Carrying the status
+ * lets callers separate a genuine 404 from an unreachable host or a rejected
+ * merchant key — a transport failure (DNS, TLS, timeout) never produces one
+ * of these, it surfaces as the underlying fetch TypeError.
+ *
+ * The message shape is load-bearing: existing callers match on the status
+ * digits inside it.
+ */
+export class SatsRailApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(status: number, body: unknown) {
+    super(`SatsRail API error ${status}: ${JSON.stringify(body)}`);
+    this.name = "SatsRailApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/**
  * SatsRail API client for server-side calls.
  * All methods require a sk_live_ secret key.
  */
@@ -175,9 +196,7 @@ class SatsRailClient {
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(
-        `SatsRail API error ${res.status}: ${JSON.stringify(error)}`
-      );
+      throw new SatsRailApiError(res.status, error);
     }
 
     if (res.status === 204) return undefined as T;
@@ -402,9 +421,7 @@ class SatsRailClient {
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(
-        `SatsRail API error ${res.status}: ${JSON.stringify(error)}`
-      );
+      throw new SatsRailApiError(res.status, error);
     }
 
     return res.json();

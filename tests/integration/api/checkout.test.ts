@@ -33,15 +33,17 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/merchant-key", () => ({
   getMerchantKey: mockGetMerchantKey,
 }));
-vi.mock("@/lib/satsrail", () => ({
-  satsrail: mockSatsrail,
-}));
+vi.mock("@/lib/satsrail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/satsrail")>();
+  return { satsrail: mockSatsrail, SatsRailApiError: actual.SatsRailApiError };
+});
 vi.mock("@sentry/nextjs", () => ({
   captureException: vi.fn(),
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/checkout/route";
+import { SatsRailApiError } from "@/lib/satsrail";
 import { prisma } from "@/lib/prisma";
 
 let refSeed = 5000;
@@ -257,9 +259,11 @@ describe("Checkout API — POST /api/checkout", () => {
     expect(body.error).toBe("Product is not available for purchase");
   });
 
-  it("returns 404 when product not found on SatsRail", async () => {
+  it("returns 404 when SatsRail genuinely reports the product missing", async () => {
     const { mediaId } = await seedWithMediaProduct();
-    mockSatsrail.getProduct.mockRejectedValueOnce(new Error("Not found"));
+    mockSatsrail.getProduct.mockRejectedValueOnce(
+      new SatsRailApiError(404, { error: "Not Found" })
+    );
 
     const req = buildRequest({ media_id: mediaId, product_id: "prod_1" });
     const res = await POST(req);
@@ -267,6 +271,55 @@ describe("Checkout API — POST /api/checkout", () => {
 
     expect(res.status).toBe(404);
     expect(body.error).toBe("Product not found on SatsRail");
+  });
+
+  // Regression: an unreachable portal (a SATSRAIL_API_URL whose host has no
+  // DNS record, a refused connection, a timeout) used to be reported as
+  // "Product not found on SatsRail", which sent operators hunting for a
+  // missing product instead of a broken URL.
+  it("returns 503 when SatsRail is unreachable, not a 404", async () => {
+    const { mediaId } = await seedWithMediaProduct();
+    mockSatsrail.getProduct.mockRejectedValueOnce(
+      new TypeError("fetch failed")
+    );
+
+    const req = buildRequest({ media_id: mediaId, product_id: "prod_1" });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(503);
+    expect(body.error).toContain("Could not reach the payment service");
+    expect(body.error).not.toContain("Product not found");
+  });
+
+  it("returns 502 when SatsRail rejects the merchant API key", async () => {
+    const { mediaId } = await seedWithMediaProduct();
+    mockSatsrail.getProduct.mockRejectedValueOnce(
+      new SatsRailApiError(401, { error: "Unauthorized" })
+    );
+
+    const req = buildRequest({ media_id: mediaId, product_id: "prod_1" });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(502);
+    expect(body.error).toBe("The payment service rejected this store's credentials.");
+  });
+
+  it("returns 502 when SatsRail itself errors", async () => {
+    const { mediaId } = await seedWithMediaProduct();
+    mockSatsrail.getProduct.mockRejectedValueOnce(
+      new SatsRailApiError(500, { error: "boom" })
+    );
+
+    const req = buildRequest({ media_id: mediaId, product_id: "prod_1" });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(502);
+    expect(body.error).toBe(
+      "The payment service returned an error. Please try again shortly."
+    );
   });
 
   it("creates checkout session and returns url/token for media product", async () => {
