@@ -154,7 +154,10 @@ describe("HomeContent", () => {
 
     // Filter by Art which has no channels/media
     fireEvent.click(screen.getByText("Art"));
-    expect(screen.getByText("No content")).toBeInTheDocument();
+    expect(screen.getByText("No titles in this category yet.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No titles");
+    fireEvent.click(screen.getByText("All content"));
+    expect(screen.getByText("Song 1")).toBeInTheDocument();
   });
 
   it("skips media items with unknown channel_id", () => {

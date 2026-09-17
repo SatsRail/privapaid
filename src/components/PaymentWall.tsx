@@ -529,6 +529,8 @@ export default function PaymentWall({
             merchantName={merchantName}
             priceCents={activeProduct?.priceCents}
             priceCurrency={activeProduct?.currency}
+            productName={activeProduct?.name}
+            accessDurationSeconds={activeProduct?.accessDurationSeconds}
             onComplete={handleCheckoutComplete}
             onClose={() => setCheckoutToken(null)}
           />

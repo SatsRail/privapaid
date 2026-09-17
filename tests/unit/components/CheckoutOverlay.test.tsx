@@ -143,14 +143,14 @@ describe("CheckoutOverlay", () => {
     it("shows timer countdown", async () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
-        expect(screen.getByText("5:00")).toBeInTheDocument();
+        expect(screen.getByText("Expires in 5:00")).toBeInTheDocument();
       });
     });
 
     it("counts down timer", async () => {
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
-        expect(screen.getByText("5:00")).toBeInTheDocument();
+        expect(screen.getByText("Expires in 5:00")).toBeInTheDocument();
       });
 
       // Advance in individual 1s steps so each interval tick is flushed
@@ -163,8 +163,8 @@ describe("CheckoutOverlay", () => {
 
       await waitFor(() => {
         // Timer should have ticked down from 5:00
-        expect(screen.queryByText("5:00")).not.toBeInTheDocument();
-        expect(screen.getByText(/^4:5\d$/)).toBeInTheDocument();
+        expect(screen.queryByText("Expires in 5:00")).not.toBeInTheDocument();
+        expect(screen.getByText(/^Expires in 4:5\d$/)).toBeInTheDocument();
       });
     });
 
@@ -182,6 +182,15 @@ describe("CheckoutOverlay", () => {
         const walletLink = screen.getByText("Open Wallet").closest("a");
         expect(walletLink).toHaveAttribute("href", "lightning:lnbc1234");
       });
+    });
+
+    it("offers another way to pay if clipboard access is denied", async () => {
+      vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error("Clipboard denied"));
+      render(<CheckoutOverlay {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText("Copy Invoice")).toBeInTheDocument());
+      await act(async () => { screen.getByText("Copy Invoice").click(); });
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not copy");
+      expect(screen.getByRole("link", { name: "Open Wallet" })).toHaveAttribute("href", "lightning:lnbc1234");
     });
 
     it("copies payment request to clipboard", async () => {
@@ -265,12 +274,11 @@ describe("CheckoutOverlay", () => {
       });
     });
 
-    it("shows default lightning icon when no merchant logo", async () => {
-      const { container } = render(<CheckoutOverlay {...defaultProps} />);
-      await waitFor(() => {
-        const svg = container.querySelector("polygon[points*='13 2']");
-        expect(svg).toBeTruthy();
-      });
+    it("shows the selected product and access duration", () => {
+      render(<CheckoutOverlay {...defaultProps} productName="Channel Access" accessDurationSeconds={604800} merchantName="The Studio" />);
+      expect(screen.getByText("Channel Access")).toBeInTheDocument();
+      expect(screen.getByText("7 days access")).toBeInTheDocument();
+      expect(screen.getByText("The Studio")).toBeInTheDocument();
     });
 
     it("shows fiat price from props when provided", async () => {
@@ -619,6 +627,9 @@ describe("CheckoutOverlay", () => {
         expect(screen.getByText("Failed to load payment. Please try again.")).toBeInTheDocument();
       });
       expect(mockCaptureException).toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(6000); });
+      expect(screen.getByText("Failed to load payment. Please try again.")).toBeInTheDocument();
+      expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
     });
 
     it("error close button calls onClose", async () => {
@@ -748,7 +759,7 @@ describe("CheckoutOverlay", () => {
 
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
-        expect(screen.getByText("1:05")).toBeInTheDocument();
+        expect(screen.getByText("Expires in 1:05")).toBeInTheDocument();
       });
     });
 
@@ -774,7 +785,7 @@ describe("CheckoutOverlay", () => {
         expect(screen.getByText("Waiting for payment...")).toBeInTheDocument();
       });
       // Timer should NOT be shown when time_remaining is 0
-      expect(screen.queryByText("0:00")).not.toBeInTheDocument();
+      expect(screen.queryByText("Expires in 0:00")).not.toBeInTheDocument();
     });
   });
 
@@ -855,19 +866,19 @@ describe("CheckoutOverlay", () => {
 
       render(<CheckoutOverlay {...defaultProps} />);
       await waitFor(() => {
-        expect(screen.getByText("0:02")).toBeInTheDocument();
+        expect(screen.getByText("Expires in 0:02")).toBeInTheDocument();
       });
 
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(screen.getByText("0:01")).toBeInTheDocument();
+      expect(screen.getByText("Expires in 0:01")).toBeInTheDocument();
 
       act(() => {
         vi.advanceTimersByTime(1000);
       });
       // Timer should have stopped at 0
-      expect(screen.queryByText("0:00")).not.toBeInTheDocument();
+      expect(screen.queryByText("Expires in 0:00")).not.toBeInTheDocument();
     });
   });
 });

@@ -1,25 +1,30 @@
+"use client";
+
+import { useLocale } from "@/i18n/useLocale";
+
 export default function Footer() {
+  const { t } = useLocale();
   return (
     <footer
       style={{
-        borderTop: "1px solid rgba(255,255,255,0.08)",
+        borderTop: "1px solid var(--theme-border)",
         padding: "16px 24px",
         textAlign: "center",
         fontSize: "12px",
-        color: "rgba(255,255,255,0.4)",
+        color: "var(--theme-text-secondary)",
       }}
     >
       <span>
-        Powered by{" "}
+        {t("viewer.footer.credit")}{" "}
         <a
           href="https://www.privapaid.com/"
           target="_blank"
           rel="noopener noreferrer"
-          style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
+          style={{ color: "var(--theme-text)", textDecoration: "underline" }}
         >
           PrivaPaid
         </a>{" "}
-        — open-source encrypted content delivery with Bitcoin Lightning payments.
+        <span className="mt-1 block sm:ml-2 sm:mt-0 sm:inline">{t("viewer.footer.description")}</span>
       </span>
     </footer>
   );

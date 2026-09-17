@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import CategoryChips from "@/components/CategoryChips";
 import MediaCard from "@/components/MediaCard";
+import { useLocale } from "@/i18n/useLocale";
 
 interface MediaItem {
   _id: string;
@@ -34,6 +35,7 @@ interface HomeContentProps {
 }
 
 export default function HomeContent({ categories, mediaItems, channels, emptyText }: HomeContentProps) {
+  const { t } = useLocale();
   const searchParams = useSearchParams();
   const initialCategory = searchParams.get("category");
   const [activeCategory, setActiveCategory] = useState<string | null>(initialCategory);
@@ -55,10 +57,14 @@ export default function HomeContent({ categories, mediaItems, channels, emptyTex
     : mediaItems;
 
   return (
-    <div className="px-6 py-6">
+    <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8">
+      <header className="mb-6 max-w-2xl">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("viewer.home.title")}</h1>
+        <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.home.subtitle")}</p>
+      </header>
       {/* Category filter chips */}
       {categories.length > 0 && (
-        <div className="sticky top-14 z-30 -mx-6 px-6 py-3" style={{ backgroundColor: "var(--theme-bg)" }}>
+        <div className="sticky top-14 z-30 -mx-4 px-4 py-3 sm:-mx-6 sm:px-6" style={{ backgroundColor: "var(--theme-bg)" }}>
           <CategoryChips
             categories={categories}
             activeCategory={activeCategory}
@@ -66,6 +72,7 @@ export default function HomeContent({ categories, mediaItems, channels, emptyTex
           />
         </div>
       )}
+      <p role="status" className="mb-4 text-xs" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.home.count", { count: filteredMedia.length })}</p>
 
       {/* Media grid */}
       {filteredMedia.length > 0 ? (
@@ -88,8 +95,9 @@ export default function HomeContent({ categories, mediaItems, channels, emptyTex
       ) : (
         <div className="py-20 text-center">
           <p className="text-lg" style={{ color: "var(--theme-text-secondary)" }}>
-            {emptyText}
+            {activeCategory ? t("viewer.home.filter_empty") : emptyText}
           </p>
+          {activeCategory && <button onClick={() => setActiveCategory(null)} className="mt-4 min-h-11 rounded-lg border px-4 text-sm" style={{ borderColor: "var(--theme-border)" }}>{t("viewer.home.all")}</button>}
         </div>
       )}
     </div>

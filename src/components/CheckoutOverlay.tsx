@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useLocale } from "@/i18n/useLocale";
 import { useDialog } from "@/components/ui/useDialog";
+import { formatDuration } from "@/lib/format";
 
 interface CheckoutOverlayProps {
   checkoutToken: string;
@@ -11,6 +12,8 @@ interface CheckoutOverlayProps {
   merchantName?: string;
   priceCents?: number;
   priceCurrency?: string;
+  productName?: string;
+  accessDurationSeconds?: number;
   onComplete: (data: {
     key: string;
     macaroon: string;
@@ -41,6 +44,8 @@ export default function CheckoutOverlay({
   merchantName,
   priceCents,
   priceCurrency,
+  productName,
+  accessDurationSeconds,
   onComplete,
   onClose,
 }: CheckoutOverlayProps) {
@@ -53,6 +58,7 @@ export default function CheckoutOverlay({
   const [currency, setCurrency] = useState<string | null>(priceCurrency ?? null);
   const [status, setStatus] = useState<"pending" | "expired" | "error">("pending");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -141,7 +147,8 @@ export default function CheckoutOverlay({
         if (data.amount_sats != null) setAmountSats(data.amount_sats);
         if (data.amount_cents != null) setAmountCents(data.amount_cents);
         if (data.currency) setCurrency(data.currency);
-        setStatus("pending");
+        // A pending session does not mean the QR loaded successfully.
+        // Keep a QR error visible instead of reverting to an endless spinner.
       } catch {
         // Ignore transient poll errors
       }
@@ -173,30 +180,44 @@ export default function CheckoutOverlay({
 
   function handleCopy() {
     if (!paymentRequest) return;
-    navigator.clipboard.writeText(paymentRequest).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    setCopyFailed(false);
+    Promise.resolve().then(() => navigator.clipboard.writeText(paymentRequest))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => setCopyFailed(true));
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 backdrop-blur-sm sm:p-6" style={{ backgroundColor: "rgba(0,0,0,0.7)" }}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={t("viewer.checkout.title")}
         tabIndex={-1}
-        className="relative w-full max-w-sm rounded-2xl border p-6 outline-none"
+        className="relative max-h-[calc(100dvh-1.5rem)] w-full max-w-sm overflow-y-auto overscroll-contain rounded-2xl border p-5 shadow-2xl outline-none sm:p-6"
         style={{
           backgroundColor: "var(--theme-bg)",
           borderColor: "var(--theme-border)",
         }}
       >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">{t("viewer.checkout.title")}</h2>
+          <button onClick={handleClose} aria-label={t("viewer.checkout.close")}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full hover:bg-[var(--theme-bg-secondary)]"
+            style={{ color: "var(--theme-text-secondary)" }}>
+            <svg aria-hidden="true" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708" />
+            </svg>
+          </button>
+        </div>
 
         {status === "error" && (
-          <div className="flex flex-col items-center py-12">
+          <div role="alert" className="flex flex-col items-center py-8 text-center">
             <p className="text-sm text-red-400">{t("viewer.checkout.load_error")}</p>
+            <p className="mt-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.error_help")}</p>
             <button
               onClick={handleClose}
               className="mt-4 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -208,8 +229,9 @@ export default function CheckoutOverlay({
         )}
 
         {status === "expired" && (
-          <div className="flex flex-col items-center py-12">
+          <div role="alert" className="flex flex-col items-center py-8 text-center">
             <p className="text-sm text-yellow-400">{t("viewer.checkout.expired")}</p>
+            <p className="mt-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.expired_help")}</p>
             <button
               onClick={handleClose}
               className="mt-4 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -223,71 +245,82 @@ export default function CheckoutOverlay({
         {status === "pending" && (
           <div className="flex flex-col items-center">
             {/* Merchant logo */}
-            {merchantLogo ? (
+            {merchantLogo && (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={merchantLogo}
                 alt={merchantName || ""}
-                className="mb-4 h-12 w-12 rounded-full object-cover"
+                className="mb-2 h-8 w-8 rounded-full object-cover"
               />
-            ) : (
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full" style={{ backgroundColor: "color-mix(in srgb, var(--theme-primary) 15%, transparent)" }}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--theme-primary)" }}>
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                </svg>
-              </div>
             )}
 
-            {/* Price — fiat large, sats below in theme primary */}
-            {amountCents != null && currency ? (
-              <div className="mb-4 text-center">
-                <p className="text-3xl font-bold tabular-nums" style={{ color: "var(--theme-heading)" }}>
-                  {formatFiat(amountCents, currency, locale)}
-                </p>
-                {amountSats != null && (
-                  <p className="mt-1 text-sm font-medium tabular-nums" style={{ color: "var(--theme-primary)" }}>
-                    {amountSats.toLocaleString()} sats
+            <div className="mb-4 flex w-full items-center justify-between gap-4 border-b pb-4" style={{ borderColor: "var(--theme-border)" }}>
+              <div className="min-w-0 flex-1">
+                {merchantName && <p className="mb-1 text-sm" style={{ color: "var(--theme-text-secondary)" }}>{merchantName}</p>}
+                {productName && <p className="mb-1 break-words text-base font-medium">{productName}</p>}
+                {accessDurationSeconds != null && (
+                  <p className="text-xs" style={{ color: "var(--theme-text-secondary)" }}>
+                    {t("viewer.payment.duration_access", { duration: formatDuration(accessDurationSeconds, t) })}
                   </p>
                 )}
               </div>
-            ) : amountSats != null ? (
-              <div className="mb-4 text-center">
-                <p className="text-3xl font-bold tabular-nums" style={{ color: "var(--theme-heading)" }}>
-                  {amountSats.toLocaleString()} <span className="text-lg" style={{ color: "var(--theme-text-secondary)" }}>sats</span>
-                </p>
-              </div>
-            ) : null}
+
+              {/* Price — fiat large, sats below in theme primary */}
+              {amountCents != null && currency ? (
+                <div className="shrink-0 text-right">
+                  <p className="text-3xl font-bold tabular-nums" style={{ color: "var(--theme-heading)" }}>
+                    {formatFiat(amountCents, currency, locale)}
+                  </p>
+                  {amountSats != null && (
+                    <p className="mt-1 text-sm font-medium tabular-nums" style={{ color: "var(--theme-primary)" }}>
+                      {amountSats.toLocaleString(locale)} sats
+                    </p>
+                  )}
+                </div>
+              ) : amountSats != null ? (
+                <div className="shrink-0 text-right">
+                  <p className="text-3xl font-bold tabular-nums" style={{ color: "var(--theme-heading)" }}>
+                    {amountSats.toLocaleString(locale)} <span className="text-lg" style={{ color: "var(--theme-text-secondary)" }}>sats</span>
+                  </p>
+                </div>
+              ) : null}
+            </div>
 
             {/* QR Code — rendered via an <img> data URI, never injected as
                 markup: SVG in an <img> can't run scripts or load external
                 resources, so even a compromised QR endpoint can't XSS here. */}
             {qrSvg ? (
-              <div className="rounded-xl bg-white p-4">
+              <div className="w-full max-w-[282px] rounded-xl bg-white p-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`data:image/svg+xml,${encodeURIComponent(qrSvg)}`}
                   alt={t("viewer.checkout.title")}
-                  className="h-[250px] w-[250px]"
+                  className="aspect-square h-auto w-full"
                 />
               </div>
             ) : (
-              <div className="flex h-[250px] w-[250px] items-center justify-center rounded-xl" style={{ backgroundColor: "var(--theme-bg-secondary)" }}>
+              <div role="status" className="flex aspect-square w-full max-w-[282px] flex-col items-center justify-center gap-3 rounded-xl" style={{ backgroundColor: "var(--theme-bg-secondary)" }}>
                 <div className="h-6 w-6 animate-spin rounded-full border-2" style={{ borderColor: "var(--theme-border)", borderTopColor: "var(--theme-primary)" }} />
+                <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.preparing")}</p>
               </div>
             )}
 
+            <p className="mt-3 text-center text-sm leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+              {t("viewer.checkout.instructions")}
+            </p>
+
             {/* Timer + waiting status */}
-            <div className="mt-4 flex flex-col items-center gap-1">
+            <div className="mt-4 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: "var(--theme-bg-secondary)" }}>
               {timeRemaining != null && timeRemaining > 0 && (
                 <p className="flex items-center gap-1.5 text-sm tabular-nums" style={{ color: "var(--theme-text-secondary)" }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
                     <polyline points="12 6 12 12 16 14" />
                   </svg>
-                  {formatTime(timeRemaining)}
+                  {t("viewer.checkout.expires_in", { time: formatTime(timeRemaining) })}
                 </p>
               )}
-              <p className="flex items-center gap-1.5 text-sm" style={{ color: "var(--theme-text-secondary)" }}>
+              <p role="status" className="flex items-center gap-1.5 text-xs" style={{ color: "var(--theme-text-secondary)" }}>
                 <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "var(--theme-primary)" }} />
                 {t("viewer.checkout.waiting")}
               </p>
@@ -295,10 +328,17 @@ export default function CheckoutOverlay({
 
             {/* Copy Invoice + Open Wallet */}
             {paymentRequest && (
-              <div className="mt-4 flex w-full gap-2">
+              <div className="mt-4 flex w-full flex-col gap-2">
+                <a
+                  href={`lightning:${paymentRequest}`}
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: "var(--theme-primary)" }}
+                >
+                  {t("viewer.checkout.open_wallet")}
+                </a>
                 <button
                   onClick={handleCopy}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border py-2.5 text-sm font-medium transition-colors"
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--theme-bg-secondary)]"
                   style={{ borderColor: "var(--theme-border)", color: "var(--theme-text)" }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -307,20 +347,16 @@ export default function CheckoutOverlay({
                   </svg>
                   {copied ? t("viewer.checkout.copied") : t("viewer.checkout.copy_invoice")}
                 </button>
-                <a
-                  href={`lightning:${paymentRequest}`}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-medium text-black transition-colors"
-                  style={{ backgroundColor: "var(--theme-primary)" }}
-                >
-                  {t("viewer.checkout.open_wallet")}
-                </a>
               </div>
             )}
+
+            {copyFailed && <p role="alert" className="mt-2 text-center text-sm text-red-400">{t("viewer.checkout.copy_failed")}</p>}
+            <p className="mt-3 text-center text-xs leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.unlock_hint")}</p>
 
             {/* Cancel */}
             <button
               onClick={handleClose}
-              className="mt-4 text-sm transition-colors"
+              className="mt-2 min-h-11 px-4 text-sm transition-colors hover:underline"
               style={{ color: "var(--theme-text-secondary)" }}
             >
               {t("viewer.checkout.cancel")}
@@ -331,8 +367,8 @@ export default function CheckoutOverlay({
               href="https://www.satsrail.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-4 text-xs transition-colors hover:underline"
-              style={{ color: "var(--theme-text-secondary)", opacity: 0.6 }}
+              className="mt-2 text-xs transition-colors hover:underline"
+              style={{ color: "var(--theme-text-secondary)" }}
             >
               powered by SatsRail.com
             </a>
