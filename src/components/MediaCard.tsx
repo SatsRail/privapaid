@@ -83,12 +83,12 @@ export default function MediaCard({
           </div>
         )}
         {/* Type badge overlay */}
-        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[11px] font-medium text-white">
+        <span className="absolute bottom-1.5 right-1.5 rounded bg-[var(--theme-media-bg)]/90 px-1.5 py-0.5 text-[11px] font-medium text-[var(--theme-media-text)]">
           {TYPE_LABELS[media.media_type] || media.media_type.toUpperCase()}
         </span>
         {/* Price badge */}
         {price && (
-          <span className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--theme-primary, #c9506b)" }}>
+          <span className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold text-[var(--theme-primary-text)]" style={{ backgroundColor: "var(--theme-primary)" }}>
             {formatPrice(price.cents, price.currency)}
           </span>
         )}

@@ -231,7 +231,7 @@ describe("Sidebar", () => {
 
   it("shows the backdrop when not collapsed (always on, not just mobile)", () => {
     render(<Sidebar {...defaultProps} />);
-    const backdrop = document.querySelector(".fixed.inset-0");
+    const backdrop = screen.queryByTestId("sidebar-backdrop");
     expect(backdrop).not.toBeNull();
     // Pin the architectural change: backdrop no longer carries `lg:hidden`.
     // YouTube watch-page model — the rail is an overlay at every breakpoint.
@@ -240,8 +240,8 @@ describe("Sidebar", () => {
 
   it("calls toggle when backdrop clicked", () => {
     render(<Sidebar {...defaultProps} />);
-    // Backdrop bumped to bg-black/70 to match YouTube's overlay intensity.
-    const backdrop = document.querySelector(".fixed.inset-0.bg-black\\/70");
+    // The themed backdrop still dismisses the drawer.
+    const backdrop = screen.queryByTestId("sidebar-backdrop");
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
     expect(mockToggle).toHaveBeenCalled();
@@ -253,7 +253,7 @@ describe("Sidebar", () => {
     // (later in DOM order) and stay un-dimmed when the rail opens, which
     // the founder caught on the index page. Backdrop must outrank z-30.
     render(<Sidebar {...defaultProps} />);
-    const backdrop = document.querySelector(".fixed.inset-0.bg-black\\/70");
+    const backdrop = screen.queryByTestId("sidebar-backdrop");
     expect(backdrop?.className).toContain("z-40");
   });
 

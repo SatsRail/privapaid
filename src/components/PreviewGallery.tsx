@@ -74,12 +74,12 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
     <>
       {/* Inline viewer for compact mode (photo) */}
       {compact && selectedIndex !== null && (
-        <div className="relative mb-4 overflow-hidden rounded-lg border border-[var(--theme-border)] bg-black">
+        <div className="relative mb-4 overflow-hidden rounded-lg border border-[var(--theme-border)] bg-[var(--theme-media-bg)]">
           {/* Navigation arrows */}
           {images.length > 1 && (
             <button
               onClick={goPrev}
-              className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+              className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--theme-media-bg)]/50 p-2 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70"
               aria-label="Previous"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -96,7 +96,7 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
           {images.length > 1 && (
             <button
               onClick={goNext}
-              className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+              className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--theme-media-bg)]/50 p-2 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70"
               aria-label="Next"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -105,7 +105,7 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
             </button>
           )}
           {/* Counter */}
-          <div className="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+          <div className="absolute bottom-3 right-3 rounded-full bg-[var(--theme-media-bg)]/50 px-3 py-1 text-xs text-[var(--theme-media-text)]">
             {selectedIndex + 1} / {images.length}
           </div>
         </div>
@@ -127,8 +127,8 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
               className={`h-full w-full object-cover transition-all duration-200 ${locked ? "" : "group-hover:scale-105 group-hover:brightness-110"}`}
             />
             {locked && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/70">
+              <div className="absolute inset-0 flex items-center justify-center bg-[var(--theme-media-bg)]/20 opacity-0 transition-opacity group-hover:opacity-100">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--theme-media-text)]/70">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
@@ -141,12 +141,12 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
       {/* Full-screen lightbox (non-compact mode only) */}
       {!compact && lightboxIndex !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--theme-media-bg)]/90"
           onClick={closeLightbox}
         >
           <button
             onClick={closeLightbox}
-            className="absolute right-4 top-4 z-10 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+            className="absolute right-4 top-4 z-10 rounded-full bg-[var(--theme-media-bg)]/50 p-2 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70"
             aria-label="Close"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -155,14 +155,14 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
             </svg>
           </button>
           {images.length > 1 && (
-            <div className="absolute left-4 top-4 z-10 rounded-full bg-black/50 px-3 py-1 text-sm text-white">
+            <div className="absolute left-4 top-4 z-10 rounded-full bg-[var(--theme-media-bg)]/50 px-3 py-1 text-sm text-[var(--theme-media-text)]">
               {lightboxIndex + 1} / {images.length}
             </div>
           )}
           {images.length > 1 && (
             <button
               onClick={(e) => { e.stopPropagation(); goPrev(); }}
-              className="absolute left-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-3 text-white hover:bg-black/70"
+              className="absolute left-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--theme-media-bg)]/50 p-3 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70"
               aria-label="Previous"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -184,7 +184,7 @@ export default function PreviewGallery({ images, locked, compact }: PreviewGalle
           {images.length > 1 && (
             <button
               onClick={(e) => { e.stopPropagation(); goNext(); }}
-              className="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-3 text-white hover:bg-black/70"
+              className="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--theme-media-bg)]/50 p-3 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70"
               aria-label="Next"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -40,7 +40,8 @@ vi.mock("next/cache", () => ({
 }));
 
 // Mock config cache
-vi.mock("@/config/instance", () => ({
+vi.mock("@/config/instance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/config/instance")>(),
   default: { nsfw: false },
   clearConfigCache: vi.fn(),
 }));
@@ -50,6 +51,8 @@ import { GET, PUT } from "@/app/api/admin/settings/route";
 import { requireOwnerApi } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { createSettings } from "../../helpers/factories";
+import { getInstanceConfig } from "@/config/instance";
+import { COLOR_FIELDS, resolveTheme } from "@/config/theme";
 
 function buildPutRequest(body: unknown): NextRequest {
   return new NextRequest(new URL("http://localhost:3000/api/admin/settings"), {
@@ -94,6 +97,36 @@ describe("Admin Settings routes", () => {
   });
 
   describe("PUT /api/admin/settings", () => {
+    it("persists all theme colors and exposes them through GET and public config", async () => {
+      await createSettings();
+      const colors = Object.fromEntries(COLOR_FIELDS.map(({ key }, i) => [key, `#${(0x102030 + i * 0x010101).toString(16)}`]));
+      const response = await PUT(buildPutRequest(colors));
+      expect(response.status).toBe(200);
+      expect((await response.json()).settings).toMatchObject(colors);
+      expect((await (await GET()).json()).settings).toMatchObject(colors);
+      const config = await getInstanceConfig();
+      for (const { key, token } of COLOR_FIELDS) expect(config.theme[token]).toBe(colors[key]);
+    });
+
+    it("clears optional overrides without overwriting the base palette", async () => {
+      await createSettings();
+      await prisma.settings.updateMany({ data: { themeBg: "#ffffff", themeNavBg: "#123456", themePrimaryText: "#eeeeee" } });
+      const response = await PUT(buildPutRequest({ theme_nav_bg: "", theme_primary_text: null }));
+      expect(response.status).toBe(200);
+      const settings = (await response.json()).settings;
+      expect(settings.theme_nav_bg).toBeNull();
+      expect(settings.theme_primary_text).toBeNull();
+      expect(settings.theme_bg).toBe("#ffffff");
+      expect(resolveTheme((await getInstanceConfig()).theme).navBg).toBe("#ffffff");
+    });
+
+    it.each(COLOR_FIELDS.filter(({ group }) => group !== "base"))("rejects invalid $key without writing other fields", async ({ key }) => {
+      await createSettings({ instanceName: "Original" });
+      const response = await PUT(buildPutRequest({ [key]: "url(https://example.com)", instance_name: "Changed" }));
+      expect(response.status).toBe(400);
+      expect((await prisma.settings.findFirstOrThrow()).instanceName).toBe("Original");
+    });
+
     it("updates settings", async () => {
       await createSettings({ instanceName: "Old Name" });
 

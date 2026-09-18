@@ -18,13 +18,13 @@ export default function UserSection({
   t,
 }: UserSectionProps) {
   const initial = (userName || "?").charAt(0).toUpperCase();
-  const avatarStyle = { backgroundColor: "var(--theme-primary)", color: "#000" };
+  const avatarStyle = { backgroundColor: "var(--theme-primary)", color: "var(--theme-primary-text)" };
 
   if (!isLoggedIn) {
     return (
       <Link
         href="/login"
-        className="flex items-center gap-5 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-[var(--theme-bg-secondary)]"
+        className="flex items-center gap-5 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-[var(--theme-hover)]"
         style={{ color: "var(--theme-text)" }}
         title={collapsed ? t("viewer.navbar.login") : undefined}
       >

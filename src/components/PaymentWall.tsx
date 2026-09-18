@@ -518,7 +518,7 @@ export default function PaymentWall({
         {cardContent}
       </PaywallFrame>
 
-      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-sm text-[var(--theme-error)]">{error}</p>}
 
       {checkoutToken && view.kind !== "unlock_failure" && view.kind !== "verify_failure" && (() => {
         const activeProduct = products.find((p) => p.productId === activeProductId);

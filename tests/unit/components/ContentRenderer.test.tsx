@@ -326,13 +326,13 @@ describe("ContentRenderer", () => {
         <ContentRenderer decryptedBytes={new Uint8Array([0x89, 0x50, 0x4e, 0x47])} mediaType="photo" />
       );
       const outer = container.firstElementChild as HTMLElement;
-      expect(outer.className).not.toContain("bg-black");
+      expect(outer.className).not.toContain("bg-[var(--theme-media-bg)]");
       // …and the image itself doesn't paint a background either.
       const img = container.querySelector("img");
-      expect(img?.className).not.toContain("bg-black");
+      expect(img?.className).not.toContain("bg-[var(--theme-media-bg)]");
     });
 
-    it("video media keeps bg-black for letterboxing", () => {
+    it("video media uses the configured player canvas for letterboxing", () => {
       // Letterboxing matters for video — black bars around a 16:9 player on
       // a wider/narrower viewport are the conventional look.
       mockDetectMimeType.mockReturnValue("video/mp4");
@@ -341,7 +341,7 @@ describe("ContentRenderer", () => {
         <ContentRenderer decryptedBytes={new Uint8Array([0x00, 0x00, 0x00, 0x18])} mediaType="video" />
       );
       const outer = container.firstElementChild as HTMLElement;
-      expect(outer.className).toContain("bg-black");
+      expect(outer.className).toContain("bg-[var(--theme-media-bg)]");
     });
 
     it("article media renders with a transparent container", () => {
@@ -354,7 +354,7 @@ describe("ContentRenderer", () => {
         <ContentRenderer decryptedBytes={new Uint8Array([0x23, 0x20, 0x48])} mediaType="article" />
       );
       const outer = container.firstElementChild as HTMLElement;
-      expect(outer.className).not.toContain("bg-black");
+      expect(outer.className).not.toContain("bg-[var(--theme-media-bg)]");
     });
 
     it("keeps the blob URL alive across onload so the lightbox click handler can reuse it", () => {

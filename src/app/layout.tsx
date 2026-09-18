@@ -9,6 +9,7 @@ import Footer from "@/components/Footer";
 import AgeGate from "@/components/AgeGate";
 import LocaleProvider from "@/i18n/LocaleProvider";
 import { getInstanceConfig } from "@/config/instance";
+import { themeStyles } from "@/config/theme";
 import type { Locale } from "@/i18n";
 import "./globals.css";
 
@@ -79,15 +80,7 @@ export default async function RootLayout({
   const viewerLocale: Locale =
     cookieLocale === "es" ? "es" : "en";
 
-  const themeVars = {
-    "--theme-primary": theme.primary,
-    "--theme-bg": theme.bg,
-    "--theme-bg-secondary": theme.bgSecondary,
-    "--theme-text": theme.text,
-    "--theme-text-secondary": theme.textSecondary,
-    "--theme-heading": theme.heading,
-    "--theme-border": theme.border,
-  } as React.CSSProperties;
+  const themeVars = themeStyles(theme);
 
   const gaId = instanceConfig.googleAnalyticsId;
 

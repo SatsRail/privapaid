@@ -43,8 +43,8 @@ export default function AdminPreviewContent({ mediaId, mediaType }: AdminPreview
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 p-12">
-        <div className="flex items-center gap-3 text-sm text-zinc-400">
+      <div className="flex items-center justify-center rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-12">
+        <div className="flex items-center gap-3 text-sm text-[var(--theme-text-secondary)]">
           <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -57,8 +57,8 @@ export default function AdminPreviewContent({ mediaId, mediaType }: AdminPreview
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-800/50 bg-red-950/30 px-4 py-3">
-        <p className="text-sm text-red-300">Preview failed: {error}</p>
+      <div className="rounded-lg border border-[var(--theme-error)]/50 bg-[var(--theme-error)]/30 px-4 py-3">
+        <p className="text-sm text-[var(--theme-error)]">Preview failed: {error}</p>
       </div>
     );
   }

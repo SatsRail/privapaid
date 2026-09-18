@@ -16,8 +16,8 @@ export default function CategoryChips({ categories, activeCategory, onSelect }: 
         aria-pressed={activeCategory === null}
         className={`min-h-11 shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
           activeCategory === null
-            ? "bg-white text-black"
-            : "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[#3f3f3f]"
+            ? "bg-[var(--theme-primary)] text-[var(--theme-primary-text)]"
+            : "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[var(--theme-hover)]"
         }`}
       >
         {t("viewer.home.all")}
@@ -29,8 +29,8 @@ export default function CategoryChips({ categories, activeCategory, onSelect }: 
           aria-pressed={activeCategory === cat._id}
           className={`min-h-11 shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
             activeCategory === cat._id
-              ? "bg-white text-black"
-              : "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[#3f3f3f]"
+              ? "bg-[var(--theme-primary)] text-[var(--theme-primary-text)]"
+              : "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[var(--theme-hover)]"
           }`}
         >
           {cat.name}

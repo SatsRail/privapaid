@@ -15,10 +15,10 @@ interface PaywallFrameProps {
  */
 export default function PaywallFrame({ mediaType, thumbnailUrl, children }: PaywallFrameProps) {
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+    <div className="overflow-hidden rounded-lg border border-[var(--theme-border)] bg-[var(--theme-media-bg)] text-[var(--theme-media-text)]">
       {mediaType === "photo" ? (
         // Single photo: black canvas with centered buttons
-        <div className="flex min-h-[440px] flex-col items-center justify-center bg-black px-4 pt-20 pb-16">
+        <div className="flex min-h-[440px] flex-col items-center justify-center bg-[var(--theme-media-bg)] px-4 pt-20 pb-16">
           {children}
         </div>
       ) : thumbnailUrl ? (
@@ -29,8 +29,8 @@ export default function PaywallFrame({ mediaType, thumbnailUrl, children }: Payw
             alt="Preview"
             className="absolute inset-0 h-full w-full object-cover opacity-40 blur-sm"
           />
-          <div className="absolute inset-0 bg-black/40" />
-          <div className="relative z-10">{children}</div>
+          <div className="absolute inset-0 bg-[var(--theme-media-bg)]/75" />
+          <div className="relative z-10 flex w-full max-w-md flex-col items-center">{children}</div>
         </div>
       ) : (
         <div className="flex flex-col items-center px-4 pt-20 pb-16">{children}</div>

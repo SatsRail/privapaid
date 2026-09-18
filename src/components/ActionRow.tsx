@@ -202,7 +202,7 @@ export default function ActionRow({
         <button
           onClick={handleLike}
           data-testid="like-button"
-          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium transition-colors hover:opacity-80 focus-visible:bg-white/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+          className="inline-flex h-full items-center gap-1.5 px-3 text-sm font-medium transition-colors hover:opacity-80 focus-visible:bg-[var(--theme-hover)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={liked}
           disabled={!hasAccess}
@@ -229,7 +229,7 @@ export default function ActionRow({
           onClick={handleDislike}
           data-testid="dislike-button"
           aria-label={t("viewer.actions.dislike")}
-          className="inline-flex h-full items-center px-3 transition-colors hover:opacity-80 focus-visible:bg-white/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+          className="inline-flex h-full items-center px-3 transition-colors hover:opacity-80 focus-visible:bg-[var(--theme-hover)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           style={{ color: "var(--theme-text)" }}
           aria-pressed={disliked}
           disabled={!hasAccess}

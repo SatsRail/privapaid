@@ -327,6 +327,17 @@ model Settings {
   themeTextSecondary      String    @default("#a1a1aa")
   themeHeading            String    @default("#fafafa")
   themeBorder             String    @default("#27272a")
+  // Null inherits the base palette; older customized instances stay intact.
+  themePrimaryText        String?
+  themeLink               String?
+  themeNavBg              String?
+  themeNavText            String?
+  themeHover              String?
+  themeMediaBg            String?
+  themeMediaText          String?
+  themeSuccess            String?
+  themeWarning            String?
+  themeError              String?
   themeFont               String    @default("Geist")
   logoUrl                 String    @default("")
   logoBytes               Bytes? // replaces logo_image_id GridFS pointer

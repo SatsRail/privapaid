@@ -152,11 +152,11 @@ function isPdfUrl(url: string): boolean {
 function openImageLightbox(url: string): void {
   const overlay = document.createElement("div");
   overlay.setAttribute("data-lightbox-overlay", "");
-  overlay.className = "fixed inset-0 z-50 flex items-center justify-center bg-black/90";
+  overlay.className = "fixed inset-0 z-50 flex items-center justify-center bg-[var(--theme-media-bg)]/90";
   overlay.style.cursor = "zoom-out";
 
   const closeBtn = document.createElement("button");
-  closeBtn.className = "absolute right-4 top-4 z-10 rounded-full bg-black/50 p-2 text-white hover:bg-black/70";
+  closeBtn.className = "absolute right-4 top-4 z-10 rounded-full bg-[var(--theme-media-bg)]/50 p-2 text-[var(--theme-media-text)] hover:bg-[var(--theme-media-bg)]/70";
   closeBtn.setAttribute("aria-label", "Close");
   closeBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 
@@ -243,7 +243,7 @@ function ContentRendererDOM({
           });
           container.innerHTML = "";
           const msg = document.createElement("div");
-          msg.className = "flex items-center justify-center h-64 text-gray-400 text-sm";
+          msg.className = "flex items-center justify-center h-64 text-[var(--theme-text-secondary)] text-sm";
           msg.textContent = "This video could not be loaded. The source may be unavailable.";
           container.appendChild(msg);
         };
@@ -274,7 +274,7 @@ function ContentRendererDOM({
           });
           container.innerHTML = "";
           const msg = document.createElement("div");
-          msg.className = "flex items-center justify-center h-64 text-gray-400 text-sm";
+          msg.className = "flex items-center justify-center h-64 text-[var(--theme-text-secondary)] text-sm";
           msg.textContent = "This image could not be loaded. The source may be unavailable.";
           container.appendChild(msg);
         };
@@ -294,7 +294,7 @@ function ContentRendererDOM({
         fallbackLink.href = url;
         fallbackLink.target = "_blank";
         fallbackLink.rel = "noopener noreferrer";
-        fallbackLink.className = "text-[var(--theme-primary)] underline text-sm";
+        fallbackLink.className = "text-[var(--theme-link)] underline text-sm";
         fallbackLink.textContent = "Open PDF in new tab";
         obj.appendChild(fallbackLink);
 
@@ -303,22 +303,22 @@ function ContentRendererDOM({
       } else if (mediaType === "article") {
         // Article URL — most sites block iframing, show a link card
         const card = document.createElement("div");
-        card.className = "flex flex-col items-center justify-center gap-4 rounded-lg border border-zinc-700 bg-zinc-900 p-8";
+        card.className = "flex flex-col items-center justify-center gap-4 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-8";
 
         const icon = document.createElement("div");
-        icon.innerHTML = `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-400"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+        icon.innerHTML = `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--theme-text-secondary)]"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
         card.appendChild(icon);
 
         const link = document.createElement("a");
         link.href = url;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.className = "inline-flex items-center gap-2 rounded-lg bg-[var(--theme-primary)] px-5 py-2.5 text-sm font-medium text-black hover:opacity-90";
+        link.className = "inline-flex items-center gap-2 rounded-lg bg-[var(--theme-primary)] px-5 py-2.5 text-sm font-medium text-[var(--theme-primary-text)] hover:opacity-90";
         link.textContent = "Open article";
         card.appendChild(link);
 
         const hint = document.createElement("p");
-        hint.className = "text-xs text-zinc-500";
+        hint.className = "text-xs text-[var(--theme-text-secondary)]";
         hint.textContent = "Content will open in a new browser tab.";
         card.appendChild(hint);
 
@@ -398,7 +398,7 @@ function ContentRendererDOM({
       const style = document.createElement("style");
       style.textContent = `
         :host {
-          color: #e4e4e7;
+          color: var(--theme-text);
           font-family: Georgia, 'Times New Roman', serif;
           font-size: 1.125rem;
           line-height: 1.8;
@@ -406,7 +406,7 @@ function ContentRendererDOM({
         * { box-sizing: border-box; }
         h1, h2, h3, h4, h5, h6 {
           font-family: system-ui, -apple-system, sans-serif;
-          color: #fafafa;
+          color: var(--theme-heading);
           margin: 1.5em 0 0.5em;
           line-height: 1.3;
         }
@@ -414,19 +414,19 @@ function ContentRendererDOM({
         h2 { font-size: 1.5rem; }
         h3 { font-size: 1.25rem; }
         p { margin: 0 0 1em; }
-        a { color: var(--theme-primary, #d4a017); text-decoration: underline; }
+        a { color: var(--theme-link); text-decoration: underline; }
         a:hover { opacity: 0.8; }
         blockquote {
-          border-left: 3px solid #52525b;
+          border-left: 3px solid var(--theme-border);
           margin: 1em 0;
           padding: 0.5em 1em;
-          color: #a1a1aa;
+          color: var(--theme-text-secondary);
           font-style: italic;
         }
         pre, code {
           font-family: 'SF Mono', Monaco, Consolas, monospace;
           font-size: 0.875em;
-          background: #18181b;
+          background: var(--theme-bg-secondary);
           border-radius: 4px;
         }
         pre { padding: 1em; overflow-x: auto; margin: 1em 0; }
@@ -435,10 +435,10 @@ function ContentRendererDOM({
         img { max-width: 100%; height: auto; border-radius: 8px; margin: 1em 0; }
         ul, ol { margin: 0 0 1em; padding-left: 1.5em; }
         li { margin-bottom: 0.25em; }
-        hr { border: none; border-top: 1px solid #3f3f46; margin: 2em 0; }
+        hr { border: none; border-top: 1px solid var(--theme-border); margin: 2em 0; }
         table { width: 100%; border-collapse: collapse; margin: 1em 0; }
-        th, td { border: 1px solid #3f3f46; padding: 0.5em 0.75em; text-align: left; }
-        th { background: #18181b; color: #fafafa; }
+        th, td { border: 1px solid var(--theme-border); padding: 0.5em 0.75em; text-align: left; }
+        th { background: var(--theme-bg-secondary); color: var(--theme-heading); }
       `;
       shadow.appendChild(style);
 
@@ -489,10 +489,10 @@ function ContentRendererDOM({
   } else if (isPhoto) {
     containerClass = "min-h-[200px] overflow-hidden rounded-lg";
   } else if (isAudio) {
-    containerClass = "min-h-[80px] rounded-lg bg-black p-4";
+    containerClass = "min-h-[80px] rounded-lg bg-[var(--theme-media-bg)] p-4";
   } else {
     containerClass =
-      "min-h-[200px] max-w-[1280px] overflow-hidden rounded-lg bg-black";
+      "min-h-[200px] max-w-[1280px] overflow-hidden rounded-lg bg-[var(--theme-media-bg)]";
   }
 
   return <div ref={containerRef} className={containerClass} />;

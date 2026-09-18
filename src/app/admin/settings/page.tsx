@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireOwner } from "@/lib/auth-helpers";
 import AppearanceForm from "./AppearanceForm";
+import { colorsFromSettings } from "@/config/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,16 @@ export default async function SettingsPage() {
       themeTextSecondary: true,
       themeHeading: true,
       themeBorder: true,
+      themePrimaryText: true,
+      themeLink: true,
+      themeNavBg: true,
+      themeNavText: true,
+      themeHover: true,
+      themeMediaBg: true,
+      themeMediaText: true,
+      themeSuccess: true,
+      themeWarning: true,
+      themeError: true,
       themeFont: true,
       googleAnalyticsId: true,
       googleSiteVerification: true,
@@ -45,13 +56,7 @@ export default async function SettingsPage() {
     logo_url: settings.logoUrl || "",
     logo_image_id: settings.logoBytes ? "logo" : "",
     about_text: settings.aboutText || "",
-    theme_primary: settings.themePrimary || "#3b82f6",
-    theme_bg: settings.themeBg || "#0a0a0a",
-    theme_bg_secondary: settings.themeBgSecondary || "#18181b",
-    theme_text: settings.themeText || "#ededed",
-    theme_text_secondary: settings.themeTextSecondary || "#a1a1aa",
-    theme_heading: settings.themeHeading || "#fafafa",
-    theme_border: settings.themeBorder || "#27272a",
+    ...colorsFromSettings(settings),
     theme_font: settings.themeFont || "Geist",
     google_analytics_id: settings.googleAnalyticsId || "",
     google_site_verification: settings.googleSiteVerification || "",

@@ -34,10 +34,10 @@ export default function ExpiredAccessBanner({ expiredAt }: ExpiredAccessBannerPr
     <div
       role="status"
       data-testid="expired-access-banner"
-      className="mb-5 w-full max-w-sm overflow-hidden rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-900/30 via-amber-950/40 to-orange-950/40 px-4 py-3 shadow-[0_0_24px_-12px_rgba(245,158,11,0.5)] ring-1 ring-inset ring-amber-400/10"
+      className="mb-5 w-full max-w-sm overflow-hidden rounded-xl border border-[var(--theme-warning)]/40 bg-[var(--theme-bg)] px-4 py-3"
     >
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 ring-1 ring-inset ring-amber-400/30">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--theme-warning)]/15 ring-1 ring-inset ring-[var(--theme-warning)]/30">
           <svg
             aria-hidden="true"
             width="14"
@@ -48,17 +48,17 @@ export default function ExpiredAccessBanner({ expiredAt }: ExpiredAccessBannerPr
             strokeWidth="2.2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="text-amber-300"
+            className="text-[var(--theme-warning)]"
           >
             <circle cx="12" cy="12" r="9" />
             <path d="M12 7v5l3 2" />
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold tracking-tight text-amber-100">
+          <p className="text-sm font-semibold tracking-tight text-[var(--theme-warning)]">
             {t("viewer.payment.expired_banner.title")}
           </p>
-          <p className="mt-0.5 text-xs leading-relaxed text-amber-100/70">
+          <p className="mt-0.5 text-xs leading-relaxed text-[var(--theme-text-secondary)]">
             {t("viewer.payment.expired_banner.body", { date: formatted })}
           </p>
         </div>

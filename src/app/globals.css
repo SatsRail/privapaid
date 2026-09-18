@@ -3,13 +3,25 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --theme-primary: #3ea6ff;
-  --theme-bg: #0f0f0f;
-  --theme-bg-secondary: #272727;
-  --theme-text: #f1f1f1;
-  --theme-text-secondary: #aaaaaa;
-  --theme-heading: #ffffff;
-  --theme-border: #3f3f3f;
+  --theme-primary: #3b82f6;
+  --theme-primary-text: #000000;
+  --theme-link: #3b82f6;
+  --theme-bg: #0a0a0a;
+  --theme-bg-secondary: #18181b;
+  --theme-text: #ededed;
+  --theme-text-secondary: #a1a1aa;
+  --theme-heading: #fafafa;
+  --theme-border: #27272a;
+  --theme-nav-bg: var(--theme-bg);
+  --theme-nav-text: var(--theme-text);
+  --theme-hover: color-mix(in srgb, var(--theme-bg-secondary), var(--theme-text) 9%);
+  --theme-media-bg: #000000;
+  --theme-media-text: #ffffff;
+  --theme-success: #4ade80;
+  --theme-warning: #facc15;
+  --theme-error: #f87171;
+  --theme-error-text: #000000;
+  --theme-backdrop: color-mix(in srgb, var(--theme-media-bg) 75%, transparent);
 
   /* Tailwind integration */
   --background: var(--theme-bg);
@@ -52,18 +64,18 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3f3f3f;
+  background: var(--theme-border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #606060;
+  background: var(--theme-text-secondary);
 }
 
 /* Custom scrollbar — Firefox */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f3f transparent;
+  scrollbar-color: var(--theme-border) transparent;
 }
 
 /* Hide scrollbar utility */

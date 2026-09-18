@@ -52,7 +52,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "rgba(0, 0, 0, 0.95)",
+        background: "var(--theme-bg)",
         backdropFilter: "blur(20px)",
         padding: 24,
       }}
@@ -78,8 +78,8 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
             height: 56,
             margin: "0 auto 24px",
             borderRadius: 14,
-            background: "rgba(248, 113, 113, 0.1)",
-            border: "1px solid rgba(248, 113, 113, 0.2)",
+            background: "color-mix(in srgb, var(--theme-warning) 10%, transparent)",
+            border: "1px solid var(--theme-border)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -90,7 +90,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#f87171"
+            stroke="var(--theme-warning)"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -106,7 +106,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
           style={{
             fontSize: 20,
             fontWeight: 700,
-            color: "#ffffff",
+            color: "var(--theme-heading)",
             marginBottom: 12,
           }}
         >
@@ -117,7 +117,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
           id={descId}
           style={{
             fontSize: 14,
-            color: "#a1a1aa",
+            color: "var(--theme-text-secondary)",
             lineHeight: 1.6,
             marginBottom: 32,
           }}
@@ -133,7 +133,7 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
               padding: "14px 32px",
               fontSize: 14,
               fontWeight: 600,
-              color: "#ffffff",
+              color: "var(--theme-primary-text)",
               background: "var(--theme-primary)",
               border: "none",
               borderRadius: 980,
@@ -149,9 +149,9 @@ export default function AgeGate({ disclaimer }: AgeGateProps) {
               padding: "14px 32px",
               fontSize: 14,
               fontWeight: 500,
-              color: "#a1a1aa",
+              color: "var(--theme-text-secondary)",
               background: "transparent",
-              border: "1px solid rgba(255, 255, 255, 0.1)",
+              border: "1px solid var(--theme-border)",
               borderRadius: 980,
               cursor: "pointer",
             }}

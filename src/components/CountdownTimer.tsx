@@ -51,10 +51,10 @@ export default function CountdownTimer({
         inline-flex items-center gap-1.5 rounded-full px-3 py-1.5
         backdrop-blur-sm transition-colors duration-500
         ${critical
-          ? "bg-red-500/20 border border-red-500/40 text-red-300"
+          ? "bg-[var(--theme-error)]/15 border border-[var(--theme-error)]/40 text-[var(--theme-error)]"
           : warning
-            ? "bg-yellow-500/20 border border-yellow-500/40 text-yellow-300"
-            : "bg-zinc-800/80 border border-zinc-600/40 text-zinc-100"
+            ? "bg-[var(--theme-warning)]/15 border border-[var(--theme-warning)]/40 text-[var(--theme-warning)]"
+            : "bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] text-[var(--theme-text)]"
         }
       `}
     >

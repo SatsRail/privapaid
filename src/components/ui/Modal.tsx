@@ -20,19 +20,19 @@ export default function Modal({ open, onClose, title, children }: ModalProps) {
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3"
       onMouseDown={(e) => {
         if (e.target === overlayRef.current) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
+      <div className="pointer-events-none absolute inset-0 bg-[var(--theme-backdrop)]" aria-hidden="true" />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
-        className="relative z-10 w-full max-w-lg rounded-lg bg-[var(--theme-bg)] p-6 shadow-xl outline-none"
+        className="relative z-10 max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-[var(--theme-bg)] p-5 shadow-xl outline-none sm:p-6"
       >
         {title && (
           <div className="mb-4 flex items-center justify-between">
@@ -45,7 +45,7 @@ export default function Modal({ open, onClose, title, children }: ModalProps) {
             <button
               onClick={onClose}
               aria-label="Close dialog"
-              className="text-[var(--theme-text-secondary)] hover:text-[var(--theme-text)]"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--theme-text-secondary)] hover:bg-[var(--theme-hover)] hover:text-[var(--theme-text)]"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path

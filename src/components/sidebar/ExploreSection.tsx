@@ -26,7 +26,7 @@ export default function ExploreSection({ categories }: { categories: SidebarCate
           <Link
             key={cat._id}
             href={`/?category=${cat._id}`}
-            className="flex items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--theme-bg-secondary)]"
+            className="flex items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--theme-hover)]"
             style={{ color: "var(--theme-text)" }}
           >
             <svg

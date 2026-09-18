@@ -49,8 +49,8 @@ export default class ErrorBoundary extends Component<Props, State> {
       const canRetry = this.state.retryCount < MAX_RETRIES;
 
       return (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-6 text-center">
-          <p className="text-sm font-medium text-red-400">
+        <div className="rounded-lg border border-[var(--theme-error)]/20 bg-[var(--theme-error)]/10 p-6 text-center">
+          <p className="text-sm font-medium text-[var(--theme-error)]">
             {t("common.error_boundary.message")}
           </p>
           {canRetry ? (
@@ -62,14 +62,14 @@ export default class ErrorBoundary extends Component<Props, State> {
                   retryCount: prev.retryCount + 1,
                 }))
               }
-              className="mt-3 rounded-md bg-red-500/20 px-4 py-2 text-xs font-medium text-red-300 hover:bg-red-500/30"
+              className="mt-3 rounded-md bg-[var(--theme-error)]/20 px-4 py-2 text-xs font-medium text-[var(--theme-error)] hover:bg-[var(--theme-error)]/30"
             >
               {t("common.error_boundary.retry", {
                 count: MAX_RETRIES - this.state.retryCount,
               })}
             </button>
           ) : (
-            <p className="mt-3 text-xs text-red-400/70">
+            <p className="mt-3 text-xs text-[var(--theme-error)]/70">
               {t("common.error_boundary.exhausted", { count: MAX_RETRIES })}
             </p>
           )}

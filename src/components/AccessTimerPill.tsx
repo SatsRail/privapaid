@@ -36,10 +36,10 @@ export default function AccessTimerPill({
   const critical = displaySeconds <= 60;
 
   const colorClasses = critical
-    ? "bg-red-500/20 border border-red-500/40 text-red-300"
+    ? "bg-[var(--theme-error)]/15 border border-[var(--theme-error)]/40 text-[var(--theme-error)]"
     : warning
-      ? "bg-yellow-500/20 border border-yellow-500/40 text-yellow-300"
-      : "bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200";
+      ? "bg-[var(--theme-warning)]/15 border border-[var(--theme-warning)]/40 text-[var(--theme-warning)]"
+      : "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)]";
 
   return (
     <span

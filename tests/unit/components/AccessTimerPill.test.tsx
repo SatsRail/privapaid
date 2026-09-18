@@ -21,22 +21,22 @@ describe("AccessTimerPill", () => {
     render(<AccessTimerPill serverSeconds={600} locale="en" />);
     expect(screen.getByText(/10:00/)).toBeInTheDocument();
     const cls = pillSpan().className;
-    expect(cls).toContain("bg-zinc-100");
-    expect(cls).not.toContain("bg-yellow-500");
-    expect(cls).not.toContain("bg-red-500");
+    expect(cls).toContain("bg-[var(--theme-bg-secondary)]");
+    expect(cls).not.toContain("bg-[var(--theme-warning)]");
+    expect(cls).not.toContain("bg-[var(--theme-error)]");
   });
 
   it("renders warning styling when between 1 and 5 minutes", () => {
     render(<AccessTimerPill serverSeconds={120} locale="en" />);
     const cls = pillSpan().className;
-    expect(cls).toContain("bg-yellow-500");
-    expect(cls).not.toContain("bg-red-500");
+    expect(cls).toContain("bg-[var(--theme-warning)]");
+    expect(cls).not.toContain("bg-[var(--theme-error)]");
   });
 
   it("renders critical styling at or below 60 seconds", () => {
     render(<AccessTimerPill serverSeconds={45} locale="en" />);
     const cls = pillSpan().className;
-    expect(cls).toContain("bg-red-500");
+    expect(cls).toContain("bg-[var(--theme-error)]");
     expect(document.querySelector("svg")?.getAttribute("class")).toContain("animate-pulse");
   });
 

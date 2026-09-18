@@ -46,7 +46,7 @@ export default function MediaHeader({
     return (
       <span
         className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold"
-        style={{ backgroundColor: "var(--theme-primary)", color: "var(--theme-bg, #000)" }}
+        style={{ backgroundColor: "var(--theme-primary)", color: "var(--theme-primary-text)" }}
       >
         {prices.length > 1 ? `${t(locale, "viewer.media.from")} ${formatted}` : formatted}
       </span>
@@ -100,7 +100,7 @@ export default function MediaHeader({
         )}
         {hasLifetime && (
           <span
-            className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-3 py-1 text-sm font-medium text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200"
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--theme-bg-secondary)] px-3 py-1 text-sm font-medium text-[var(--theme-text)]"
             data-testid="lifetime-tag"
           >
             <svg

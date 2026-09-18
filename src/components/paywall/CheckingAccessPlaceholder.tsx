@@ -21,7 +21,7 @@ export default function CheckingAccessPlaceholder() {
         className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-[var(--theme-primary)]"
         aria-hidden="true"
       />
-      <span className="text-sm font-medium text-zinc-300">
+      <span className="text-sm font-medium text-[var(--theme-media-text)]/80">
         {t("viewer.payment.checking_access")}
       </span>
     </div>

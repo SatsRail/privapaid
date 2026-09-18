@@ -7,19 +7,14 @@ import Input from "@/components/ui/Input";
 import ImageUpload from "@/components/ui/ImageUpload";
 import Modal from "@/components/ui/Modal";
 import { useLocale } from "@/i18n/useLocale";
+import { COLOR_FIELDS, colorsFromSettings, contrastRatio, isHexColor, resolveTheme, themeFromColors, type ThemeColorValues } from "@/config/theme";
+import ThemePreview from "./ThemePreview";
 
-interface AppearanceValues {
+interface AppearanceValues extends ThemeColorValues {
   instance_name: string;
   logo_url: string;
   logo_image_id: string;
   about_text: string;
-  theme_primary: string;
-  theme_bg: string;
-  theme_bg_secondary: string;
-  theme_text: string;
-  theme_text_secondary: string;
-  theme_heading: string;
-  theme_border: string;
   theme_font: string;
   google_analytics_id: string;
   google_site_verification: string;
@@ -31,13 +26,7 @@ const DEFAULTS: AppearanceValues = {
   logo_url: "",
   logo_image_id: "",
   about_text: "",
-  theme_primary: "#3b82f6",
-  theme_bg: "#0a0a0a",
-  theme_bg_secondary: "#18181b",
-  theme_text: "#ededed",
-  theme_text_secondary: "#a1a1aa",
-  theme_heading: "#fafafa",
-  theme_border: "#27272a",
+  ...colorsFromSettings({}),
   theme_font: "Geist",
   google_analytics_id: "",
   google_site_verification: "",
@@ -57,16 +46,6 @@ const FONTS = [
   "Georgia",
 ];
 
-const COLOR_FIELDS: { key: keyof AppearanceValues; labelKey: string; descKey: string }[] = [
-  { key: "theme_primary", labelKey: "admin.settings.color_primary", descKey: "admin.settings.color_primary_hint" },
-  { key: "theme_bg", labelKey: "admin.settings.color_bg", descKey: "admin.settings.color_bg_hint" },
-  { key: "theme_bg_secondary", labelKey: "admin.settings.color_surface", descKey: "admin.settings.color_surface_hint" },
-  { key: "theme_text", labelKey: "admin.settings.color_text", descKey: "admin.settings.color_text_hint" },
-  { key: "theme_text_secondary", labelKey: "admin.settings.color_muted", descKey: "admin.settings.color_muted_hint" },
-  { key: "theme_heading", labelKey: "admin.settings.color_headings", descKey: "admin.settings.color_headings_hint" },
-  { key: "theme_border", labelKey: "admin.settings.color_borders", descKey: "admin.settings.color_borders_hint" },
-];
-
 interface AppearanceFormProps {
   initialValues: AppearanceValues;
 }
@@ -81,6 +60,22 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirm, setResetConfirm] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const theme = {
+    ...themeFromColors(form, form.theme_font),
+    logo: form.logo_image_id ? `/api/images/${form.logo_image_id}` : form.logo_url,
+  };
+  const palette = resolveTheme(theme);
+  const invalidColors = COLOR_FIELDS.filter(({ key, group }) => !isHexColor(form[key]) && (group === "base" || form[key] !== ""));
+  const contrastWarnings = [
+    { label: "text", fg: palette.text, bg: palette.bg },
+    { label: "muted", fg: palette.textSecondary, bg: palette.bg },
+    { label: "primary_text", fg: palette.primaryText, bg: palette.primary },
+    { label: "link", fg: palette.link, bg: palette.bg },
+    { label: "link", fg: palette.link, bg: palette.bgSecondary },
+    { label: "nav_text", fg: palette.navText, bg: palette.navBg },
+    { label: "media_text", fg: palette.mediaText, bg: palette.mediaBg },
+  ].filter(({ fg, bg }) => contrastRatio(fg, bg) < 4.5);
 
   function update<K extends keyof AppearanceValues>(key: K, value: AppearanceValues[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -102,6 +97,10 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
   }
 
   async function handleSave() {
+    if (invalidColors.length) {
+      setMessage({ type: "error", text: t("admin.settings.invalid_color") });
+      return;
+    }
     if (!form.instance_name.trim()) {
       setMessage({ type: "error", text: t("admin.settings.name_required") });
       return;
@@ -185,7 +184,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
+    <div className="grid items-start gap-8 pb-20 lg:grid-cols-[minmax(0,1fr)_320px] lg:pb-0 xl:grid-cols-[minmax(0,1fr)_360px]">
       {/* Form */}
       <div className="space-y-8">
         {/* Identity */}
@@ -241,33 +240,47 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
         </section>
 
         {/* Colors */}
-        <section>
-          <h2 className="mb-4 text-lg font-semibold text-[var(--theme-text)]">{t("admin.settings.colors")}</h2>
-          <div className="space-y-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-5">
-            {COLOR_FIELDS.map(({ key, labelKey, descKey }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[var(--theme-text)]">{t(labelKey)}</p>
-                  <p className="text-xs text-[var(--theme-text-secondary)]">{t(descKey)}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={form[key] as string}
-                    onChange={(e) => update(key, e.target.value)}
-                    className="h-8 w-8 cursor-pointer rounded border border-[var(--theme-border)] bg-transparent p-0"
-                  />
-                  <input
-                    type="text"
-                    value={form[key] as string}
-                    onChange={(e) => update(key, e.target.value)}
-                    className="w-20 rounded border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-2 py-1 text-xs text-[var(--theme-text)] font-mono"
-                    maxLength={7}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-[var(--theme-text)]">{t("admin.settings.colors")}</h2>
+          <p className="text-sm text-[var(--theme-text-secondary)]">{t("admin.settings.colors_hint")}</p>
+          {(["base", "navigation", "media", "status"] as const).map((group) => (
+            <fieldset key={group} className="min-w-0 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-4 pb-2">
+              <legend className="px-1 text-sm font-semibold">{t(`admin.settings.group_${group}`)}</legend>
+              {COLOR_FIELDS.filter((field) => field.group === group).map(({ key, token, label }) => {
+                const invalid = invalidColors.some((field) => field.key === key);
+                return (
+                  <div key={key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[var(--theme-border)] py-4 last:border-0">
+                    <div className="min-w-0 flex-1 basis-40">
+                      <label htmlFor={key} className="text-sm font-medium text-[var(--theme-text)]">{t(`admin.settings.color_${label}`)}</label>
+                      <p id={`${key}-hint`} className="mt-0.5 text-xs text-[var(--theme-text-secondary)]">{t(`admin.settings.color_${label}_hint`)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="color" id={key} aria-describedby={`${key}-hint`}
+                        value={palette[token]} onChange={(e) => update(key, e.target.value)}
+                        className="h-11 w-11 cursor-pointer rounded-lg border border-[var(--theme-border)] bg-transparent p-1" />
+                      <input type="text" aria-label={`${t(`admin.settings.color_${label}`)} — HEX`}
+                        aria-invalid={invalid} aria-describedby={invalid ? "theme-color-error" : `${key}-hint`}
+                        value={form[key]} placeholder={palette[token]} onChange={(e) => update(key, e.target.value)}
+                        className="h-11 w-24 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 font-mono text-xs text-[var(--theme-text)] placeholder:text-[var(--theme-text-secondary)]"
+                        maxLength={7} spellCheck={false} />
+                      {group !== "base" && (
+                        <button type="button" onClick={() => update(key, "")}
+                          aria-label={t("admin.settings.use_auto", { color: t(`admin.settings.color_${label}`) })}
+                          aria-pressed={form[key] === ""}
+                          className={`min-h-11 rounded-lg px-2 text-xs ${form[key] === "" ? "bg-[var(--theme-primary)]/15 text-[var(--theme-link)]" : "text-[var(--theme-text-secondary)] hover:bg-[var(--theme-hover)]"}`}>
+                          {t("admin.settings.auto")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </fieldset>
+          ))}
+          {invalidColors.length > 0 && <p id="theme-color-error" role="alert" className="text-sm text-[var(--theme-error)]">{t("admin.settings.invalid_color")}</p>}
+          {contrastWarnings.length > 0 && <p role="status" className="rounded-lg border border-[var(--theme-border)] p-3 text-sm text-[var(--theme-text-secondary)]">
+            {t("admin.settings.contrast_hint", { colors: [...new Set(contrastWarnings.map(({ label }) => t(`admin.settings.color_${label}`)))].join(", ") })}
+          </p>}
         </section>
 
         {/* Typography */}
@@ -331,7 +344,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
                 href="https://sentry.io"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[var(--theme-primary)] hover:underline"
+                className="text-[var(--theme-link)] hover:underline"
               >
                 sentry.io
               </a>
@@ -354,8 +367,8 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
           <div
             className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium ${
               message.type === "success"
-                ? "border-green-500/20 bg-green-500/10 text-green-400"
-                : "border-red-500/20 bg-red-500/10 text-red-400"
+                ? "border-[var(--theme-success)]/20 bg-[var(--theme-success)]/10 text-[var(--theme-success)]"
+                : "border-[var(--theme-error)]/20 bg-[var(--theme-error)]/10 text-[var(--theme-error)]"
             }`}
           >
             {message.type === "success" ? (
@@ -373,8 +386,8 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
         )}
         {/* Danger Zone */}
         <section>
-          <h2 className="mb-4 text-lg font-semibold text-red-500">Danger Zone</h2>
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5">
+          <h2 className="mb-4 text-lg font-semibold text-[var(--theme-error)]">Danger Zone</h2>
+          <div className="rounded-lg border border-[var(--theme-error)]/30 bg-[var(--theme-error)]/5 p-5">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-[var(--theme-text)]">Factory Reset</p>
@@ -386,7 +399,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
               <button
                 type="button"
                 onClick={() => setShowResetModal(true)}
-                className="shrink-0 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500 transition-colors hover:bg-red-500/20"
+                className="shrink-0 rounded-lg border border-[var(--theme-error)]/50 bg-[var(--theme-error)]/10 px-4 py-2 text-sm font-medium text-[var(--theme-error)] transition-colors hover:bg-[var(--theme-error)]/20"
               >
                 Reset App
               </button>
@@ -405,11 +418,11 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
         title="Factory Reset"
       >
         <div className="space-y-4">
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-            <p className="text-sm font-medium text-red-500">
+          <div className="rounded-lg border border-[var(--theme-error)]/30 bg-[var(--theme-error)]/10 p-3">
+            <p className="text-sm font-medium text-[var(--theme-error)]">
               This will permanently delete all data:
             </p>
-            <ul className="mt-2 space-y-1 text-xs text-red-400">
+            <ul className="mt-2 space-y-1 text-xs text-[var(--theme-error)]">
               <li>All channels and media files</li>
               <li>All products and encryption keys</li>
               <li>All comments</li>
@@ -420,7 +433,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-[var(--theme-text)]">
-              Type <span className="font-mono font-bold text-red-500">RESET</span> to confirm
+              Type <span className="font-mono font-bold text-[var(--theme-error)]">RESET</span> to confirm
             </label>
             <input
               type="text"
@@ -447,7 +460,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
               type="button"
               onClick={handleFactoryReset}
               disabled={resetConfirm !== "RESET" || resetting}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded-lg bg-[var(--theme-error)] px-4 py-2 text-sm font-medium text-[var(--theme-error-text)] transition-colors hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {resetting ? "Resetting..." : "Delete Everything"}
             </button>
@@ -455,110 +468,13 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
         </div>
       </Modal>
 
-      {/* Live Preview */}
-      <div className="lg:sticky lg:top-24">
-        <h3 className="mb-3 text-sm font-medium text-[var(--theme-text-secondary)]">{t("admin.settings.preview")}</h3>
-        <div
-          className="overflow-hidden rounded-xl border shadow-lg"
-          style={{
-            backgroundColor: form.theme_bg,
-            borderColor: form.theme_border,
-            fontFamily: form.theme_font,
-          }}
-        >
-          {/* Preview navbar */}
-          <div
-            className="flex items-center justify-between border-b px-4 py-3"
-            style={{ borderColor: form.theme_border }}
-          >
-            <div className="flex items-center gap-2">
-              {(form.logo_image_id || form.logo_url) ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={form.logo_image_id ? `/api/images/${form.logo_image_id}` : form.logo_url}
-                  alt=""
-                  className="h-5 w-5 rounded object-contain"
-                />
-              ) : (
-                <div
-                  className="flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold text-white"
-                  style={{ backgroundColor: form.theme_primary }}
-                >
-                  {form.instance_name.charAt(0) || "M"}
-                </div>
-              )}
-              <span
-                className="text-sm font-semibold"
-                style={{ color: form.theme_heading }}
-              >
-                {form.instance_name || "My Platform"}
-              </span>
-            </div>
-            <span
-              className="text-[10px] font-medium"
-              style={{ color: form.theme_text_secondary }}
-            >
-              Log in
-            </span>
-          </div>
-
-          {/* Preview content */}
-          <div className="p-4 space-y-3">
-            <h4
-              className="text-base font-semibold"
-              style={{ color: form.theme_heading }}
-            >
-              {t("admin.settings.preview_heading")}
-            </h4>
-            <p className="text-sm" style={{ color: form.theme_text }}>
-              {t("admin.settings.preview_body")}
-            </p>
-            <p className="text-xs" style={{ color: form.theme_text_secondary }}>
-              {t("admin.settings.preview_muted")}
-            </p>
-
-            {/* Preview card */}
-            <div
-              className="rounded-lg border p-3"
-              style={{
-                backgroundColor: form.theme_bg_secondary,
-                borderColor: form.theme_border,
-              }}
-            >
-              <p
-                className="text-sm font-medium"
-                style={{ color: form.theme_heading }}
-              >
-                {t("admin.settings.preview_card")}
-              </p>
-              <p
-                className="mt-1 text-xs"
-                style={{ color: form.theme_text_secondary }}
-              >
-                {t("admin.settings.preview_card_body")}
-              </p>
-              <div className="mt-2 flex gap-2">
-                <span
-                  className="rounded px-2 py-0.5 text-[10px] font-medium text-white"
-                  style={{ backgroundColor: form.theme_primary }}
-                >
-                  {t("admin.settings.preview_badge")}
-                </span>
-                <span
-                  className="rounded px-2 py-0.5 text-[10px]"
-                  style={{
-                    backgroundColor: form.theme_bg,
-                    color: form.theme_text_secondary,
-                    border: `1px solid ${form.theme_border}`,
-                  }}
-                >
-                  {t("admin.settings.preview_comments")}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <ThemePreview theme={theme} name={form.instance_name} className="hidden lg:block" />
+      <button type="button" onClick={() => setShowPreview(true)} className="fixed bottom-4 right-4 z-40 min-h-11 rounded-full bg-[var(--theme-primary)] px-5 text-sm font-semibold text-[var(--theme-primary-text)] shadow-lg lg:hidden">
+        {t("admin.settings.preview")}
+      </button>
+      <Modal open={showPreview} onClose={() => setShowPreview(false)} title={t("admin.settings.preview")}>
+        <ThemePreview theme={theme} name={form.instance_name} showHeading={false} />
+      </Modal>
     </div>
   );
 }

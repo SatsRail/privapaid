@@ -40,8 +40,8 @@ export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps
       <nav
         className="sticky top-0 z-50"
         style={{
-          backgroundColor: "var(--theme-bg)",
-          boxShadow: "0 1px 0 0 rgba(255,255,255,0.1)",
+          backgroundColor: "var(--theme-nav-bg)",
+          boxShadow: "0 1px 0 0 var(--theme-border)",
         }}
       >
         <div className="flex h-14 items-center gap-4 px-4">
@@ -49,8 +49,8 @@ export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps
           <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={toggle}
-              className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-[var(--theme-bg-secondary)]"
-              style={{ color: "var(--theme-text)" }}
+              className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-[var(--theme-nav-text)]/10"
+              style={{ color: "var(--theme-nav-text)" }}
               aria-label="Toggle sidebar"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -72,7 +72,7 @@ export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps
                 />
               ) : (
                 <div
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-[var(--theme-primary-text)]"
                   style={{ backgroundColor: "var(--theme-primary)" }}
                 >
                   {instanceName.charAt(0).toUpperCase()}
@@ -80,7 +80,7 @@ export default function Navbar({ instanceName, logoUrl, aboutText }: NavbarProps
               )}
               <span
                 className="hidden text-xl font-bold tracking-tight sm:block"
-                style={{ color: "var(--theme-heading)" }}
+                style={{ color: "var(--theme-nav-text)" }}
               >
                 {instanceName}
               </span>

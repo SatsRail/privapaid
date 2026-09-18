@@ -89,7 +89,7 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
             }}
           />
           {error && (
-            <p className="mt-1 text-sm" style={{ color: "var(--theme-text-secondary)" }}>
+            <p role="alert" className="mt-1 text-sm text-[var(--theme-error)]">
               {error}
             </p>
           )}
@@ -97,7 +97,7 @@ export default function CommentSection({ mediaId, hasAccess, onUnauthorized }: C
             type="submit"
             disabled={submitting || !body.trim()}
             className="mt-2 rounded-md px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
-            style={{ backgroundColor: "var(--theme-primary)", color: "var(--theme-bg, #000)" }}
+            style={{ backgroundColor: "var(--theme-primary)", color: "var(--theme-primary-text)" }}
           >
             {submitting ? t("viewer.comments.posting") : t("viewer.comments.post")}
           </button>

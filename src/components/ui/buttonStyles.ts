@@ -6,10 +6,10 @@
 
 export const buttonVariants = {
   primary:
-    "bg-[var(--theme-primary)] text-white hover:opacity-90 disabled:opacity-50",
+    "bg-[var(--theme-primary)] text-[var(--theme-primary-text)] hover:opacity-90 disabled:opacity-50",
   secondary:
     "bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:opacity-80",
-  danger: "bg-red-600 text-white hover:bg-red-700 disabled:opacity-50",
+  danger: "bg-[var(--theme-error)] text-[var(--theme-error-text)] hover:opacity-90 disabled:opacity-50",
   ghost:
     "bg-transparent text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-secondary)]",
   // Bordered secondary action (Cancel / Back). Normalizes the hand-rolled

@@ -26,28 +26,28 @@ export default function VerifyFailureCard({
   const { t, locale } = useLocale();
 
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-4 px-2 text-center">
+    <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl bg-[var(--theme-bg)] p-5 text-center">
       <AlertIcon variant="info" />
 
       <div className="flex flex-col items-center gap-1">
-        <h3 className="text-lg font-semibold text-white">
+        <h3 className="text-lg font-semibold text-[var(--theme-text)]">
           {t("viewer.payment.verify_failed.title")}
         </h3>
-        <p className="text-sm text-zinc-300">
+        <p className="text-sm text-[var(--theme-text-secondary)]">
           {t("viewer.payment.verify_failed.body")}
         </p>
       </div>
 
-      <div className="w-full rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 text-left">
-        <div className="flex items-center justify-between text-xs uppercase tracking-wide text-zinc-400">
+      <div className="w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-3 text-left">
+        <div className="flex items-center justify-between text-xs uppercase tracking-wide text-[var(--theme-text-secondary)]">
           <span>{t("viewer.payment.unlock_failed.timestamp_label")}</span>
-          <span className="font-mono text-[11px] tabular-nums text-zinc-300 normal-case">
+          <span className="font-mono text-[11px] tabular-nums text-[var(--theme-text-secondary)] normal-case">
             {new Date(failedAt).toLocaleString(locale)}
           </span>
         </div>
       </div>
 
-      <p className="text-sm text-zinc-300">
+      <p className="text-sm text-[var(--theme-text-secondary)]">
         {merchantName
           ? t("viewer.payment.unlock_failed.contact", { merchant: merchantName })
           : t("viewer.payment.unlock_failed.contact_generic")}
@@ -55,7 +55,7 @@ export default function VerifyFailureCard({
 
       <button
         onClick={onReload}
-        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-black transition-colors"
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-[var(--theme-primary-text)] transition-colors"
       >
         {t("viewer.payment.unlock_failed.reload")}
       </button>

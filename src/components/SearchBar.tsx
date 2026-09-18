@@ -205,7 +205,7 @@ export default function SearchBar({ placeholder }: SearchBarProps) {
               key={`${result.type}-${result.id}`}
               onClick={() => navigate(result)}
               className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
-                i === activeIndex ? "bg-[#3f3f3f]" : "hover:bg-[#3f3f3f]"
+                i === activeIndex ? "bg-[var(--theme-hover)]" : "hover:bg-[var(--theme-hover)]"
               }`}
             >
               {result.type === "channel" ? (

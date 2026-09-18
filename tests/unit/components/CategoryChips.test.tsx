@@ -33,18 +33,18 @@ describe("CategoryChips", () => {
   it("applies active style to All when activeCategory is null", () => {
     render(<CategoryChips categories={categories} activeCategory={null} onSelect={vi.fn()} />);
     const allBtn = screen.getByText("All content");
-    expect(allBtn.className).toContain("bg-white");
-    expect(allBtn.className).toContain("text-black");
+    expect(allBtn.className).toContain("bg-[var(--theme-primary)]");
+    expect(allBtn.className).toContain("text-[var(--theme-primary-text)]");
   });
 
   it("applies active style to selected category", () => {
     render(<CategoryChips categories={categories} activeCategory="cat2" onSelect={vi.fn()} />);
     const artBtn = screen.getByText("Art");
-    expect(artBtn.className).toContain("bg-white");
-    expect(artBtn.className).toContain("text-black");
+    expect(artBtn.className).toContain("bg-[var(--theme-primary)]");
+    expect(artBtn.className).toContain("text-[var(--theme-primary-text)]");
     // All button should not be active
     const allBtn = screen.getByText("All content");
-    expect(allBtn.className).not.toContain("bg-white text-black");
+    expect(allBtn.className).not.toContain("bg-[var(--theme-primary)] text-[var(--theme-primary-text)]");
   });
 
   it("renders with empty categories", () => {

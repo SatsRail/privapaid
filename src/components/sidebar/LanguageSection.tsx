@@ -33,7 +33,7 @@ export default function LanguageSection() {
             className={`flex w-full items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors ${
               locale === lang.code
                 ? "bg-[var(--theme-bg-secondary)]"
-                : "hover:bg-[var(--theme-bg-secondary)]"
+                : "hover:bg-[var(--theme-hover)]"
             }`}
             style={{
               color: locale === lang.code ? "var(--theme-heading)" : "var(--theme-text)",

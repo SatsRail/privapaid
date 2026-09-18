@@ -88,12 +88,12 @@ export default function UnavailableWall({
             alt={mediaName}
             className="h-full w-full object-cover opacity-30"
           />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/55 px-6 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/15 backdrop-blur-sm">
-              <LockIcon className="text-white/90" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[var(--theme-media-bg)]/85 px-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--theme-media-text)]/10 ring-1 ring-[var(--theme-media-text)]/15 backdrop-blur-sm">
+              <LockIcon className="text-[var(--theme-media-text)]/90" />
             </div>
-            <p className="text-sm font-semibold text-white">{title}</p>
-            <p className="max-w-xs text-xs text-white/70">{description}</p>
+            <p className="text-sm font-semibold text-[var(--theme-media-text)]">{title}</p>
+            <p className="max-w-xs text-xs text-[var(--theme-media-text)]/70">{description}</p>
           </div>
         </div>
       ) : (

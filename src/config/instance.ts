@@ -1,15 +1,6 @@
 import { prisma } from "@/lib/prisma";
-export interface ThemeConfig {
-  primary: string;
-  bg: string;
-  bgSecondary: string;
-  text: string;
-  textSecondary: string;
-  heading: string;
-  border: string;
-  font: string;
-  logo: string;
-}
+import { DEFAULT_THEME, themeFromSettings, type ThemeConfig } from "./theme";
+export type { ThemeConfig } from "./theme";
 
 export interface InstanceConfig {
   name: string;
@@ -27,18 +18,6 @@ export interface InstanceConfig {
   googleSiteVerification: string;
   sentryDsn: string;
 }
-
-const DEFAULT_THEME: ThemeConfig = {
-  primary: "#3b82f6",
-  bg: "#0a0a0a",
-  bgSecondary: "#18181b",
-  text: "#ededed",
-  textSecondary: "#a1a1aa",
-  heading: "#fafafa",
-  border: "#27272a",
-  font: "Geist",
-  logo: "",
-};
 
 /**
  * SatsRail's merchant API is served from `app.satsrail.com`. Earlier example
@@ -122,13 +101,7 @@ export async function getInstanceConfig(): Promise<InstanceConfig> {
         locale: settings.merchantLocale || "en",
         currency: settings.merchantCurrency || "USD",
         theme: {
-          primary: settings.themePrimary || DEFAULT_THEME.primary,
-          bg: settings.themeBg || DEFAULT_THEME.bg,
-          bgSecondary: settings.themeBgSecondary || DEFAULT_THEME.bgSecondary,
-          text: settings.themeText || DEFAULT_THEME.text,
-          textSecondary: settings.themeTextSecondary || DEFAULT_THEME.textSecondary,
-          heading: settings.themeHeading || DEFAULT_THEME.heading,
-          border: settings.themeBorder || DEFAULT_THEME.border,
+          ...themeFromSettings(settings),
           font: settings.themeFont || DEFAULT_THEME.font,
           logo: settings.logoBytes
             ? `/api/images/logo`

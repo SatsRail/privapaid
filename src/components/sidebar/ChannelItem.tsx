@@ -18,7 +18,7 @@ export default function ChannelItem({ channel, active, collapsed }: ChannelItemP
     <Link
       href={`/c/${channel.slug}`}
       className={`flex items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors ${
-        active ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-bg-secondary)]"
+        active ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-hover)]"
       }`}
       title={collapsed ? channel.name : undefined}
     >
@@ -51,7 +51,7 @@ export default function ChannelItem({ channel, active, collapsed }: ChannelItemP
             {channel.name}
           </span>
           {channel.is_live && (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Live" />
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--theme-error)]" title="Live" />
           )}
         </div>
       )}

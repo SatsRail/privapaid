@@ -40,13 +40,14 @@ export default function Sidebar({
       {/* Backdrop — always on when the rail is open, on every breakpoint.
           YouTube watch-page model: the rail is an overlay drawer, not a
           flex sibling that pushes content. Click outside to dismiss.
-          bg-black/70 matches YouTube's overlay intensity.
+          Backdrop color follows the configured player palette.
           z-40 sits above ALL page content including sticky elements that
           claim z-30 (e.g. the HomeContent category chips). The aside
           drawer at z-50 sits one level above the backdrop. */}
       {!collapsed && (
         <div
-          className="fixed inset-0 top-14 z-40 bg-black/70"
+          data-testid="sidebar-backdrop"
+          className="fixed inset-0 top-14 z-40 bg-[var(--theme-backdrop)]"
           onClick={toggle}
         />
       )}
@@ -73,7 +74,7 @@ export default function Sidebar({
             <Link
               href="/"
               className={`flex items-center gap-5 rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                isHome ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-bg-secondary)]"
+                isHome ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-hover)]"
               }`}
               style={{ color: isHome ? "var(--theme-heading)" : "var(--theme-text)" }}
               title={collapsed ? t("viewer.sidebar.home") : undefined}
@@ -95,7 +96,7 @@ export default function Sidebar({
               <Link
                 href="/admin"
                 className={`flex items-center gap-5 rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                  isAdminPage ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-bg-secondary)]"
+                  isAdminPage ? "bg-[var(--theme-bg-secondary)]" : "hover:bg-[var(--theme-hover)]"
                 }`}
                 style={{ color: isAdminPage ? "var(--theme-heading)" : "var(--theme-text)" }}
                 title={collapsed ? t("viewer.sidebar.admin") : undefined}
@@ -216,7 +217,7 @@ export default function Sidebar({
         >
           <button
             onClick={() => window.dispatchEvent(new Event("open-about"))}
-            className="flex w-full items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--theme-bg-secondary)]"
+            className="flex w-full items-center gap-5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--theme-hover)]"
             style={{ color: "var(--theme-text)" }}
             title={collapsed ? t("viewer.navbar.about") : undefined}
           >

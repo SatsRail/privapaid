@@ -65,46 +65,46 @@ export default function UnlockFailureCard({
   }
 
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-4 px-2 text-center">
+    <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl bg-[var(--theme-bg)] p-5 text-center">
       <AlertIcon variant="triangle" />
 
       <div className="flex flex-col items-center gap-1">
-        <h3 className="text-lg font-semibold text-white">
+        <h3 className="text-lg font-semibold text-[var(--theme-text)]">
           {t("viewer.payment.unlock_failed.title")}
         </h3>
-        <p className="text-sm text-zinc-300">
+        <p className="text-sm text-[var(--theme-text-secondary)]">
           {t("viewer.payment.unlock_failed.body")}
         </p>
       </div>
 
-      <div className="w-full rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 text-left">
-        <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-wide text-zinc-400">
+      <div className="w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-3 text-left">
+        <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-wide text-[var(--theme-text-secondary)]">
           <span>{t("viewer.payment.unlock_failed.timestamp_label")}</span>
-          <span className="font-mono text-[11px] tabular-nums text-zinc-300 normal-case">
+          <span className="font-mono text-[11px] tabular-nums text-[var(--theme-text-secondary)] normal-case">
             {new Date(failedAt).toLocaleString(locale)}
           </span>
         </div>
-        <div className="text-xs uppercase tracking-wide text-zinc-400">
+        <div className="text-xs uppercase tracking-wide text-[var(--theme-text-secondary)]">
           {t("viewer.payment.unlock_failed.reference_label")}
         </div>
-        <div className="mt-1 break-all font-mono text-sm text-amber-300">
+        <div className="mt-1 break-all font-mono text-sm text-[var(--theme-warning)]">
           {orderNumber || orderId || t("viewer.payment.unlock_failed.no_reference")}
         </div>
         {orderNumber && orderId && (
-          <div className="mt-1 break-all font-mono text-[11px] text-zinc-500">
+          <div className="mt-1 break-all font-mono text-[11px] text-[var(--theme-text-secondary)]">
             {orderId}
           </div>
         )}
       </div>
 
-      <p className="text-sm text-zinc-300">
+      <p className="text-sm text-[var(--theme-text-secondary)]">
         {merchantName
           ? t("viewer.payment.unlock_failed.contact", { merchant: merchantName })
           : t("viewer.payment.unlock_failed.contact_generic")}
       </p>
 
       {copyError && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-xs text-[var(--theme-error)]" role="alert">
           {copyError}
         </p>
       )}
@@ -113,7 +113,7 @@ export default function UnlockFailureCard({
         {reference && (
           <button
             onClick={handleCopy}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-3 py-2 text-sm font-medium text-[var(--theme-text)] transition-colors hover:bg-[var(--theme-hover)]"
           >
             {copied
               ? t("viewer.payment.unlock_failed.copied")
@@ -122,7 +122,7 @@ export default function UnlockFailureCard({
         )}
         <button
           onClick={onReload}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-black transition-colors"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--theme-primary)] px-3 py-2 text-sm font-semibold text-[var(--theme-primary-text)] transition-colors"
         >
           {t("viewer.payment.unlock_failed.reload")}
         </button>

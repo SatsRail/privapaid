@@ -1,12 +1,12 @@
 /**
- * Amber alert icon used by the post-payment failure cards. Two variants:
+ * Themed warning icon used by the post-payment failure cards. Two variants:
  *
  *   triangle — the customer's payment went through but content didn't unlock
  *              (hard failure, user needs the merchant's help to recover).
  *   info     — verification hit a transient issue; the customer's access is
  *              probably still valid (soft failure, reload usually fixes it).
  *
- * Kept as a single component because the variants share the amber circle
+ * Kept as a single component because the variants share the warning circle
  * chrome that signals "something went wrong, payment is still safe."
  */
 interface AlertIconProps {
@@ -15,7 +15,7 @@ interface AlertIconProps {
 
 export default function AlertIcon({ variant }: AlertIconProps) {
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
+    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--theme-warning)]/15 text-[var(--theme-warning)]">
       <svg
         width="24"
         height="24"

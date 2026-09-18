@@ -81,7 +81,7 @@ export default function ExchangeModal({ open, onClose }: ExchangeModalProps) {
                   className="h-8 w-8 rounded object-contain"
                 />
               ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded bg-[var(--theme-primary)] text-sm font-bold text-black">
+                <div className="flex h-8 w-8 items-center justify-center rounded bg-[var(--theme-primary)] text-sm font-bold text-[var(--theme-primary-text)]">
                   {exchange.name.charAt(0)}
                 </div>
               )}
@@ -91,7 +91,7 @@ export default function ExchangeModal({ open, onClose }: ExchangeModalProps) {
                     {exchange.name}
                   </span>
                   {exchange.promoted && (
-                    <span className="rounded bg-[var(--theme-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-black">
+                    <span className="rounded bg-[var(--theme-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--theme-primary-text)]">
                       {t("viewer.exchange_guide.featured")}
                     </span>
                   )}
@@ -127,7 +127,7 @@ export default function ExchangeModal({ open, onClose }: ExchangeModalProps) {
       {countryCode && !showAll && exchanges.length > 0 && (
         <button
           onClick={handleShowAll}
-          className="mt-3 w-full text-center text-sm text-[var(--theme-primary)] hover:underline"
+          className="mt-3 w-full text-center text-sm text-[var(--theme-link)] hover:underline"
         >
           {t("viewer.exchange_guide.show_all")}
         </button>

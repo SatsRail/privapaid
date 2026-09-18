@@ -33,11 +33,11 @@ export default function ChannelSidebarItem({ item, locale }: ChannelSidebarItemP
     <Link
       href={item.href}
       prefetch={false}
-      className="group flex gap-2 rounded-lg p-1 transition-colors hover:bg-white/5"
+      className="group flex gap-2 rounded-lg p-1 transition-colors hover:bg-[var(--theme-hover)]"
       data-testid="channel-sidebar-item"
     >
       <div
-        className="relative w-[168px] flex-shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+        className="relative w-[168px] flex-shrink-0 overflow-hidden rounded-lg bg-[var(--theme-bg-secondary)]"
         style={{ aspectRatio: "16 / 9" }}
       >
         {item.thumbnailSrc ? (
@@ -49,7 +49,7 @@ export default function ChannelSidebarItem({ item, locale }: ChannelSidebarItemP
             loading="lazy"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
+          <div className="flex h-full w-full items-center justify-center text-xs text-[var(--theme-text-secondary)]">
             {item.mediaType}
           </div>
         )}

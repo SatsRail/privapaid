@@ -45,7 +45,7 @@ export default function ChannelCard({ channel }: ChannelCardProps) {
         )}
         <div className="min-w-0 flex-1">
           <h3
-            className="truncate font-semibold transition-colors group-hover:text-[var(--theme-primary)]"
+            className="truncate font-semibold transition-colors group-hover:text-[var(--theme-link)]"
             style={{ color: "var(--theme-heading)" }}
           >
             {channel.name}

@@ -190,7 +190,7 @@ export default function CheckoutOverlay({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 backdrop-blur-sm sm:p-6" style={{ backgroundColor: "rgba(0,0,0,0.7)" }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 backdrop-blur-sm sm:p-6" style={{ backgroundColor: "var(--theme-backdrop)" }}>
       <div
         ref={dialogRef}
         role="dialog"
@@ -216,7 +216,7 @@ export default function CheckoutOverlay({
 
         {status === "error" && (
           <div role="alert" className="flex flex-col items-center py-8 text-center">
-            <p className="text-sm text-red-400">{t("viewer.checkout.load_error")}</p>
+            <p className="text-sm text-[var(--theme-error)]">{t("viewer.checkout.load_error")}</p>
             <p className="mt-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.error_help")}</p>
             <button
               onClick={handleClose}
@@ -230,7 +230,7 @@ export default function CheckoutOverlay({
 
         {status === "expired" && (
           <div role="alert" className="flex flex-col items-center py-8 text-center">
-            <p className="text-sm text-yellow-400">{t("viewer.checkout.expired")}</p>
+            <p className="text-sm text-[var(--theme-warning)]">{t("viewer.checkout.expired")}</p>
             <p className="mt-3 text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.expired_help")}</p>
             <button
               onClick={handleClose}
@@ -272,7 +272,7 @@ export default function CheckoutOverlay({
                     {formatFiat(amountCents, currency, locale)}
                   </p>
                   {amountSats != null && (
-                    <p className="mt-1 text-sm font-medium tabular-nums" style={{ color: "var(--theme-primary)" }}>
+                    <p className="mt-1 text-sm font-medium tabular-nums" style={{ color: "var(--theme-link)" }}>
                       {amountSats.toLocaleString(locale)} sats
                     </p>
                   )}
@@ -331,7 +331,7 @@ export default function CheckoutOverlay({
               <div className="mt-4 flex w-full flex-col gap-2">
                 <a
                   href={`lightning:${paymentRequest}`}
-                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-[var(--theme-primary-text)] transition-opacity hover:opacity-90"
                   style={{ backgroundColor: "var(--theme-primary)" }}
                 >
                   {t("viewer.checkout.open_wallet")}
@@ -350,7 +350,7 @@ export default function CheckoutOverlay({
               </div>
             )}
 
-            {copyFailed && <p role="alert" className="mt-2 text-center text-sm text-red-400">{t("viewer.checkout.copy_failed")}</p>}
+            {copyFailed && <p role="alert" className="mt-2 text-center text-sm text-[var(--theme-error)]">{t("viewer.checkout.copy_failed")}</p>}
             <p className="mt-3 text-center text-xs leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.unlock_hint")}</p>
 
             {/* Cancel */}

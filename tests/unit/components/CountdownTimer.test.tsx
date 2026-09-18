@@ -189,37 +189,37 @@ describe("CountdownTimer", () => {
     it("applies default styling when displaySeconds > 300", () => {
       const { container } = render(<CountdownTimer serverSeconds={600} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-zinc-800/80");
-      expect(wrapper.className).toContain("text-zinc-100");
-      expect(wrapper.className).not.toContain("bg-yellow-500/20");
-      expect(wrapper.className).not.toContain("bg-red-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-bg-secondary)]");
+      expect(wrapper.className).toContain("text-[var(--theme-text)]");
+      expect(wrapper.className).not.toContain("bg-[var(--theme-warning)]/15");
+      expect(wrapper.className).not.toContain("bg-[var(--theme-error)]/15");
     });
 
     it("applies warning styling when displaySeconds is between 61 and 300", () => {
       const { container } = render(<CountdownTimer serverSeconds={200} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-yellow-500/20");
-      expect(wrapper.className).toContain("text-yellow-300");
-      expect(wrapper.className).not.toContain("bg-red-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-warning)]/15");
+      expect(wrapper.className).toContain("text-[var(--theme-warning)]");
+      expect(wrapper.className).not.toContain("bg-[var(--theme-error)]/15");
     });
 
     it("applies warning styling at exactly 300 seconds", () => {
       const { container } = render(<CountdownTimer serverSeconds={300} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-yellow-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-warning)]/15");
     });
 
     it("applies critical styling when displaySeconds <= 60", () => {
       const { container } = render(<CountdownTimer serverSeconds={60} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-red-500/20");
-      expect(wrapper.className).toContain("text-red-300");
+      expect(wrapper.className).toContain("bg-[var(--theme-error)]/15");
+      expect(wrapper.className).toContain("text-[var(--theme-error)]");
     });
 
     it("applies critical styling at 0 seconds", () => {
       const { container } = render(<CountdownTimer serverSeconds={0} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-red-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-error)]/15");
     });
 
     it("applies animate-pulse to SVG in critical state", () => {
@@ -238,21 +238,21 @@ describe("CountdownTimer", () => {
     it("transitions from default to warning as timer counts down", () => {
       const { container } = render(<CountdownTimer serverSeconds={302} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-zinc-800/80");
+      expect(wrapper.className).toContain("bg-[var(--theme-bg-secondary)]");
 
       // Tick down past 300 threshold
       act(() => { vi.advanceTimersByTime(2000); });
-      expect(wrapper.className).toContain("bg-yellow-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-warning)]/15");
     });
 
     it("transitions from warning to critical as timer counts down", () => {
       const { container } = render(<CountdownTimer serverSeconds={62} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-yellow-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-warning)]/15");
 
       // Tick down past 60 threshold
       act(() => { vi.advanceTimersByTime(2000); });
-      expect(wrapper.className).toContain("bg-red-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-error)]/15");
     });
   });
 
@@ -263,15 +263,15 @@ describe("CountdownTimer", () => {
     it("61 seconds is warning (not critical)", () => {
       const { container } = render(<CountdownTimer serverSeconds={61} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-yellow-500/20");
-      expect(wrapper.className).not.toContain("bg-red-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-warning)]/15");
+      expect(wrapper.className).not.toContain("bg-[var(--theme-error)]/15");
     });
 
     it("301 seconds is default (not warning)", () => {
       const { container } = render(<CountdownTimer serverSeconds={301} />);
       const wrapper = container.firstElementChild as HTMLElement;
-      expect(wrapper.className).toContain("bg-zinc-800/80");
-      expect(wrapper.className).not.toContain("bg-yellow-500/20");
+      expect(wrapper.className).toContain("bg-[var(--theme-bg-secondary)]");
+      expect(wrapper.className).not.toContain("bg-[var(--theme-warning)]/15");
     });
   });
 });

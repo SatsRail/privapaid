@@ -35,7 +35,7 @@ export default function ChannelBlock({ name, slug, profileImageUrl, mediaCount }
     >
       <Link
         href={`/c/${slug}`}
-        className="group -m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
+        className="group -m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 transition-colors hover:bg-[var(--theme-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-primary)]"
       >
         {profileImageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
