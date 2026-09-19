@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // --- Mocks ---
@@ -25,6 +25,12 @@ const defaultProps = {
   onComplete: vi.fn(),
   onClose: vi.fn(),
 };
+
+async function loadQr() {
+  const qr = await screen.findByAltText("Complete payment");
+  fireEvent.load(qr);
+  return qr;
+}
 
 describe("CheckoutOverlay", () => {
   beforeEach(() => {
@@ -70,9 +76,70 @@ describe("CheckoutOverlay", () => {
   describe("pending state", () => {
     it("renders QR code after loading", async () => {
       render(<CheckoutOverlay {...defaultProps} />);
+      await loadQr();
       await waitFor(() => {
-        expect(screen.getByText("Waiting for payment...")).toBeInTheDocument();
+        expect(screen.getByText("Waiting for payment...")).toBeVisible();
       });
+    });
+
+    it("keeps the invoice hidden until the QR image has loaded", async () => {
+      render(<CheckoutOverlay {...defaultProps} />);
+      const qr = await screen.findByAltText("Complete payment");
+      await screen.findByText("500 sats");
+
+      expect(qr).not.toBeVisible();
+      expect(screen.getByText("Open Wallet")).not.toBeVisible();
+      expect(screen.getByText("Preparing your invoice…")).toBeVisible();
+
+      fireEvent.load(qr);
+
+      expect(qr).toBeVisible();
+      expect(screen.getByText("500 sats")).toBeVisible();
+      expect(screen.getByText("Expires in 5:00")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Open Wallet" })).toBeVisible();
+      expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
+    });
+
+    it("keeps a loaded QR hidden until the invoice details arrive", async () => {
+      const fetchWithInvoice = global.fetch;
+      let releaseStatus!: () => void;
+      const statusReady = new Promise<void>((resolve) => { releaseStatus = resolve; });
+      global.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes("/status")) await statusReady;
+        return fetchWithInvoice(url);
+      });
+      render(<CheckoutOverlay {...defaultProps} />);
+      const qr = await loadQr();
+
+      expect(qr).not.toBeVisible();
+      expect(screen.queryByRole("link", { name: "Open Wallet" })).not.toBeInTheDocument();
+      expect(screen.getByText("Preparing your invoice…")).toBeVisible();
+
+      await act(async () => { releaseStatus(); });
+
+      expect(qr).toBeVisible();
+      expect(screen.getByText("500 sats")).toBeVisible();
+      expect(screen.getByText("Expires in 5:00")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Open Wallet" })).toBeVisible();
+    });
+
+    it("shows a recoverable error if the QR image cannot render", async () => {
+      render(<CheckoutOverlay {...defaultProps} />);
+      fireEvent.error(await screen.findByAltText("Complete payment"));
+      expect(screen.getByRole("alert")).toHaveTextContent("Failed to load payment");
+      expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
+    });
+
+    it("keeps keyboard focus on Close while the invoice is hidden", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<CheckoutOverlay {...defaultProps} />);
+      await screen.findByAltText("Complete payment");
+      const close = screen.getByRole("button", { name: "Close" });
+      close.focus();
+      await user.tab({ shift: true });
+      expect(close).toHaveFocus();
+      await user.tab();
+      expect(close).toHaveFocus();
     });
 
     it("renders the QR as an <img> data URI — never injected as live SVG markup", async () => {
@@ -187,6 +254,7 @@ describe("CheckoutOverlay", () => {
     it("offers another way to pay if clipboard access is denied", async () => {
       vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error("Clipboard denied"));
       render(<CheckoutOverlay {...defaultProps} />);
+      await loadQr();
       await waitFor(() => expect(screen.getByText("Copy Invoice")).toBeInTheDocument());
       await act(async () => { screen.getByText("Copy Invoice").click(); });
       expect(screen.getByRole("alert")).toHaveTextContent("Could not copy");
@@ -222,6 +290,7 @@ describe("CheckoutOverlay", () => {
     it("shows Cancel button that calls onClose", async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       render(<CheckoutOverlay {...defaultProps} />);
+      await loadQr();
       await waitFor(() => {
         expect(screen.getByText("Cancel")).toBeInTheDocument();
       });

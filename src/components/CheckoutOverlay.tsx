@@ -51,6 +51,7 @@ export default function CheckoutOverlay({
 }: CheckoutOverlayProps) {
   const { t, locale } = useLocale();
   const [qrSvg, setQrSvg] = useState<string | null>(null);
+  const [qrLoaded, setQrLoaded] = useState(false);
   const [paymentRequest, setPaymentRequest] = useState<string | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [amountSats, setAmountSats] = useState<number | null>(null);
@@ -61,6 +62,9 @@ export default function CheckoutOverlay({
   const [copyFailed, setCopyFailed] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // QR and status arrive independently. Reveal the invoice together so adding
+  // its amount, timer, and wallet actions cannot move an already-visible QR.
+  const invoiceReady = qrLoaded && !!paymentRequest && amountSats != null && timeRemaining != null;
 
   const cleanup = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -242,8 +246,15 @@ export default function CheckoutOverlay({
           </div>
         )}
 
+        {status === "pending" && !invoiceReady && (
+          <div role="status" className="flex flex-col items-center justify-center gap-3 py-12">
+            <div className="h-6 w-6 animate-spin rounded-full border-2" style={{ borderColor: "var(--theme-border)", borderTopColor: "var(--theme-primary)" }} />
+            <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.preparing")}</p>
+          </div>
+        )}
+
         {status === "pending" && (
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center" hidden={!invoiceReady} style={invoiceReady ? undefined : { display: "none" }}>
             {/* Merchant logo */}
             {merchantLogo && (
               /* eslint-disable-next-line @next/next/no-img-element */
@@ -289,19 +300,16 @@ export default function CheckoutOverlay({
             {/* QR Code — rendered via an <img> data URI, never injected as
                 markup: SVG in an <img> can't run scripts or load external
                 resources, so even a compromised QR endpoint can't XSS here. */}
-            {qrSvg ? (
+            {qrSvg && (
               <div className="w-full max-w-[282px] rounded-xl bg-white p-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`data:image/svg+xml,${encodeURIComponent(qrSvg)}`}
                   alt={t("viewer.checkout.title")}
                   className="aspect-square h-auto w-full"
+                  onLoad={() => setQrLoaded(true)}
+                  onError={() => setStatus("error")}
                 />
-              </div>
-            ) : (
-              <div role="status" className="flex aspect-square w-full max-w-[282px] flex-col items-center justify-center gap-3 rounded-xl" style={{ backgroundColor: "var(--theme-bg-secondary)" }}>
-                <div className="h-6 w-6 animate-spin rounded-full border-2" style={{ borderColor: "var(--theme-border)", borderTopColor: "var(--theme-primary)" }} />
-                <p className="text-sm" style={{ color: "var(--theme-text-secondary)" }}>{t("viewer.checkout.preparing")}</p>
               </div>
             )}
 

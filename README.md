@@ -100,6 +100,13 @@ Full discussion of the encryption design, threat model, and rotation mechanics: 
 
 ## Development
 
+### Checkout rendering
+
+The checkout QR and invoice status load independently. `CheckoutOverlay` keeps
+the invoice hidden behind “Preparing your invoice…” until the QR image loads
+and the payment request, sats amount, and expiry arrive. Reveal them together:
+adding payment controls after showing the QR shifts the centered dialog.
+
 ### JSON import safety
 
 JSON imports support `video`, `audio`, `podcast`, and `article` (Markdown in

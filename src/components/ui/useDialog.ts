@@ -41,7 +41,8 @@ export function useDialog({ open, onClose, dismissible = true }: UseDialogOption
 
       if (e.key !== "Tab" || !dialogRef.current) return;
 
-      const focusable = dialogRef.current.querySelectorAll(FOCUSABLE);
+      const focusable = Array.from(dialogRef.current.querySelectorAll(FOCUSABLE))
+        .filter((element) => !element.closest("[hidden]"));
       if (focusable.length === 0) return;
 
       const first = focusable[0] as HTMLElement;
