@@ -365,7 +365,7 @@ describe("access-gate", () => {
         ok: true,
         status: 200,
         json: async () => ({
-          valid: true,
+          valid: true, product_id: "prod_1",
           key: "decrypt_key",
           key_fingerprint: "fp_verify",
           remaining_seconds: 3600,
@@ -389,7 +389,7 @@ describe("access-gate", () => {
         ok: true,
         status: 200,
         json: async () => ({
-          valid: true,
+          valid: true, product_id: "prod_2",
           key: "key_2",
           remaining_seconds: 1800,
         }),
@@ -446,7 +446,7 @@ describe("access-gate", () => {
         ok: true,
         status: 200,
         json: async () => ({
-          valid: true,
+          valid: true, product_id: "prod_channel",
           key: "ch_key",
           remaining_seconds: 86400,
         }),
@@ -470,7 +470,7 @@ describe("access-gate", () => {
           ok: true,
           status: 200,
           json: async () => ({
-            valid: true,
+            valid: true, product_id: "prod_2",
             key: "key_2",
             remaining_seconds: 3600,
           }),
@@ -488,7 +488,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+        json: async () => ({ valid: true, product_id: "prod_1", key: "k", remaining_seconds: 100 }),
       });
 
       await verifyMacaroonAccess(["prod_1"]);
@@ -502,6 +502,7 @@ describe("access-gate", () => {
             "Authorization": "Bearer sk_live_test_key",
           },
           body: JSON.stringify({ access_token: "mac_abc123" }),
+          signal: expect.any(AbortSignal),
         }
       );
     });
@@ -514,7 +515,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+        json: async () => ({ valid: true, product_id: "prod_1", key: "k", remaining_seconds: 100 }),
       });
 
       await verifyMacaroonAccess(["prod_1"]);
@@ -552,7 +553,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, remaining_seconds: 0, key: "k" }),
+        json: async () => ({ valid: true, product_id: "prod_1", remaining_seconds: 0, key: "k" }),
       });
       const result = await verifyMacaroonAccess(["prod_1"]);
       expect(result.granted).toBe(false);
@@ -563,7 +564,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, remaining_seconds: "many", key: "k" }),
+        json: async () => ({ valid: true, product_id: "prod_1", remaining_seconds: "many", key: "k" }),
       });
       const result = await verifyMacaroonAccess(["prod_1"]);
       expect(result.granted).toBe(false);
@@ -609,7 +610,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, key: "fresh_key", remaining_seconds: 3600 }),
+        json: async () => ({ valid: true, product_id: "prod_1", key: "fresh_key", remaining_seconds: 3600 }),
       });
 
       const result = await verifyMacaroonAccess(["prod_1"]);
@@ -631,7 +632,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+        json: async () => ({ valid: true, product_id: "prod_valid", key: "k", remaining_seconds: 100 }),
       });
 
       const result = await verifyMacaroonAccess(["prod_expired", "prod_valid"]);
@@ -656,7 +657,7 @@ describe("access-gate", () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ valid: true, key: "k", remaining_seconds: 100 }),
+        json: async () => ({ valid: true, product_id: "prod_1", key: "k", remaining_seconds: 100 }),
       });
 
       const result = await verifyMacaroonAccess(["prod_1"]);

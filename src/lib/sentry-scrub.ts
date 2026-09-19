@@ -15,6 +15,12 @@ import type { ErrorEvent, Breadcrumb } from "@sentry/nextjs";
 const SENSITIVE_KEYS = new Set(
   [
     "source_url",
+    "url",
+    "uri",
+    "key",
+    "content_kek",
+    "access_token",
+    "macaroonprefix",
     "password",
     "password_hash",
     "satsrail_api_key",
@@ -45,6 +51,12 @@ const SENSITIVE_PREFIXES = ["sk_", "pk_"];
 
 const SCRUB_MARKER = "[scrubbed]";
 const MAX_DEPTH = 8;
+
+// Browser media errors and fetch breadcrumbs can embed decrypted URLs in text.
+// Keep failure codes/context, never the address or its signed query string.
+function scrubUrls(text: string): string {
+  return text.replace(/(?:https?:\/\/|blob:|data:)[^\s<>"']+/gi, SCRUB_MARKER);
+}
 
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();
@@ -78,6 +90,8 @@ function scrubInPlace(node: unknown, depth: number): void {
   for (const key of Object.keys(obj)) {
     if (isSensitiveKey(key)) {
       obj[key] = scrubValue(obj[key]);
+    } else if (typeof obj[key] === "string") {
+      obj[key] = scrubUrls(obj[key]);
     } else {
       scrubInPlace(obj[key], depth + 1);
     }
@@ -90,7 +104,10 @@ function scrubInPlace(node: unknown, depth: number): void {
  * Sentry SDK can transmit it.
  */
 export function scrubEvent(event: ErrorEvent): ErrorEvent {
+  if (event.message) event.message = scrubUrls(event.message);
+  if (event.exception) scrubInPlace(event.exception, 0);
   if (event.request) {
+    if (event.request.url) event.request.url = scrubUrls(event.request.url);
     if (event.request.data) scrubInPlace(event.request.data, 0);
     if (event.request.headers) scrubInPlace(event.request.headers, 0);
     if (event.request.cookies) scrubInPlace(event.request.cookies, 0);
@@ -106,6 +123,7 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
   if (event.user) scrubInPlace(event.user, 0);
   if (event.breadcrumbs) {
     for (const crumb of event.breadcrumbs) {
+      if (crumb.message) crumb.message = scrubUrls(crumb.message);
       if (crumb.data) scrubInPlace(crumb.data, 0);
     }
   }
@@ -119,6 +137,7 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
  * the breadcrumb, just without the plaintext).
  */
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  if (breadcrumb.message) breadcrumb.message = scrubUrls(breadcrumb.message);
   if (breadcrumb.data) scrubInPlace(breadcrumb.data, 0);
   return breadcrumb;
 }

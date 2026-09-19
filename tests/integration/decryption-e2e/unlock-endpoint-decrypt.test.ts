@@ -178,7 +178,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: productId,
         key: productKey,
         key_fingerprint: fingerprintHex,
         remaining_seconds: 3600,
@@ -236,7 +236,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: productId,
         key: productKey,
         key_fingerprint: fingerprintHex,
         remaining_seconds: 86400,
@@ -293,7 +293,7 @@ describe("Unlock endpoint → client decryption end-to-end", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: productId,
         key: newKey,
         key_fingerprint: newFp,
         remaining_seconds: 3600,

@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
+import { readImportStream, importResponseError } from "@/lib/import-stream";
 
 interface ImportError {
   entity: string;
@@ -131,38 +132,6 @@ export default function ChannelImportSection({
     handlers[eventType]?.();
   }
 
-  function parseSSELines(lines: string[]) {
-    let eventType = "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        eventType = line.slice(7);
-        continue;
-      }
-      if (!line.startsWith("data: ") || !eventType) continue;
-      try {
-        handleSSEEvent(eventType, JSON.parse(line.slice(6)));
-      } catch {
-        // skip malformed JSON
-      }
-      eventType = "";
-    }
-  }
-
-  async function readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      parseSSELines(lines);
-    }
-  }
-
   async function handleImport() {
     if (!importFile) return;
     setImporting(true);
@@ -182,13 +151,13 @@ export default function ChannelImportSection({
 
       if (!res.ok && !res.headers.get("content-type")?.includes("text/event-stream")) {
         const json = await res.json();
-        throw new Error(json.error || "Import failed");
+        throw new Error(importResponseError(json));
       }
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("Streaming not supported");
 
-      await readSSEStream(reader);
+      await readImportStream(reader, handleSSEEvent);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import failed");
     } finally {

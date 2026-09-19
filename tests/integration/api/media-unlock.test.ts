@@ -267,7 +267,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_archived",
         key: "decrypt_key_archived",
         remaining_seconds: 3600,
       }),
@@ -371,7 +371,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_unlock",
         key: "decrypt_key_123",
         key_fingerprint: "fp_from_verify",
         remaining_seconds: 3600,
@@ -394,7 +394,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_unlock",
         key: "decrypt_key_456",
         remaining_seconds: 1800,
       }),
@@ -414,7 +414,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_ch_unlock",
         key: "ch_key",
         remaining_seconds: 7200,
       }),
@@ -465,7 +465,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_cp_archived",
         key: "ch_key_after_archive",
         remaining_seconds: 86400,
       }),
@@ -574,7 +574,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_channel_bundle",
         key: "channel_key_abc",
         remaining_seconds: 86400,
       }),
@@ -600,7 +600,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_media_individual",
         key: "media_key_xyz",
         remaining_seconds: 3600,
       }),
@@ -657,7 +657,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_active_channel",
         key: "active_ch_key",
         remaining_seconds: 7200,
       }),
@@ -725,7 +725,7 @@ describe("Media Unlock API — GET /api/media/[id]/unlock", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod_cp_monthly",
         key: "monthly_key",
         remaining_seconds: 2592000,
       }),

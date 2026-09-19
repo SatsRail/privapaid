@@ -298,7 +298,7 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ valid: true, key: "decryption_key", remaining_seconds: 3600 }),
+      json: async () => ({ valid: true, product_id: "prod_1", key: "decryption_key", remaining_seconds: 3600 }),
     });
 
     const req = jsonRequest("PUT", { product_id: "prod_1" });
@@ -308,6 +308,16 @@ describe("Macaroons API — PUT /api/macaroons (verify)", () => {
     expect(res.status).toBe(200);
     expect(body.key).toBe("decryption_key");
     expect(body.remaining_seconds).toBe(3600);
+  });
+
+  it("never returns another product's key for a relabeled cookie", async () => {
+    mockCookieStore._set("satsrail_macaroons", JSON.stringify({ prod_1: "token_for_prod_2" }));
+    mockFetch.mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ valid: true, product_id: "prod_2", key: "other_product_key", remaining_seconds: 3600 }),
+    });
+    const res = await PUT(jsonRequest("PUT", { product_id: "prod_1" }));
+    expect(res.status).toBe(410);
+    expect(await res.text()).not.toContain("other_product_key");
   });
 
   it("returns 410 and PRESERVES the cookie when portal rejects (402)", async () => {

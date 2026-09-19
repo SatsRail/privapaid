@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { THEME_PRESETS } from "@/config/theme-presets";
 import { COLOR_FIELDS, DEFAULT_THEME, colorsFromSettings, contrastRatio, resolveTheme, themeFromColors, themeFromSettings, themeStyles } from "@/config/theme";
 
 describe("theme resolution", () => {
+  it.each(THEME_PRESETS)("keeps $id preset text readable on page and card surfaces", ({ colors }) => {
+    const p = resolveTheme(themeFromColors(colors));
+    for (const bg of [p.bg, p.bgSecondary]) {
+      for (const fg of [p.text, p.textSecondary, p.heading, p.link]) {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    expect(contrastRatio(p.primaryText, p.primary)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(p.navText, p.navBg)).toBeGreaterThanOrEqual(4.5);
+  });
   it("preserves an existing instance palette and inherits optional navigation colors", () => {
     const stored = { themeBg: "#faf8f2", themeText: "#292524", themePrimary: "#fbbf24" };
     const theme = resolveTheme(themeFromSettings(stored));

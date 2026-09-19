@@ -587,14 +587,10 @@ describe("POST /api/admin/channels/[id]/import", () => {
         }],
       });
       const res = await POST(req, ctx);
-      const body = await readSSEResult(res);
+      const body = await res.json();
 
-      const mediaR = body.results.media as { created: number; errors?: Array<{ error: string }> };
-      expect(mediaR.created).toBe(0);
-      expect(mediaR.errors?.length ?? 0).toBeGreaterThan(0);
-      const errorTexts = (mediaR.errors ?? []).map((e) => e.error).join(" ");
-      expect(errorTexts).toMatch(/photo/i);
-      expect(errorTexts).toMatch(/admin\/photos|encrypt/i);
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(body)).toMatch(/photo upload/i);
 
       const media = await prisma.media.findFirst({ where: { ref: 1, channelId: channel.id } });
       expect(media).toBeNull();

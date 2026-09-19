@@ -83,6 +83,8 @@ export function slugify(text: string): string {
 // One instance is created per import invocation.
 export class ApiThrottle {
   private lastCallTime = 0;
+  // Request-local only; product keys are never persisted.
+  readonly channelKeys = new Map<string, { key: string; key_fingerprint: string }>();
   constructor(private minGapMs = 1100) {}
 
   async throttle(): Promise<void> {
@@ -127,6 +129,15 @@ export async function buildArtifactsForImport(
   mData: ImportMedia,
   existingMedia: { id: string } | null
 ): Promise<ImportEnvelopeArtifacts> {
+  if (String(mData.media_type) === "photo") {
+    throw new Error("Photos cannot be imported from JSON; use the encrypted photo upload instead.");
+  }
+  if (existingMedia) {
+    const stored = await prisma.media.findUnique({ where: { id: existingMedia.id }, select: { mediaType: true } });
+    if (stored?.mediaType === "photo") {
+      throw new Error("JSON import cannot replace an existing photo. Upload a new photo instead.");
+    }
+  }
   const payload = Buffer.from(mData.source_url, "utf8");
   const mimeType = mData.media_type === "article" ? ARTICLE_MIME : URL_ENVELOPE_MIME;
 
@@ -332,7 +343,7 @@ export async function ensureChannelProductType(
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
-  const hasProducts = chData.media?.some((m: { product?: unknown }) => m.product);
+  const hasProducts = !!chData.product || chData.media?.some((m: { product?: unknown }) => m.product);
   if (existingDoc.satsrailProductTypeId || !hasProducts) return;
 
   try {
@@ -466,7 +477,7 @@ export async function handleExistingMediaProduct(
     return;
   }
 
-  if (!channelDoc.satsrailProductTypeId) return;
+  if (!channelDoc.satsrailProductTypeId) throw new Error("Channel has no SatsRail product type; product was not created.");
 
   try {
     await createEncryptedMediaProduct(sk, {
@@ -549,6 +560,7 @@ export async function updateExistingMedia(
   api: ApiThrottle,
   onStatus?: StatusFn
 ): Promise<void> {
+  if (mData.product && !sk) throw new Error("Merchant API key is required to update the requested product.");
   const { create, dekBase64url } = await buildArtifactsForImport(mData, existingMedia);
 
   await onStatus?.("Updating media record...");
@@ -598,6 +610,7 @@ export async function updateExistingMedia(
       onStatus
     );
   }
+  await linkImportedChannelProducts(sk, channelDoc.id, existingMedia.id, dekBase64url, api);
 }
 
 export async function createNewMedia(
@@ -613,12 +626,15 @@ export async function createNewMedia(
   // and writes ciphertext to the EncryptedEnvelope table). A URL-based
   // import has no way to produce the encrypted bytes or the DEK envelope, so
   // the imported row would be unviewable.
-  if (mData.media_type === "photo") {
+  if (String(mData.media_type) === "photo") {
     throw new Error(
       "Photo media cannot be imported from JSON — upload via /api/admin/photos to encrypt the bytes."
     );
   }
 
+  if (mData.product && (!sk || !channelDoc.satsrailProductTypeId)) {
+    throw new Error("Merchant key and channel product type are required to create the requested product.");
+  }
   await onStatus?.("Saving media record...");
   const maxPos = await prisma.media.findFirst({
     where: { channelId: channelDoc.id },
@@ -631,15 +647,28 @@ export async function createNewMedia(
   // If the import payload specifies a `ref`, honor it (preserves the source
   // identity on replay/restore). Otherwise Postgres's autoincrement assigns
   // one. Either way we read `media.ref` back for the SatsRail external_ref.
-  const media = await prisma.media.create({
-    data: {
-      ...(mData.ref ? { ref: mData.ref } : {}),
-      channelId: channelDoc.id,
-      name: mData.name,
-      description: mData.description || "",
-      mediaType: mData.media_type || "video",
-      position: mData.position ?? (maxPos?.position ?? 0) + 1,
-    },
+  const media = await prisma.$transaction(async (tx) => {
+    // Explicit restore refs must not leave the sequence behind. The table lock
+    // also coordinates with ordinary admin inserts, which do not take advisory locks.
+    await tx.$executeRaw`LOCK TABLE "Media" IN SHARE ROW EXCLUSIVE MODE`;
+    await tx.$queryRaw`
+      SELECT setval(pg_get_serial_sequence('"Media"', 'ref'),
+        GREATEST((SELECT COALESCE(MAX(ref), 0) FROM "Media"),
+                 COALESCE((SELECT last_value FROM pg_sequences
+                           WHERE schemaname = current_schema() AND sequencename = 'Media_ref_seq'), 0),
+                 ${mData.ref ?? 0}), true)
+      WHERE GREATEST((SELECT COALESCE(MAX(ref), 0) FROM "Media"), ${mData.ref ?? 0}) > 0
+    `;
+    return tx.media.create({
+      data: {
+        ...(mData.ref ? { ref: mData.ref } : {}),
+        channelId: channelDoc.id,
+        name: mData.name,
+        description: mData.description || "",
+        mediaType: mData.media_type || "video",
+        position: mData.position ?? (maxPos?.position ?? 0) + 1,
+      },
+    });
   });
   // A fresh import always mints a new envelope (existingMedia is null).
   if (create) {
@@ -672,6 +701,35 @@ export async function createNewMedia(
     where: { id: channelDoc.id },
     data: { mediaCount: { increment: 1 } },
   });
+  await linkImportedChannelProducts(sk, channelDoc.id, media.id, dekBase64url, api);
+}
+
+/** Reconcile missing pass coverage on create AND retry/update. */
+async function linkImportedChannelProducts(
+  sk: string | null, channelId: string, mediaId: string, dek: string, api: ApiThrottle
+): Promise<void> {
+  const products = await prisma.product.findMany({
+    where: { channelId, mediaProducts: { none: { mediaId } } },
+    select: { id: true, satsrailProductId: true },
+  });
+  if (products.length && !sk) throw new Error("Merchant API key is required to link existing channel passes.");
+  for (const product of products) {
+    let keys = api.channelKeys.get(product.satsrailProductId);
+    if (!keys) {
+      await api.throttle();
+      const remote = await withRetry(() => satsrail.getProduct(sk!, product.satsrailProductId));
+      if (remote.old_key) throw new Error("Channel pass key rotation is pending. Finish re-encryption, then retry the import.");
+      await api.throttle();
+      keys = await withRetry(() => satsrail.getProductKey(sk!, product.satsrailProductId));
+      api.channelKeys.set(product.satsrailProductId, keys);
+    }
+    const encryptedDek = encryptSourceUrl(dek, keys.key, product.satsrailProductId);
+    await prisma.mediaProduct.upsert({
+      where: { productId_mediaId: { productId: product.id, mediaId } },
+      create: { productId: product.id, mediaId, encryptedDek, keyFingerprint: keys.key_fingerprint },
+      update: { encryptedDek, keyFingerprint: keys.key_fingerprint },
+    });
+  }
 }
 
 // ─── Channel-scoped product (bundle) ───────────────────────────────
@@ -787,4 +845,3 @@ export async function createEncryptedChannelProduct(
     },
   });
 }
-

@@ -110,8 +110,8 @@ export async function getProductsForMedia(
  * Discriminated outcome of a SatsRail token verification.
  *
  * Important: only `"invalid"` indicates a definitively rejected macaroon
- * (portal returned 402 Payment Required, the only status the verify
- * endpoint uses to signal "this access token is dead"). Every other
+ * (portal returned 402 Payment Required, or verified a different product).
+ * Every other
  * non-success — 401 (merchant auth), 5xx, network errors, parse errors —
  * is reported as `"transient"` so callers do NOT delete the user's
  * macaroon over a hiccup that has nothing to do with their payment.
@@ -123,24 +123,26 @@ export type VerifyOutcome =
       keyFingerprint?: string;
       remainingSeconds: number;
     }
-  | { status: "invalid"; reason: "rejected_by_portal" }
+  | { status: "invalid"; reason: "rejected_by_portal" | "product_mismatch" }
   | { status: "transient"; reason: "non_2xx" | "network" | "bad_body"; httpStatus?: number };
 
 /**
  * Verify a single access token against SatsRail's merchant API.
  *
  * The portal's `POST /api/v1/m/access/verify` returns:
- *   - 200 with `{ valid: true, remaining_seconds, key?, key_fingerprint? }`
- *     when the macaroon is signature-valid and not expired.
+ *   - 200 with `{ valid: true, product_id, remaining_seconds, key, key_fingerprint? }`
+ *     when the macaroon is signature-valid and not expired. The verified
+ *     product must match the requested product, not just the cookie's label.
  *   - 402 Payment Required when the macaroon is invalid OR expired.
- *     This is the ONLY signal we treat as "definitively rejected".
+ *     A verified product mismatch is also rejected.
  *   - 401 if the MERCHANT key is bad (not the user's macaroon).
  *   - 5xx / network errors on portal trouble.
  *
  * Used by both verifyMacaroonAccess and the macaroons PUT proxy.
  */
 export async function verifySatsrailToken(
-  accessToken: string
+  accessToken: string,
+  expectedProductId: string
 ): Promise<VerifyOutcome> {
   const config = await getInstanceConfig();
   const satsrailApiUrl = config.satsrail.apiUrl;
@@ -155,6 +157,7 @@ export async function verifySatsrailToken(
       method: "POST",
       headers,
       body: JSON.stringify({ access_token: accessToken }),
+      signal: AbortSignal.timeout(15_000),
     });
   } catch {
     return { status: "transient", reason: "network" };
@@ -168,17 +171,23 @@ export async function verifySatsrailToken(
     return { status: "transient", reason: "non_2xx", httpStatus: res.status };
   }
 
-  let data: { valid?: boolean; remaining_seconds?: number; key?: string; key_fingerprint?: string };
+  let data: { valid?: boolean; product_id?: string; remaining_seconds?: number; key?: string; key_fingerprint?: string };
   try {
     data = await res.json();
   } catch {
     return { status: "transient", reason: "bad_body", httpStatus: res.status };
   }
 
-  if (data.valid !== true || typeof data.remaining_seconds !== "number" || data.remaining_seconds <= 0) {
+  if (!data || data.valid !== true || typeof data.remaining_seconds !== "number" || !Number.isFinite(data.remaining_seconds) || data.remaining_seconds <= 0 || typeof data.product_id !== "string" || !data.product_id || typeof data.key !== "string" || !data.key) {
     // Unexpected — portal said 200 but body doesn't look right or is exhausted.
     // Be conservative: treat as transient so we don't nuke a possibly-valid cookie.
     return { status: "transient", reason: "bad_body", httpStatus: res.status };
+  }
+
+  // The cookie map is controlled by the browser. Only the signed token's
+  // product identity, confirmed by the portal, can authorize this product.
+  if (data.product_id !== expectedProductId) {
+    return { status: "invalid", reason: "product_mismatch" };
   }
 
   return {
@@ -252,7 +261,7 @@ export async function verifyMacaroonAccess(
   const results = await Promise.all(
     present.map(async ({ pid, m }) => ({
       pid,
-      result: await verifySatsrailToken(m),
+      result: await verifySatsrailToken(m, pid),
     }))
   );
 

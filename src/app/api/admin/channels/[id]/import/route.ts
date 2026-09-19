@@ -50,6 +50,15 @@ export async function POST(
   };
 
   const totalSteps = importMedia.length;
+  let sk: string | null;
+  try {
+    sk = await getMerchantKey();
+  } catch {
+    return NextResponse.json({ error: "Merchant credentials are temporarily unavailable. Try again before importing." }, { status: 503 });
+  }
+  if (!sk && (importMedia.some((m) => m.product) || await prisma.product.count({ where: { channelId: channel.id } }) > 0)) {
+    return NextResponse.json({ error: "Merchant API key is required to import paid content. Configure it before importing." }, { status: 422 });
+  }
   let completedSteps = 0;
 
   const encoder = new TextEncoder();
@@ -78,7 +87,6 @@ export async function POST(
       }
 
       try {
-        const sk = await getMerchantKey();
         const api = createApiThrottle();
 
         // Ensure channel has a product type if any media items have products
@@ -98,7 +106,6 @@ export async function POST(
             });
           } catch (err) {
             await send("error", { error: `Product type creation failed: ${errorMsg(err)}` });
-            controller.close();
             return;
           }
         }

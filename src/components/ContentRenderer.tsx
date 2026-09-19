@@ -225,7 +225,7 @@ function ContentRendererDOM({
         iframe.allow = "autoplay; fullscreen; encrypted-media";
         iframe.allowFullscreen = true;
         iframe.onerror = () => {
-          Sentry.captureException(new Error(`Iframe failed to load: ${url}`), {
+          Sentry.captureException(new Error("Embedded media failed to load"), {
             tags: { context: "ContentRenderer.iframe" },
           });
         };
@@ -237,9 +237,9 @@ function ContentRendererDOM({
         video.controls = true;
         video.className = "w-full rounded-lg";
         video.onerror = () => {
-          Sentry.captureException(new Error(`Video element failed to load: ${url}`), {
+          Sentry.captureException(new Error("Video element failed to load"), {
             tags: { context: "ContentRenderer.video" },
-            extra: { mediaType, url },
+            extra: { mediaType },
           });
           container.innerHTML = "";
           const msg = document.createElement("div");
@@ -254,9 +254,9 @@ function ContentRendererDOM({
         audio.controls = true;
         audio.className = "w-full";
         audio.onerror = () => {
-          Sentry.captureException(new Error(`Audio element failed to load: ${url}`), {
+          Sentry.captureException(new Error("Audio element failed to load"), {
             tags: { context: "ContentRenderer.audio" },
-            extra: { mediaType, url },
+            extra: { mediaType },
           });
         };
         container.appendChild(audio);
@@ -268,9 +268,9 @@ function ContentRendererDOM({
         img.className = "max-w-full rounded-lg cursor-pointer";
         img.addEventListener("click", () => openImageLightbox(url));
         img.onerror = () => {
-          Sentry.captureException(new Error(`Image URL failed to load: ${url}`), {
+          Sentry.captureException(new Error("Image failed to load"), {
             tags: { context: "ContentRenderer.imageUrl" },
-            extra: { mediaType, url },
+            extra: { mediaType },
           });
           container.innerHTML = "";
           const msg = document.createElement("div");

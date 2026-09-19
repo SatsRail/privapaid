@@ -286,18 +286,19 @@ export const schemas = {
     name: z.string().min(1).max(200),
     price_cents: z.number().int().positive(),
     currency: z.string().max(10).optional(),
-    access_duration_seconds: z.number().int().nonnegative().optional(),
+    access_duration_seconds: z.number().int().nonnegative().nullish().transform((value) => value === null ? 0 : value),
     external_ref: z.string().min(1).max(100).optional(),
   }),
 
   // Import: media item
   importMedia: z.object({
-    ref: z.number().int().optional(),
+    ref: z.number().int().positive().max(2147483647).optional(),
     name: z.string().min(1).max(200),
     description: z.string().max(5000).optional().default(""),
     source_url: z.string().min(1),
     media_type: z
       .enum(["video", "audio", "article", "photo", "podcast"])
+      .refine((value) => value !== "photo", "Photos cannot be imported from JSON; use the encrypted photo upload instead.")
       .optional()
       .default("video"),
     thumbnail_url: z.string().optional().default(""),
@@ -308,7 +309,7 @@ export const schemas = {
         name: z.string().min(1).max(200),
         price_cents: z.number().int().positive(),
         currency: z.string().max(10).optional(),
-        access_duration_seconds: z.number().int().nonnegative().optional(),
+        access_duration_seconds: z.number().int().nonnegative().nullish().transform((value) => value === null ? 0 : value),
       })
       .optional(),
   }),
@@ -319,12 +320,13 @@ export const schemas = {
     media: z
       .array(
         z.object({
-          ref: z.number().int().optional(),
+          ref: z.number().int().positive().max(2147483647).optional(),
           name: z.string().min(1).max(200),
           description: z.string().max(5000).optional().default(""),
           source_url: z.string().min(1),
           media_type: z
             .enum(["video", "audio", "article", "photo", "podcast"])
+            .refine((value) => value !== "photo", "Photos cannot be imported from JSON; use the encrypted photo upload instead.")
             .optional()
             .default("video"),
           thumbnail_url: z.string().optional().default(""),
@@ -335,7 +337,7 @@ export const schemas = {
               name: z.string().min(1).max(200),
               price_cents: z.number().int().positive(),
               currency: z.string().max(10).optional(),
-              access_duration_seconds: z.number().int().nonnegative().optional(),
+              access_duration_seconds: z.number().int().nonnegative().nullish().transform((value) => value === null ? 0 : value),
               external_ref: z.string().min(1).max(100).optional(),
             })
             .optional(),
@@ -374,19 +376,20 @@ export const schemas = {
               name: z.string().min(1).max(200),
               price_cents: z.number().int().positive(),
               currency: z.string().max(10).optional(),
-              access_duration_seconds: z.number().int().nonnegative().optional(),
+              access_duration_seconds: z.number().int().nonnegative().nullish().transform((value) => value === null ? 0 : value),
               external_ref: z.string().min(1).max(100).optional(),
             })
             .optional(),
           media: z
             .array(
               z.object({
-                ref: z.number().int().optional(),
+                ref: z.number().int().positive().max(2147483647).optional(),
                 name: z.string().min(1).max(200),
                 description: z.string().max(5000).optional().default(""),
                 source_url: z.string().min(1),
                 media_type: z
                   .enum(["video", "audio", "article", "photo", "podcast"])
+                  .refine((value) => value !== "photo", "Photos cannot be imported from JSON; use the encrypted photo upload instead.")
                   .optional()
                   .default("video"),
                 thumbnail_url: z.string().optional().default(""),
@@ -397,7 +400,7 @@ export const schemas = {
                     name: z.string().min(1).max(200),
                     price_cents: z.number().int().positive(),
                     currency: z.string().max(10).optional(),
-                    access_duration_seconds: z.number().int().nonnegative().optional(),
+                    access_duration_seconds: z.number().int().nonnegative().nullish().transform((value) => value === null ? 0 : value),
                     external_ref: z.string().min(1).max(100).optional(),
                   })
                   .optional(),

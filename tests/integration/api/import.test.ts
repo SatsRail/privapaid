@@ -1123,7 +1123,7 @@ describe("POST /api/admin/import", () => {
     expect(cat!.active).toBe(false);
   });
 
-  it("skips channel product when channel has no satsrailProductTypeId", async () => {
+  it("rejects channel-only paid imports without merchant credentials", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -1147,9 +1147,8 @@ describe("POST /api/admin/import", () => {
         ],
       })
     );
-    const body = await readSSEResult(res);
-    // Channel created, but Phase 4 (channel_products) entirely skipped (no sk)
-    expect((body.results.channels as { created: number }).created).toBe(1);
+    expect(res.status).toBe(422);
+    expect(await prisma.channel.count()).toBe(0);
   });
 
   it("creates a channel using all defaults (bio=empty, nsfw=false, etc.)", async () => {
@@ -1175,7 +1174,7 @@ describe("POST /api/admin/import", () => {
     expect(ch!.active).toBe(true);
   });
 
-  it("uses default channel update path when sk is null (skips ensureChannelProductType)", async () => {
+  it("rejects paid updates without credentials and preserves existing content", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -1195,13 +1194,13 @@ describe("POST /api/admin/import", () => {
         ],
       })
     );
-    const body = await readSSEResult(res);
-    expect((body.results.channels as { updated: number }).updated).toBe(1);
-    // ensureChannelProductType not called → no createProductType
+    expect(res.status).toBe(422);
+    expect((await prisma.channel.findFirstOrThrow()).name).toBe("Existing No SK");
+    // No remote writes without credentials
     expect(mockCreateProductType).not.toHaveBeenCalled();
   });
 
-  it("catches the outer try/catch and emits an 'error' SSE event", async () => {
+  it("returns a retryable preflight error when merchant credentials cannot be loaded", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@test.com", type: "admin", role: "owner" },
     });
@@ -1216,9 +1215,8 @@ describe("POST /api/admin/import", () => {
         channels: [{ slug: "err-ch", name: "Err Ch" }],
       })
     );
-    // The stream emits an "error" event — parse to confirm
-    const text = await res.text();
-    expect(text).toContain("event: error");
-    expect(text).toContain("KMS down");
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toContain("temporarily unavailable");
+    expect(await prisma.channel.count()).toBe(0);
   });
 });

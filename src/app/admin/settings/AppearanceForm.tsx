@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -9,6 +9,7 @@ import Modal from "@/components/ui/Modal";
 import { useLocale } from "@/i18n/useLocale";
 import { COLOR_FIELDS, colorsFromSettings, contrastRatio, isHexColor, resolveTheme, themeFromColors, type ThemeColorValues } from "@/config/theme";
 import ThemePreview from "./ThemePreview";
+import { THEME_PRESETS } from "@/config/theme-presets";
 
 interface AppearanceValues extends ThemeColorValues {
   instance_name: string;
@@ -21,17 +22,6 @@ interface AppearanceValues extends ThemeColorValues {
   sentry_dsn: string;
 }
 
-const DEFAULTS: AppearanceValues = {
-  instance_name: "",
-  logo_url: "",
-  logo_image_id: "",
-  about_text: "",
-  ...colorsFromSettings({}),
-  theme_font: "Geist",
-  google_analytics_id: "",
-  google_site_verification: "",
-  sentry_dsn: "",
-};
 
 const FONTS = [
   "Geist",
@@ -54,6 +44,14 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
   const { t } = useLocale();
   const router = useRouter();
   const [form, setForm] = useState<AppearanceValues>(initialValues);
+  const [savedForm, setSavedForm] = useState<AppearanceValues>(initialValues);
+  const hasChanges = Object.keys(form).some(key => form[key as keyof AppearanceValues] !== savedForm[key as keyof AppearanceValues]);
+  useEffect(() => {
+    if (!hasChanges) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasChanges]);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -83,16 +81,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
   }
 
   function resetToDefaults() {
-    setForm({
-      ...DEFAULTS,
-      instance_name: form.instance_name, // Keep the name
-      logo_url: form.logo_url, // Keep the logo
-      logo_image_id: form.logo_image_id, // Keep the logo
-      about_text: form.about_text, // Keep the about text
-      google_analytics_id: form.google_analytics_id, // Keep GA config
-      google_site_verification: form.google_site_verification,
-      sentry_dsn: form.sentry_dsn, // Keep error reporting config
-    });
+    setForm(prev => ({ ...prev, ...colorsFromSettings({}) }));
     setMessage(null);
   }
 
@@ -124,6 +113,7 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
       }
 
       setMessage({ type: "success", text: t("admin.settings.saved") });
+      setSavedForm(form);
       router.refresh();
     } catch {
       setMessage({ type: "error", text: t("admin.settings.error") });
@@ -185,6 +175,19 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
 
   return (
     <div className="grid items-start gap-8 pb-20 lg:grid-cols-[minmax(0,1fr)_320px] lg:pb-0 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="sticky top-16 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg)] p-3 shadow-lg lg:col-span-2">
+        <div className="min-w-0 text-sm" role={message?.type === "error" ? "alert" : "status"}>
+          <p className="font-semibold">{message?.text || t(hasChanges ? "admin.settings.unsaved" : "admin.settings.up_to_date")}</p>
+          <p className="mt-1 text-xs text-[var(--theme-text-secondary)]">{t("admin.settings.draft_hint")}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" className="min-h-11" variant="secondary" disabled={!hasChanges || saving} onClick={() => { setForm(savedForm); setMessage(null); }}>
+            {t("admin.settings.discard")}
+          </Button>
+          <Button type="button" size="sm" className="min-h-11" onClick={handleSave} disabled={!hasChanges} loading={saving}>{t("admin.settings.save")}</Button>
+          <Button type="button" size="sm" variant="secondary" aria-label={t("admin.settings.preview")} onClick={() => setShowPreview(true)} className="min-h-11 lg:hidden">{t("admin.settings.preview_short")}</Button>
+        </div>
+      </div>
       {/* Form */}
       <div className="space-y-8">
         {/* Identity */}
@@ -221,10 +224,11 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
               {syncing ? "Syncing..." : "Sync from SatsRail"}
             </button>
             <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--theme-text)]">
+              <label htmlFor="about-text" className="mb-1 block text-sm font-medium text-[var(--theme-text)]">
                 {t("admin.settings.about")}
               </label>
               <textarea
+                id="about-text"
                 value={form.about_text}
                 onChange={(e) => update("about_text", e.target.value)}
                 placeholder={t("admin.settings.about_placeholder")}
@@ -243,6 +247,25 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-[var(--theme-text)]">{t("admin.settings.colors")}</h2>
           <p className="text-sm text-[var(--theme-text-secondary)]">{t("admin.settings.colors_hint")}</p>
+          <div className="rounded-xl border border-[var(--theme-border)] p-4">
+            <h3 className="text-sm font-semibold">{t("admin.settings.presets")}</h3>
+            <p className="mt-1 text-xs text-[var(--theme-text-secondary)]">{t("admin.settings.presets_hint")}</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3" role="group" aria-label={t("admin.settings.presets")}>
+              {THEME_PRESETS.map(preset => {
+                const selected = COLOR_FIELDS.every(({ key }) => form[key].toLowerCase() === preset.colors[key].toLowerCase());
+                return <button key={preset.id} type="button" aria-pressed={selected}
+                  onClick={() => { setForm(prev => ({ ...prev, ...preset.colors })); setMessage(null); }}
+                  className={`min-h-28 rounded-lg border p-3 text-left transition-colors ${selected ? "border-[var(--theme-primary)] bg-[var(--theme-hover)]" : "border-[var(--theme-border)] hover:bg-[var(--theme-hover)]"}`}>
+                  <span className="mb-3 flex overflow-hidden rounded-md border border-[var(--theme-border)]" aria-hidden="true">
+                    {[preset.colors.theme_bg, preset.colors.theme_bg_secondary, preset.colors.theme_primary, preset.colors.theme_text].map((color, i) => <span key={i} className="h-7 flex-1" style={{ backgroundColor: color }} />)}
+                  </span>
+                  <span className="block text-sm font-semibold">{t(`admin.settings.preset_${preset.id}`)}</span>
+                  <span className="mt-1 block text-xs text-[var(--theme-text-secondary)]">{t(`admin.settings.preset_${preset.id}_hint`)}</span>
+                </button>;
+              })}
+            </div>
+          </div>
+          <Button type="button" variant="secondary" onClick={resetToDefaults}>{t("admin.settings.reset_colors")}</Button>
           {(["base", "navigation", "media", "status"] as const).map((group) => (
             <fieldset key={group} className="min-w-0 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-4 pb-2">
               <legend className="px-1 text-sm font-semibold">{t(`admin.settings.group_${group}`)}</legend>
@@ -288,10 +311,11 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
           <h2 className="mb-4 text-lg font-semibold text-[var(--theme-text)]">{t("admin.settings.typography")}</h2>
           <div className="rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] p-5">
             <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--theme-text)]">
+              <label htmlFor="theme-font" className="mb-1 block text-sm font-medium text-[var(--theme-text)]">
                 {t("admin.settings.font_family")}
               </label>
               <select
+                id="theme-font"
                 value={form.theme_font}
                 onChange={(e) => update("theme_font", e.target.value)}
                 className="w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-3 py-2 text-sm text-[var(--theme-text)]"
@@ -353,37 +377,6 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
           </div>
         </section>
 
-        {/* Actions */}
-        <div className="flex items-center gap-3">
-          <Button type="button" onClick={handleSave} loading={saving}>
-            {t("admin.settings.save")}
-          </Button>
-          <Button type="button" variant="secondary" onClick={resetToDefaults}>
-            {t("admin.settings.reset_colors")}
-          </Button>
-        </div>
-
-        {message && (
-          <div
-            className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium ${
-              message.type === "success"
-                ? "border-[var(--theme-success)]/20 bg-[var(--theme-success)]/10 text-[var(--theme-success)]"
-                : "border-[var(--theme-error)]/20 bg-[var(--theme-error)]/10 text-[var(--theme-error)]"
-            }`}
-          >
-            {message.type === "success" ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            )}
-            {message.text}
-          </div>
-        )}
         {/* Danger Zone */}
         <section>
           <h2 className="mb-4 text-lg font-semibold text-[var(--theme-error)]">Danger Zone</h2>
@@ -469,9 +462,6 @@ export default function AppearanceForm({ initialValues }: AppearanceFormProps) {
       </Modal>
 
       <ThemePreview theme={theme} name={form.instance_name} className="hidden lg:block" />
-      <button type="button" onClick={() => setShowPreview(true)} className="fixed bottom-4 right-4 z-40 min-h-11 rounded-full bg-[var(--theme-primary)] px-5 text-sm font-semibold text-[var(--theme-primary-text)] shadow-lg lg:hidden">
-        {t("admin.settings.preview")}
-      </button>
       <Modal open={showPreview} onClose={() => setShowPreview(false)} title={t("admin.settings.preview")}>
         <ThemePreview theme={theme} name={form.instance_name} showHeading={false} />
       </Modal>

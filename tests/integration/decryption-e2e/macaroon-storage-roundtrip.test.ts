@@ -161,7 +161,7 @@ describe("/api/macaroons storage round-trip", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: "prod-1",
         key: "portal-returned-key",
         key_fingerprint: "fp-xyz",
         remaining_seconds: 3600,
@@ -254,7 +254,7 @@ describe("/api/macaroons storage round-trip", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        valid: true,
+        valid: true, product_id: PRODUCT_ID,
         key: KEY,
         key_fingerprint: FP,
         remaining_seconds: 86400,

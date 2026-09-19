@@ -225,7 +225,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "No macaroon found" }, { status: 404 });
   }
 
-  const result = await verifySatsrailToken(macaroon);
+  const result = await verifySatsrailToken(macaroon, product_id);
 
   if (result.status === "valid") {
     return NextResponse.json({
@@ -248,7 +248,6 @@ export async function PUT(req: NextRequest) {
       extra: {
         product_id,
         macaroonLength: macaroon.length,
-        macaroonPrefix: macaroon.slice(0, 24),
         otherProductsInCookie: Object.keys(macaroons).filter((k) => k !== product_id),
       },
     });

@@ -50,6 +50,7 @@ describe("SatsRailClient", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ product: { name: "Test", price_cents: 1000 } }),
+          signal: expect.any(AbortSignal),
         }
       );
     });
@@ -330,7 +331,7 @@ describe("SatsRailClient", () => {
       expect(body.product.access_duration_seconds).toBe(3600);
     });
 
-    it("updateProduct strips access_duration_seconds when it is 0", async () => {
+    it("updateProduct clears a previous duration when set to lifetime (0)", async () => {
       mockFetch.mockResolvedValueOnce(jsonOk({ id: "prod_1" }));
 
       await satsrail.updateProduct(secretKey, "prod_1", {
@@ -341,7 +342,7 @@ describe("SatsRailClient", () => {
       const body = JSON.parse(
         (mockFetch.mock.calls[0][1] as { body: string }).body
       );
-      expect(body.product).not.toHaveProperty("access_duration_seconds");
+      expect(body.product.access_duration_seconds).toBeNull();
       expect(body.product.name).toBe("Now lifetime");
     });
 
@@ -618,6 +619,7 @@ describe("SatsRailClient", () => {
       expect(mockFetch).toHaveBeenCalledWith(
         "https://app.satsrail.com/api/v1/m/sessions",
         {
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -692,7 +694,8 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getCheckoutQr("tok_abc");
       expect(result).toBe("<svg>qr</svg>");
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://app.satsrail.com/checkout/tok_abc/qr"
+        "https://app.satsrail.com/checkout/tok_abc/qr",
+        { signal: expect.any(AbortSignal) }
       );
     });
 
@@ -722,7 +725,8 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getCheckoutStatus("tok_abc");
       expect(result).toEqual(status);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://app.satsrail.com/checkout/tok_abc/status"
+        "https://app.satsrail.com/checkout/tok_abc/status",
+        { signal: expect.any(AbortSignal) }
       );
     });
 
@@ -752,7 +756,8 @@ describe("SatsRailClient", () => {
       const result = await satsrail.getExchanges();
       expect(result).toEqual(exchanges);
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://app.satsrail.com/api/v1/pub/exchanges"
+        "https://app.satsrail.com/api/v1/pub/exchanges",
+        { signal: expect.any(AbortSignal) }
       );
     });
 

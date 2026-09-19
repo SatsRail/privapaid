@@ -224,7 +224,12 @@ async function importChannelProductsPhase(
 
     const chSlug = chData.slug || slugify(chData.name);
     const channelDoc = channelSlugToDoc.get(chSlug);
-    if (!channelDoc || !channelDoc.satsrailProductTypeId) continue;
+    if (!channelDoc || !channelDoc.satsrailProductTypeId) {
+      const error = "Channel product was not created: channel or SatsRail product type is missing.";
+      results.errors.push({ entity: "channel_product", name: chData.name, error });
+      await sendProgress("channel_products", chData.name, "error", error);
+      continue;
+    }
 
     await sendProgress("channel_products", chData.name, "processing");
     const onStatus: StatusFn = (detail) => sendStatus(chData.name, detail);
@@ -286,6 +291,19 @@ export async function POST(req: NextRequest) {
   }
 
   const channelsWithProduct = importChannels.filter((ch: { product?: unknown }) => ch.product).length;
+  let sk: string | null;
+  try {
+    sk = await getMerchantKey();
+  } catch {
+    return NextResponse.json({ error: "Merchant credentials are temporarily unavailable. Try again before importing." }, { status: 503 });
+  }
+  const needsProducts = channelsWithProduct > 0 || importChannels.some((ch) => ch.media.some((m) => m.product));
+  const hasExistingPasses = !sk && totalMedia > 0 && await prisma.product.count({
+    where: { channel: { slug: { in: importChannels.map((ch) => ch.slug) } } },
+  }) > 0;
+  if (!sk && (needsProducts || hasExistingPasses)) {
+    return NextResponse.json({ error: "Merchant API key is required to import paid content. Configure it before importing." }, { status: 422 });
+  }
   const totalSteps = importCategories.length + importChannels.length + totalMedia + channelsWithProduct;
   let completedSteps = 0;
 
@@ -317,7 +335,6 @@ export async function POST(req: NextRequest) {
 
         // Phase 2: Channels
         await send("phase", { phase: "channels", total: importChannels.length });
-        const sk = await getMerchantKey();
         const api = createApiThrottle();
         const { results: channelResults, slugToDoc: channelSlugToDoc } =
           await importChannelsPhase(importChannels, categorySlugToId, sk, api, sendProgress, sendStatus);

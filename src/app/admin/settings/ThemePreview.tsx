@@ -10,7 +10,7 @@ export default function ThemePreview({ theme, name, className = "", showHeading 
   const { t } = useLocale();
   const [view, setView] = useState("home");
   return (
-    <div className={`self-start lg:sticky lg:top-24 ${className}`}>
+    <div className={`self-start lg:sticky lg:top-44 ${className}`}>
       {showHeading && <h3 className="mb-3 text-sm font-medium text-[var(--theme-text-secondary)]">{t("admin.settings.preview")}</h3>}
       <div className="mb-3 flex gap-2" role="group" aria-label={t("admin.settings.preview")}>
         {["home", "video"].map((tab) => (

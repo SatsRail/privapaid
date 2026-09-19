@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import Button from "@/components/ui/Button";
+import { readImportStream, importResponseError } from "@/lib/import-stream";
 
 interface ImportError {
   entity: string;
@@ -157,38 +158,6 @@ export default function ImportExportClient() {
     handlers[eventType]?.();
   }
 
-  function parseSSELines(lines: string[]) {
-    let eventType = "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        eventType = line.slice(7);
-        continue;
-      }
-      if (!line.startsWith("data: ") || !eventType) continue;
-      try {
-        handleSSEEvent(eventType, JSON.parse(line.slice(6)));
-      } catch {
-        // skip malformed JSON
-      }
-      eventType = "";
-    }
-  }
-
-  async function readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      parseSSELines(lines);
-    }
-  }
-
   async function handleImport() {
     if (!importFile) return;
     setImporting(true);
@@ -209,13 +178,13 @@ export default function ImportExportClient() {
 
       if (!res.ok && !res.headers.get("content-type")?.includes("text/event-stream")) {
         const json = await res.json();
-        throw new Error(json.error || "Import failed");
+        throw new Error(importResponseError(json));
       }
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("Streaming not supported");
 
-      await readSSEStream(reader);
+      await readImportStream(reader, handleSSEEvent);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import failed");
     } finally {
@@ -450,6 +419,11 @@ export default function ImportExportClient() {
       {/* --- Export --- */}
       <section>
         <h2 className="mb-3 text-lg font-semibold">Export</h2>
+        <p className="mb-3 text-sm text-amber-300">
+          JSON is a content catalog, not a full backup. Photo exports contain
+          metadata only, not encrypted image files. Use a database backup and
+          preserve your encryption keys for a complete restore.
+        </p>
         <p className="mb-4 text-sm text-[var(--theme-text-secondary)]">
           Download all categories, channels, and media as a JSON file. Each
           media item can carry a <code>thumbnail_url</code> plus a{" "}
@@ -464,6 +438,10 @@ export default function ImportExportClient() {
       {/* --- Import --- */}
       <section>
         <h2 className="mb-3 text-lg font-semibold">Import</h2>
+        <p className="mb-3 text-sm text-zinc-400">
+          JSON supports video, audio, podcast, and article content. Remove photo
+          entries before importing and use the encrypted photo uploader for images.
+        </p>
         <p className="mb-4 text-sm text-[var(--theme-text-secondary)]">
           Upload a JSON file in the export format. Existing content is matched
           by slug and updated; new entries are created. Products are created or

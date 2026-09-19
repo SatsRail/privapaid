@@ -662,8 +662,12 @@ describe("schemas", () => {
       )
     );
 
-    it("accepts the canonical privapaid-export sample", () => {
-      const result = schemas.importPayload.safeParse(fixture);
+    it("accepts URL/article exports; photo bytes require the photo uploader", () => {
+      const payload = structuredClone(fixture);
+      payload.channels.forEach((ch: { media: { media_type: string }[] }) => {
+        ch.media = ch.media.filter(m => m.media_type !== "photo");
+      });
+      const result = schemas.importPayload.safeParse(payload);
       if (!result.success) {
         // Surface the first issue path to make regressions obvious
          

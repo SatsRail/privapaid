@@ -228,10 +228,10 @@
     },
     {
       "ref": 16,
-      "name": "Photo Set — Gallery",
-      "description": "A set of images displayed as a gallery. Tests photo_set media type with full preview_image_urls carousel (6 images max).",
-      "source_url": "https://picsum.photos/seed/gallery-main/1920/1080",
-      "media_type": "photo_set",
+      "name": "Photo Essay — Gallery",
+      "description": "An encrypted Markdown photo essay with externally hosted example images. Encrypted photo files must use the photo uploader, not JSON.",
+      "source_url": "# Photo Set — Gallery\n\n![Gallery image 1](https://picsum.photos/seed/gallery-main/1920/1080)\n\n![Gallery image 2](https://picsum.photos/seed/gallery-1/1920/1080)\n\n![Gallery image 3](https://picsum.photos/seed/gallery-2/1920/1080)\n\n![Gallery image 4](https://picsum.photos/seed/gallery-3/1920/1080)\n\n![Gallery image 5](https://picsum.photos/seed/gallery-4/1920/1080)\n\n![Gallery image 6](https://picsum.photos/seed/gallery-5/1920/1080)\n\n![Gallery image 7](https://picsum.photos/seed/gallery-6/1920/1080)",
+      "media_type": "article",
       "thumbnail_url": "https://picsum.photos/seed/photo-gallery/640/360",
       "preview_image_urls": [
         "https://picsum.photos/seed/gallery-1/1920/1080",
@@ -243,7 +243,7 @@
       ],
       "position": 16,
       "product": {
-        "name": "Photo Set — Gallery",
+        "name": "Photo Essay — Gallery",
         "price_cents": 1,
         "currency": "USD",
         "access_duration_seconds": 604800

@@ -100,6 +100,34 @@ Full discussion of the encryption design, threat model, and rotation mechanics: 
 
 ## Development
 
+### JSON import safety
+
+JSON imports support `video`, `audio`, `podcast`, and `article` (Markdown in
+`source_url`). Upload encrypted photo files through the photo uploader; JSON
+photo entries are rejected before the import starts. An import cannot overwrite
+an existing photo by omitting or changing its media type. JSON exports contain
+photo metadata only and are **not full backups**: preserve PostgreSQL data and
+the instance encryption keys for disaster recovery.
+
+Paid imports require a configured merchant API key. New or retried media imports
+reconcile missing access links for existing channel passes; finish any pending
+pass-key rotation before retrying. Imports can partially succeed when a remote
+product call fails: inspect the error summary and retry the same file rather than
+renaming entries. A lost progress connection is not confirmation of success.
+Keep stable names/refs for idempotent retries. Lifetime duration accepts `0` or
+legacy `null`; exports use `0`.
+
+The sample photo galleries are Markdown articles referencing public example
+images, not encrypted photo-file backups.
+
+### Security dependency overrides
+
+The lockfile pins patched framework and transitive dependencies. The scoped
+`@prisma/config` → `deepmerge-ts` 8 override addresses GHSA-ggr8-5vv4-36mx while
+retaining Prisma 6. It changes deep Map merging; this project has no custom
+Prisma config or Map-based configuration. Recheck Prisma generate, schema push,
+migration deployment, tests, and build when updating or removing this override.
+
 ```bash
 npm install
 cp .env.local.example .env.local   # Fill in your values, including CONTENT_KEK

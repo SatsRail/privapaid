@@ -192,6 +192,7 @@ class SatsRailClient {
         "Content-Type": "application/json",
       },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) {
@@ -286,14 +287,15 @@ class SatsRailClient {
       name?: string;
       price_cents?: number;
       status?: string;
-      access_duration_seconds?: number;
+      access_duration_seconds?: number | null;
       product_type_id?: string;
     }
   ): Promise<SatsRailProduct> {
     return this.request<SatsRailProduct>(`/m/products/${productId}`, {
       method: "PATCH",
       secretKey,
-      body: { product: normalizeLifetime(data) },
+      // PATCH omission means "keep the old duration"; explicit null clears it.
+      body: { product: { ...data, ...(data.access_duration_seconds === 0 ? { access_duration_seconds: null } : {}) } },
     });
   }
 
@@ -417,6 +419,7 @@ class SatsRailClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) {
@@ -430,13 +433,13 @@ class SatsRailClient {
   // --- Public: Checkout (no auth required) ---
 
   async getCheckoutQr(token: string): Promise<string> {
-    const res = await fetch(`${this.portalUrl}/checkout/${token}/qr`);
+    const res = await fetch(`${this.portalUrl}/checkout/${token}/qr`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`Failed to fetch checkout QR: ${res.status}`);
     return res.text();
   }
 
   async getCheckoutStatus(token: string): Promise<CheckoutStatus> {
-    const res = await fetch(`${this.portalUrl}/checkout/${token}/status`);
+    const res = await fetch(`${this.portalUrl}/checkout/${token}/status`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`Failed to fetch checkout status: ${res.status}`);
     return res.json();
   }
@@ -444,7 +447,7 @@ class SatsRailClient {
   // --- Public: Exchanges ---
 
   async getExchanges(): Promise<SatsRailExchange[]> {
-    const res = await fetch(`${this.baseUrl}/pub/exchanges`);
+    const res = await fetch(`${this.baseUrl}/pub/exchanges`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
       throw new Error(`Failed to fetch exchanges: ${res.status}`);
     }

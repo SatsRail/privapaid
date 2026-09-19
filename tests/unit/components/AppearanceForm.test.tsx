@@ -20,6 +20,43 @@ beforeEach(() => {
 });
 
 describe("AppearanceForm", () => {
+  it("applies editable presets as drafts and discards without a request", () => {
+    render(<AppearanceForm initialValues={{ ...initialValues, theme_font: "Georgia", google_analytics_id: "G-KEEP" }} />);
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Midnight Rose/ }));
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Primary — HEX")).toHaveValue("#c9506b");
+    expect(screen.getByLabelText("Font Family")).toHaveValue("Georgia");
+    expect(screen.getByLabelText("Google Analytics ID")).toHaveValue("G-KEEP");
+    expect(screen.getByLabelText("Header background — HEX")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Primary — HEX"), { target: { value: "#abcdef" } });
+    expect(screen.getByRole("button", { name: /Midnight Rose/ })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByLabelText("Primary — HEX")).toHaveValue(initialValues.theme_primary);
+    expect(screen.getByLabelText("Header background — HEX")).toHaveValue("#112233");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("resets colors without resetting typography", () => {
+    render(<AppearanceForm initialValues={{ ...initialValues, theme_font: "Georgia" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reset Colors" }));
+    expect(screen.getByLabelText("Font Family")).toHaveValue("Georgia");
+  });
+
+  it("retains drafts on save failure, then establishes the new saved baseline", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: "Try again" }) });
+    render(<AppearanceForm initialValues={initialValues} />);
+    fireEvent.click(screen.getByRole("button", { name: /Warm Paper/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Try again"));
+    expect(screen.getByLabelText("Background — HEX")).toHaveValue("#faf8f5");
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Quiet Teal/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByLabelText("Background — HEX")).toHaveValue("#faf8f5");
+  });
   it("updates the real preview as colors change and saves optional overrides", async () => {
     render(<AppearanceForm initialValues={initialValues} />);
     fireEvent.change(screen.getByLabelText("Player background — HEX"), { target: { value: "#203040" } });

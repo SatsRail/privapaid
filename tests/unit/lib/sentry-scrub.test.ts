@@ -168,7 +168,7 @@ describe("sentry-scrub", () => {
       scrubEvent(event);
       const data = event.breadcrumbs![0].data as Record<string, unknown>;
       expect(String(data.satsrail_api_key)).toContain(SCRUB_MARKER);
-      expect(data.url).toBe("https://app.satsrail.com/api/v1/products");
+      expect(String(data.url)).toContain(SCRUB_MARKER);
     });
 
     it("scrubs event.contexts", () => {
@@ -338,7 +338,7 @@ describe("sentry-scrub", () => {
       scrubBreadcrumb(crumb);
       const data = crumb.data as Record<string, unknown>;
       expect(String(data.satsrail_api_key)).toContain(SCRUB_MARKER);
-      expect(data.url).toBe("/api/setup");
+      expect(String(data.url)).toContain(SCRUB_MARKER);
     });
 
     it("returns the breadcrumb (does not drop it)", () => {

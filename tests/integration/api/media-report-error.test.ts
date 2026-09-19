@@ -80,11 +80,11 @@ function postReq(id: string, body: unknown): Request {
 }
 
 /** Portal `/m/access/verify` says the macaroon is valid and hands back `key`. */
-function mockPortalValid(key: string) {
+function mockPortalValid(key: string, productId = "prod_report") {
   mockFetch.mockResolvedValue({
     ok: true,
     status: 200,
-    json: async () => ({ valid: true, key, remaining_seconds: 3600 }),
+    json: async () => ({ valid: true, product_id: productId, key, remaining_seconds: 3600 }),
   });
 }
 
@@ -242,7 +242,7 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
       data: { encryptedDek: goodBlob },
     });
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ [productId]: "mac" }));
-    mockPortalValid(keyB64url);
+    mockPortalValid(keyB64url, productId);
 
     const res = await POST(
       postReq(mediaId, { reason: "integrity_auth_failed" }),
@@ -271,7 +271,7 @@ describe("Media report-error API — POST /api/media/[id]/report-error", () => {
     const productId = "prod_bad";
     const { mediaId } = await seed({ encryptedSource: "Zm9vYmFy", productId });
     mockCookieStore._set("satsrail_macaroons", JSON.stringify({ [productId]: "mac" }));
-    mockPortalValid(keyB64url);
+    mockPortalValid(keyB64url, productId);
 
     const res = await POST(
       postReq(mediaId, { reason: "integrity_auth_failed", orderId: "ord_123" }),

@@ -105,15 +105,17 @@ fi
 # clear. If ANY migration has previously applied successfully, we refuse to
 # auto-heal and demand manual repair.
 #
-# Set PRISMA_AUTO_RESOLVE=false to disable this path.
+# Disabled by default: migration bookkeeping alone is not proof that a failed
+# migration left no partial DDL. Prefer manual inspection and repair. Only set
+# PRISMA_AUTO_RESOLVE=true after an operator has verified it is safe to retry.
 if [ "${RUN_MIGRATIONS:-true}" = "true" ] && [ -n "$DATABASE_URL" ]; then
   echo "Applying pending migrations..."
-  deploy_output=$(npx prisma migrate deploy 2>&1)
-  deploy_exit=$?
+  deploy_exit=0
+  deploy_output=$(npx prisma migrate deploy 2>&1) || deploy_exit=$?
   echo "$deploy_output"
 
   if [ "$deploy_exit" -ne 0 ]; then
-    if echo "$deploy_output" | grep -q "P3009" && [ "${PRISMA_AUTO_RESOLVE:-true}" = "true" ]; then
+    if echo "$deploy_output" | grep -q "P3009" && [ "${PRISMA_AUTO_RESOLVE:-false}" = "true" ]; then
       # Extract failed migration names from the P3009 error output. Each
       # appears as: "The `<name>` migration started at <ts> failed".
       failed_migrations=$(echo "$deploy_output" | grep -oE 'The `[^`]+` migration started' | sed -E 's/^The `(.*)` migration started$/\1/')
