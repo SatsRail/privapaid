@@ -33,6 +33,8 @@ RUN npm run build
 
 # --- Stage 3: Production runner ---
 FROM node:22-alpine AS runner
+# Validate protected uploads without writing decrypted videos to disk.
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 
 ENV NODE_ENV=production

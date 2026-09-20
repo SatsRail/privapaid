@@ -110,5 +110,7 @@ export const config = {
   // Run on every route except Next internals and static assets, so the
   // per-request CSP/nonce is applied site-wide. Admin/API authorization is
   // gated by pathname inside middleware(), so matching /api here is intentional.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Raw MP4 uploads must bypass Next middleware body cloning/buffering.
+  // This exact endpoint enforces owner auth, Origin, rate and size limits itself.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/admin/videos/?$).*)"],
 };

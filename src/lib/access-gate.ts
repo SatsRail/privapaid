@@ -35,6 +35,7 @@ export interface GatedProduct {
 
 export interface AccessResult {
   granted: boolean;
+  reason?: "unavailable";
   productId?: string;
   key?: string;
   keyFingerprint?: string;
@@ -277,5 +278,8 @@ export async function verifyMacaroonAccess(
     }
   }
 
+  if (results.some(({ result }) => result.status === "transient")) {
+    return { granted: false, reason: "unavailable" };
+  }
   return { granted: false };
 }

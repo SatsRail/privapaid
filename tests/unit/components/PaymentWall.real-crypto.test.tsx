@@ -214,7 +214,10 @@ describe("PaymentWall with real crypto", () => {
         return { ok: true, json: async () => ({ token: "tok" }) };
       }
       if (url === "/api/macaroons" && opts?.method === "POST") {
-        return { ok: true, json: async () => ({}) };
+        return { ok: true, json: async () => ({ receipt: "test-receipt" }) };
+      }
+      if (url === "/api/macaroons" && !opts?.method) {
+        return { ok: true, json: async () => ({ products: products.map(p => ({ product_id: p.productId, receipt: "test-receipt" })) }) };
       }
       if (url === `/api/envelopes/${envelopeId}`) {
         return {
@@ -303,7 +306,10 @@ describe("PaymentWall with real crypto", () => {
         return { ok: true, json: async () => ({ token: "tok" }) };
       }
       if (url === "/api/macaroons" && opts?.method === "POST") {
-        return { ok: true, json: async () => ({}) };
+        return { ok: true, json: async () => ({ receipt: "test-receipt" }) };
+      }
+      if (url === "/api/macaroons" && !opts?.method) {
+        return { ok: true, json: async () => ({ products: products.map(p => ({ product_id: p.productId, receipt: "test-receipt" })) }) };
       }
       if (url === `/api/envelopes/${gridFsId}`) {
         return {
@@ -501,7 +507,10 @@ describe("PaymentWall with real crypto", () => {
         return { ok: true, json: async () => ({ token: "tok" }) };
       }
       if (url === "/api/macaroons" && opts?.method === "POST") {
-        return { ok: true, json: async () => ({}) };
+        return { ok: true, json: async () => ({ receipt: "test-receipt" }) };
+      }
+      if (url === "/api/macaroons" && !opts?.method) {
+        return { ok: true, json: async () => ({ products: products.map(p => ({ product_id: p.productId, receipt: "test-receipt" })) }) };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     });

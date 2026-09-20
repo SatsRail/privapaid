@@ -187,7 +187,10 @@ function setupFreshPaymentScenario(
       return { ok: true, json: async () => ({ token: "tok" }) };
     }
     if (url === "/api/macaroons" && init?.method === "POST") {
-      return { ok: true, json: async () => ({}) };
+      return { ok: true, json: async () => ({ receipt: "test-receipt" }) };
+    }
+    if (url === "/api/macaroons" && !init?.method) {
+      return { ok: true, json: async () => ({ products: [{ product_id: "prod-1", receipt: "test-receipt" }] }) };
     }
     // The uniform two-step content resolve fetches the envelope ciphertext.
     if (url.startsWith("/api/envelopes/")) {
@@ -857,9 +860,9 @@ describe("PaymentWall", () => {
         expect(onAccessClaim).toHaveBeenCalledTimes(1);
       });
       // remainingSeconds matches the mocked CheckoutOverlay payload (7 days).
-      expect(onAccessClaim).toHaveBeenCalledWith(
-        expect.objectContaining({ remainingSeconds: 604800 })
-      );
+      const remaining = onAccessClaim.mock.calls[0][0].remainingSeconds;
+      expect(remaining).toBeLessThanOrEqual(604800);
+      expect(remaining).toBeGreaterThan(604795);
     });
 
     it("decrypts content after the parent's hook transitions to active", async () => {
@@ -876,6 +879,37 @@ describe("PaymentWall", () => {
       await user.click(screen.getByTestId("complete-btn"));
 
       await waitFor(() => expect(screen.getByTestId("content-renderer")).toBeInTheDocument());
+    });
+
+    it("retries a paid purchase after cookie storage fails without creating another invoice", async () => {
+      const user = userEvent.setup();
+      let attempts = 0;
+      setupFreshPaymentScenario((url, init) => {
+        if (url === "/api/macaroons" && init?.method === "POST" && attempts++ === 0) {
+          return { ok: false, status: 503, json: async () => ({}) };
+        }
+      });
+      render(<StatefulPaymentWall {...defaultProps} mediaType="video" />);
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await user.click(await screen.findByTestId("complete-btn"));
+      expect(await screen.findByText("Payment received. Access could not be saved.")).toBeInTheDocument();
+      expect(screen.queryByTestId("content-renderer")).not.toBeInTheDocument();
+      await user.click(screen.getByText("Retry saving access"));
+      expect(await screen.findByTestId("content-renderer")).toBeInTheDocument();
+      const creates = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[0] === "/api/checkout");
+      expect(creates).toHaveLength(1);
+    });
+
+    it("does not activate access when the browser retained an older cookie for the same product", async () => {
+      const user = userEvent.setup();
+      setupFreshPaymentScenario((url, init) => {
+        if (url === "/api/macaroons" && !init?.method) return { ok: true, json: async () => ({ products: [{ product_id: "prod-1", receipt: "old-token" }] }) };
+      });
+      render(<StatefulPaymentWall {...defaultProps} mediaType="video" />);
+      await user.click(screen.getAllByText(/HD Video/)[0]);
+      await user.click(await screen.findByTestId("complete-btn"));
+      expect(await screen.findByText("Payment received. Access could not be saved.")).toBeInTheDocument();
+      expect(screen.queryByTestId("content-renderer")).not.toBeInTheDocument();
     });
 
     it("stores macaroon after checkout completion", async () => {
@@ -1130,10 +1164,8 @@ describe("PaymentWall", () => {
           })
         );
       });
-      // Direct decryption still succeeded (the macaroon store is a side
-      // channel for refresh-persistence; the in-memory access claim still
-      // happens), so the user sees content, not the failure card.
-      expect(await screen.findByTestId("content-renderer")).toBeInTheDocument();
+      expect(await screen.findByText("Payment received. Access could not be saved.")).toBeInTheDocument();
+      expect(screen.queryByTestId("content-renderer")).not.toBeInTheDocument();
     });
 
     it("captures the exception when the macaroon storage fetch throws", async () => {

@@ -21,6 +21,13 @@ import type { MediaAccess } from "@/lib/use-media-access";
 import { resolvePaywallView } from "@/lib/paywall-view";
 
 type Product = PaywallProduct;
+interface CompletedPayment {
+  key: string;
+  macaroon: string;
+  remaining_seconds?: number;
+  order_number: string | null;
+  order_id: string | null;
+}
 
 interface PaymentWallProps {
   mediaId: string;
@@ -120,6 +127,11 @@ export default function PaymentWall({
   // reference even though the decryption effect itself has no direct view of
   // handleCheckoutComplete's locals. Stays null for already-active access on
   // mount (refresh case), which is correct — no payment just happened.
+  // Recovery stays in volatile memory: never persist product keys or payment
+  // tokens in browser storage, and never create another invoice on retry.
+  const pendingPayment = useRef<{ data: CompletedPayment; receivedAt: number } | null>(null);
+  const [cookieRecovery, setCookieRecovery] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const lastPaymentRef = useRef<{ orderNumber: string | null; orderId: string | null } | null>(null);
 
   // Every failure report in this component shares the same identity envelope
@@ -308,18 +320,17 @@ export default function PaymentWall({
   }
 
   const handleCheckoutComplete = useCallback(
-    async (data: {
-      key: string;
-      macaroon: string;
-      remaining_seconds?: number;
-      order_number: string | null;
-      order_id: string | null;
-    }) => {
+    async (data: CompletedPayment) => {
       if (!activeProductId) {
         setCheckoutToken(null);
         return;
       }
 
+      if (!pendingPayment.current) pendingPayment.current = { data, receivedAt: Date.now() };
+      const recoveryRequired = () => {
+        setCookieRecovery(true);
+        setCheckoutToken(null);
+      };
       const orderNumber = data.order_number ?? null;
       const orderId = data.order_id ?? null;
       // One Sentry event per customer-visible failure, tagged with the branch
@@ -364,9 +375,21 @@ export default function PaymentWall({
               "error",
               { status: macRes.status }
             );
+            recoveryRequired();
+            return;
+          }
+          // A successful response is not proof the browser accepted Set-Cookie.
+          const written = await macRes.json();
+          const receipt = await fetch("/api/macaroons", { cache: "no-store" });
+          const stored = receipt.ok ? await receipt.json() : null;
+          if (!written.receipt || !stored?.products?.some((entry: { product_id: string; receipt?: string }) => entry.product_id === activeProductId && entry.receipt === written.receipt)) {
+            recoveryRequired();
+            return;
           }
         } catch (err) {
           reportException("PaymentWall.macaroonStore", err);
+          recoveryRequired();
+          return;
         }
       } else {
         reportMessage(
@@ -418,16 +441,35 @@ export default function PaymentWall({
       // Stash the order ids before claiming so the decrypt effect's failure
       // path can surface them on UnlockFailureCard if decryption blows up.
       lastPaymentRef.current = { orderNumber, orderId };
+      const elapsedSeconds = Math.ceil((Date.now() - (pendingPayment.current?.receivedAt ?? Date.now())) / 1000);
+      setCookieRecovery(false);
+      setUnlockFailure(null);
+      pendingPayment.current = null;
       onAccessClaim({
         productId: product.productId,
         key: data.key,
-        remainingSeconds: data.remaining_seconds ?? 0,
+        remainingSeconds: Math.max(0, (data.remaining_seconds ?? 0) - elapsedSeconds),
         encryptedBlob: product.encryptedBlob,
       });
       setCheckoutToken(null);
     },
     [activeProductId, products, reportException, reportMessage, reportDecryptError, onAccessClaim]
   );
+
+  if (cookieRecovery) {
+    return <div role="alert" className="space-y-3 rounded-xl border border-[var(--theme-border)] p-5">
+      <h3 className="font-semibold">Payment received. Access could not be saved.</h3>
+      <p>Keep this page open and allow cookies for this site, then retry. You will not be charged again.</p>
+      <p className="break-all">Order: {pendingPayment.current?.data.order_number || pendingPayment.current?.data.order_id || "Contact the merchant with your payment receipt."}</p>
+      <button type="button" disabled={recovering} className="rounded border px-4 py-2" onClick={async () => {
+        const pending = pendingPayment.current;
+        if (!pending) return;
+        setRecovering(true);
+        try { await handleCheckoutComplete(pending.data); }
+        finally { setRecovering(false); }
+      }}>{recovering ? "Restoring access…" : "Retry saving access"}</button>
+    </div>;
+  }
 
   // Single source of truth for which surface renders — see resolvePaywallView
   // for the full precedence (content > unlock_failure > verify_failure >
@@ -455,6 +497,7 @@ export default function PaymentWall({
           </div>
         )}
         <ContentRenderer
+          mediaId={mediaId}
           decryptedBytes={decryptedBytes}
           mediaType={mediaType}
         />

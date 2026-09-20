@@ -65,5 +65,5 @@ export default function AdminPreviewContent({ mediaId, mediaType }: AdminPreview
 
   if (!bytes) return null;
 
-  return <ContentRenderer decryptedBytes={bytes} mediaType={mediaType} />;
+  return <ContentRenderer decryptedBytes={bytes} mediaType={mediaType} mediaId={mediaId} ownerPreview />;
 }

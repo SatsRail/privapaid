@@ -48,6 +48,24 @@ describe("ContentRenderer", () => {
     global.URL.revokeObjectURL = vi.fn();
   });
 
+  it("renders protected references as an authorized media endpoint, never a storage URL", () => {
+    mockDetectMimeType.mockReturnValue("text/url");
+    mockBytesToUrl.mockReturnValue("https://protected-video.invalid/12345678-1234-1234-1234-123456789abc.mp4");
+    const { container, rerender } = render(<ContentRenderer decryptedBytes={toBytes("reference")} mediaType="video" mediaId="media-1" />);
+    expect(container.querySelector("video")?.getAttribute("src")).toBe("/api/media/media-1/video");
+    expect(container.innerHTML).not.toContain("protected-video.invalid");
+    rerender(<ContentRenderer decryptedBytes={toBytes("reference")} mediaType="video" mediaId="media-1" ownerPreview />);
+    expect(container.querySelector("video")?.getAttribute("src")).toBe("/api/admin/media/media-1/video");
+  });
+
+  it("never navigates to a protected marker when media context is missing", () => {
+    mockDetectMimeType.mockReturnValue("text/url");
+    mockBytesToUrl.mockReturnValue("https://protected-video.invalid/12345678-1234-1234-1234-123456789abc.mp4");
+    const { container } = render(<ContentRenderer decryptedBytes={toBytes("reference")} mediaType="video" />);
+    expect(container.querySelector("video,iframe")).toBeNull();
+    expect(container.textContent).toContain("Open the saved media");
+  });
+
   // -------------------------------------------------------
   // ContentRendererDOM — URL-based content (text/url mime)
   // -------------------------------------------------------

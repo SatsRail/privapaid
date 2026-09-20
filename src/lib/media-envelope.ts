@@ -90,9 +90,10 @@ export function reencryptEnvelopeBytes(
 }
 
 /**
- * Admin-only: recover the plaintext payload (URL string bytes or content bytes)
- * from an envelope. NEVER call on a buyer-facing path — buyers decrypt in the
- * browser. Used by preview/export/report-error (owner-gated).
+ * Recover the payload for owner preview/export/report-error. The only buyer
+ * exception is protected-video-response: after payment verification, resolve
+ * its opaque local asset marker to authorize streaming (see PROTECTED_VIDEO.md).
+ * Other buyer flows continue to decrypt envelopes exclusively in the browser.
  */
 export function decryptEnvelopePayload(envelope: {
   bytes: Buffer | Uint8Array;

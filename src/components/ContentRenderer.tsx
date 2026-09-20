@@ -28,6 +28,8 @@
  * stylesheets (including Tailwind) cannot penetrate a closed shadow root.
  */
 
+import ProtectedVideoPlayer from "@/components/ProtectedVideoPlayer";
+import { protectedVideoId } from "@/lib/protected-video-reference";
 import { useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
@@ -51,6 +53,8 @@ const articleMarkdown = new Marked({
 });
 
 interface ContentRendererProps {
+  mediaId?: string;
+  ownerPreview?: boolean;
   decryptedBytes: Uint8Array;
   mediaType: string;
 }
@@ -188,7 +192,14 @@ function openImageLightbox(url: string): void {
 export default function ContentRenderer({
   decryptedBytes,
   mediaType,
+  mediaId,
+  ownerPreview,
 }: ContentRendererProps) {
+  if (detectMimeType(decryptedBytes) === "text/url" && protectedVideoId(bytesToUrl(decryptedBytes).trim())) {
+    return mediaId
+      ? <ProtectedVideoPlayer key={`${mediaId}:${!!ownerPreview}`} mediaId={mediaId} ownerPreview={ownerPreview} />
+      : <p>Open the saved media to play this protected video.</p>;
+  }
   return <ContentRendererDOM decryptedBytes={decryptedBytes} mediaType={mediaType} />;
 }
 

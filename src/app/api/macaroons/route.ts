@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import * as Sentry from "@sentry/nextjs";
@@ -35,9 +36,9 @@ export async function GET() {
   const map = parseMacaroonCookie(cookieStore.get(COOKIE_NAME)?.value);
   const products = Object.entries(map)
     .filter(([, entry]) => !!entry?.m)
-    .map(([product_id, entry]) => ({ product_id, stored_at: entry.t }))
+    .map(([product_id, entry]) => ({ product_id, stored_at: entry.t, receipt: createHash("sha256").update(entry.m).digest("hex") }))
     .sort((a, b) => b.stored_at - a.stored_at);
-  return NextResponse.json({ products });
+  return NextResponse.json({ products }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 /**
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  const response = NextResponse.json({ stored: true, evicted: next.evicted });
+  const response = NextResponse.json({ stored: true, evicted: next.evicted, receipt: createHash("sha256").update(macaroon).digest("hex") }, { headers: { "Cache-Control": "private, no-store" } });
   response.cookies.set(
     COOKIE_NAME,
     serializeMacaroonCookie(next.map),

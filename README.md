@@ -173,3 +173,53 @@ The decryption test suite is documented in [`tests/integration/decryption-e2e/RE
 You can use, copy, modify, and redistribute PrivaPaid for any purpose other than a **Competing Use** (offering it as a hosted product or service that substitutes for SatsRail's offering). Two years after each release, that release also becomes available under [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 See [LICENSE](LICENSE) for the full text. The FSL is a [fair-source](https://fair.io/) license originally written by Sentry — it lets you self-host, fork, deploy for clients, and build commercial businesses on top, while reserving the narrow case of building a competing platform.
+
+## Protected MP4 uploads
+
+External video links become visible after purchase. For playback that requires
+valid paid access on every request, owners can instead use **Upload protected
+video** in the video media form. Existing external embeds remain unchanged.
+
+Set `PRIVATE_VIDEO_DIR` to an absolute private, persistent directory writable by
+the app (Docker Compose: `/app/data/private-videos` on the existing data volume).
+Keep `CONTENT_KEK` configured and backed up separately. Upload a browser-compatible
+H.264 MP4 with optional AAC audio, up to 512 MB. Wait for upload and validation,
+then save and associate a paid product. FFprobe must be installed (included in
+the Docker image); uploaded videos remain encrypted on disk during validation.
+No database migration is required. Owner preview uses a separate authenticated
+endpoint. Leave `PRIVATE_VIDEO_DIR` unset to disable uploads.
+
+Configure your proxy to permit 512 MB uploads, preserve cookies/Range headers,
+and disable upload buffering for `/api/admin/videos` and caching/response
+buffering for `/api/media/*/video`. Next middleware excludes the upload route to
+avoid buffering its body; the route independently enforces owner authentication,
+same-origin requests, rate limiting, and size/type validation.
+
+Video chunks are AES-256-GCM encrypted on disk. The browser receives an opaque
+reference, not a public origin URL or the video storage key. After verifying the
+buyer's macaroon, PrivaPaid decrypts chunks transiently to serve MP4 byte ranges.
+This optional mode extends the original browser-only decryption architecture;
+SatsRail still receives no video content or storage references.
+
+Back up the private directory, database, and KEK. JSON exports carry references
+only; moving protected videos requires the storage backup too. Abandoned uploads
+and deleted/replaced media retain encrypted files; garbage collection is manual.
+Replicas need shared storage. No transcoding or HLS/DASH is provided.
+
+A copied playback address alone grants no access. Paid viewers can still save
+video bytes or share their bearer cookie. Expiry stops further streaming; it
+cannot revoke already buffered or downloaded bytes.
+
+Protected playback safeguards: uploads show byte progress and can be cancelled.
+Two uploads and 16 playback requests may run concurrently per process; change the
+latter with `PRIVATE_VIDEO_MAX_STREAMS` (1–128). Stalled streams close after one
+minute. `PRIVATE_VIDEO_MIN_FREE_MB` preserves 1024 MiB of free filesystem space
+by default (minimum 128). Configure proxy-level limits for multiple replicas.
+`FFPROBE_PATH` can select a custom validator binary. Failed/unsupported videos
+are removed before publication. Orphan cleanup and disk alerts remain operator
+responsibilities.
+
+Checkout confirms that the exact purchase cookie was accepted. If saving fails,
+keep the page open and use **Retry saving access**; it reuses the completed
+payment. No second invoice is created. Playback distinguishes expired/missing
+access from temporary outages and offers a retry without another payment.

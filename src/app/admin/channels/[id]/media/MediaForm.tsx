@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Modal from "@/components/ui/Modal";
+import ProtectedVideoUpload from "@/components/ProtectedVideoUpload";
 import ImageUpload from "@/components/ui/ImageUpload";
 
 interface EncryptedBlobInfo {
@@ -281,6 +282,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [videoUploading, setVideoUploading] = useState(false);
   const [error, setError] = useState("");
 
   // Product creation — inline on create, modal on edit
@@ -331,6 +333,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (videoUploading) return;
     setLoading(true);
     setError("");
     setProductError("");
@@ -536,10 +539,11 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
             required
-            helperText="The plain URL (iframe embed, direct link). Never exposed to clients."
+            helperText="External URLs become visible to paying buyers. Upload a protected MP4 below to require authorization on playback."
             type="url"
           />
         )}
+        {mediaType === "video" && <ProtectedVideoUpload source={sourceUrl} onUploaded={setSourceUrl} onBusy={setVideoUploading} />}
           </div>
 
           {/* Right column: visual assets */}
@@ -622,7 +626,7 @@ export default function MediaForm({ channelId, channelSlug, initialData, currenc
         {error && <p className="text-sm text-red-500">{error}</p>}
 
         <div className="flex gap-3 border-t border-[var(--theme-border)] pt-5">
-          <Button type="submit" loading={loading}>
+          <Button type="submit" loading={loading} disabled={videoUploading}>
             {isEditing ? "Update" : "Create"} Media
           </Button>
           {isEditing && channelSlug && (
