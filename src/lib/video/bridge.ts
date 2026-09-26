@@ -15,7 +15,23 @@ export async function privateMediaBridge(upload: Upload, job: Lease, storage: Vi
   const prefix = attemptPrefix(job, upload.version.storagePrefix);
   const objects = new Map<string, OutputObject>();
   const pending = new Set<Promise<void>>();
+  // FFmpeg can open the next segment before storage has acknowledged the
+  // previous one. Pause a bounded number of requests instead of dropping valid
+  // output when all qualities reach their segment boundary together.
+  const waiting = new Set<() => void>();
   let manifest: Buffer | undefined, failure: unknown, active = 0, written = 0, writing = 0, port = 0;
+  async function acquire(res: import("node:http").ServerResponse) {
+    if (active < 8) { active++; return true; }
+    if (waiting.size >= 16) return false;
+    return new Promise<boolean>(resolve => {
+      const cleanup = () => { waiting.delete(wake); res.off("close", cancel); signal.removeEventListener("abort", cancel); };
+      const cancel = () => { cleanup(); resolve(false); };
+      const wake = () => { cleanup(); active++; resolve(true); };
+      waiting.add(wake); res.once("close", cancel); signal.addEventListener("abort", cancel, { once: true });
+      if (signal.aborted || res.destroyed) cancel();
+    });
+  }
+  function release() { active--; waiting.values().next().value?.(); }
   const identity = (name: string): ObjectIdentity => ({ asset: upload.version.assetId, version: upload.versionId, attempt: job.leaseToken, name });
   async function persist(name: string, plain: Buffer) {
     const digest = sha256(plain), existing = objects.get(name);
@@ -33,8 +49,9 @@ export async function privateMediaBridge(upload: Upload, job: Lease, storage: Vi
   }
   const server = createServer((req, res) => {
     const handle = (async () => {
-      if (signal.aborted || active >= 8 || req.headers.host !== `127.0.0.1:${port}` || req.headers.origin || !req.url?.startsWith(`/${token}/`)) { res.writeHead(403).end(); return; }
-      active++;
+      if (signal.aborted || req.headers.host !== `127.0.0.1:${port}` || req.headers.origin || !req.url?.startsWith(`/${token}/`)) { res.writeHead(403).end(); return; }
+      req.pause();
+      if (!await acquire(res)) { if (!res.destroyed) res.writeHead(503).end(); return; }
       try {
         res.setHeader("Cache-Control", "no-store");
         if (req.url === `/${token}/source.mp4` && ["GET", "HEAD"].includes(req.method || "")) {
@@ -72,7 +89,7 @@ export async function privateMediaBridge(upload: Upload, job: Lease, storage: Vi
         if (!sourceClosed && !signal.aborted) failure ||= err;
         if (!res.headersSent) res.writeHead(500);
         res.destroy();
-      } finally { active--; }
+      } finally { release(); }
     })();
     pending.add(handle); void handle.finally(() => pending.delete(handle));
   });

@@ -13,6 +13,7 @@ export async function digest(bytes: Uint8Array<ArrayBuffer>) {
 export type UploadStatus = {
   id: string; status: string; uploadStatus: string; bytes: number; receivedBytes: number;
   partBytes: number; clientFingerprint: string; progress: number; error: string | null;
+  segmentSeconds?: number; encodingProfile?: string; durationSeconds?: number | null; encryptedBytes?: string; objectCount?: number;
   canRetry: boolean; published: boolean; expiresAt: string;
 };
 export async function transferFile(file: File, upload: UploadStatus, signal: AbortSignal, acknowledged: (value: UploadStatus) => void) {

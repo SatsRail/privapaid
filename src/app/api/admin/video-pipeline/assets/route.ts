@@ -9,7 +9,9 @@ export async function GET(request: NextRequest) {
   if (!videoEnabled()) return NextResponse.json({ error: "VIDEO_DISABLED" }, { status: 404 });
   const limit = Number(request.nextUrl.searchParams.get("limit") || 25);
   const cursor = request.nextUrl.searchParams.get("cursor") || undefined;
+  const query = request.nextUrl.searchParams.get("q")?.trim() || "";
+  if (query.length > 100) return NextResponse.json({ error: "VIDEO_PAGE_INVALID" }, { status: 400 });
   if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (cursor && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(cursor))) return NextResponse.json({ error: "VIDEO_PAGE_INVALID" }, { status: 400 });
-  try { return NextResponse.json(await listAssets(limit, cursor), { headers: { "Cache-Control": "no-store" } }); }
+  try { return NextResponse.json(await listAssets(limit, cursor, query), { headers: { "Cache-Control": "no-store" } }); }
   catch { return NextResponse.json({ error: "VIDEO_SETUP_UNAVAILABLE" }, { status: 503 }); }
 }

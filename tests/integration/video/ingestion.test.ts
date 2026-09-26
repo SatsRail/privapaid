@@ -24,6 +24,8 @@ import { IngestionError } from "@/lib/video/ingestion-errors";
 import { packageVideo } from "@/lib/video/package-job";
 import { S3Client } from "@aws-sdk/client-s3";
 import { S3VideoStorage } from "@/lib/video/storage/s3";
+import { adaptiveFixture } from "../../helpers/adaptive-video";
+import { ADAPTIVE_PROFILE, LEGACY_PROFILE } from "@/lib/video/quality";
 import { s3ProtocolServer } from "../../helpers/video-s3-server";
 const remote = vi.hoisted(() => ({ key: "", fingerprint: "", rotation: false, unavailable: false }));
 vi.mock("@/lib/merchant-key", () => ({ getMerchantKey: async () => "sk_test_video" }));
@@ -167,6 +169,32 @@ describe("resumable encrypted ingestion", () => {
       expect((await fetch(bridge.sourceUrl, { headers: { range: "bytes=9999999999-" } })).status).toBe(416);
     } finally { await bridge.close(); }
   });
+  it("queues simultaneous segment writes with eight active requests and releases on completion", async () => {
+    const u = await uploadSource(), job = (await claimJob(["package_asset"], 30))!;
+    const bridge = await privateMediaBridge(u, job, storage, new AbortController().signal);
+    let release!: () => void, writes = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; }), put = storage.put.bind(storage);
+    const spy = vi.spyOn(storage, "put").mockImplementation(async (...args) => { writes++; await gate; return put(...args); });
+    let requests: Promise<Response>[] = [];
+    try {
+      requests = Array.from({ length: 12 }, (_, i) => fetch(bridge.outputUrl.replace("play.mpd", `init-${i}.mp4`), { method: "PUT", body: Buffer.alloc(1024, i) }));
+      await vi.waitFor(() => expect(writes).toBe(8));
+      release(); expect((await Promise.all(requests)).every(response => response.status === 200)).toBe(true);
+      expect(bridge.objects.size).toBe(12);
+    } finally { release(); await Promise.allSettled(requests); spy.mockRestore(); await bridge.close(); }
+  });
+  it("aborts queued bridge requests without starting their storage writes", async () => {
+    const u = await uploadSource(), job = (await claimJob(["package_asset"], 30))!, controller = new AbortController();
+    const bridge = await privateMediaBridge(u, job, storage, controller.signal);
+    let release!: () => void, writes = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; }), put = storage.put.bind(storage);
+    const spy = vi.spyOn(storage, "put").mockImplementation(async (...args) => { writes++; await gate; return put(...args); });
+    const requests = Array.from({ length: 12 }, (_, i) => fetch(bridge.outputUrl.replace("play.mpd", `init-${i}.mp4`), { method: "PUT", body: Buffer.alloc(1024, i) }).catch(() => null));
+    try {
+      await vi.waitFor(() => expect(writes).toBe(8)); controller.abort();
+      await Promise.all(requests); release(); expect(writes).toBe(8);
+    } finally { controller.abort(); release(); spy.mockRestore(); await bridge.close(); }
+  });
   for (const segment of [4, 10] as const) it(`encodes, authenticates and atomically publishes a real ${segment}s-segment movie`, async () => {
     const legacy = await prisma.mediaEnvelope.findUniqueOrThrow({ where: { mediaId } });
     const u = await uploadSource(source, segment), config = videoConfig();
@@ -186,6 +214,42 @@ describe("resumable encrypted ingestion", () => {
       const prefix = await storage.read(object.key, { start: 0, end: 3 }); const chunks = []; for await (const c of prefix) chunks.push(c);
       expect(Buffer.concat(chunks).toString()).toBe("PPV1");
     }
+  });
+  it("publishes three encrypted qualities and preserves a playing version during replacement", async () => {
+    const fixtureRoot = await mkdtemp(path.join(tmpdir(), "ppv-adaptive-source-"));
+    try {
+      const { sourceBytes } = await adaptiveFixture(fixtureRoot, 4, 21);
+      const config = videoConfig(), scope = storageIdentity(config);
+      const first = await uploadSource(sourceBytes);
+      expect(first.version.encodingProfile).toBe(ADAPTIVE_PROFILE);
+      await packageVideo((await claimJob(["package_asset"], 30, scope))!, storage, new AbortController().signal, config);
+      const ready = (await ownedUpload(first.id, owner)).version;
+      expect({ status: ready.status, error: ready.job?.lastErrorCode }).toEqual({ status: "ready", error: null });
+      const objects = (await storage.list(ready.storagePrefix, 100)).objects;
+      const init = objects.filter(o => /init-\d+\.mp4$/.test(o.key));
+      expect(init).toHaveLength(4); // Three video tracks + exactly one audio.
+      for (const object of init) {
+        const chunks = []; for await (const chunk of await storage.read(object.key, { start: 0, end: 3 })) chunks.push(chunk);
+        expect(Buffer.concat(chunks).toString()).toBe("PPV1");
+      }
+      const next = await uploadSource(sourceBytes, 10);
+      expect(next.version.id).not.toBe(ready.id); expect(next.version.wrappedRootKey).not.toBe(ready.wrappedRootKey);
+      expect((await ownedUpload(next.id, owner)).version.asset.publishedVersionId).toBe(ready.id);
+      await runNextJob(storage, 30, undefined, scope, config);
+      const replacement = (await ownedUpload(next.id, owner)).version;
+      expect(replacement.status).toBe("ready"); expect(replacement.asset.publishedVersionId).toBe(replacement.id);
+      const retained = await prisma.videoAssetVersion.findUniqueOrThrow({ where: { id: ready.id } });
+      expect(retained.segmentSeconds).toBe(4); expect(retained.encryptedDescriptor).toEqual(ready.encryptedDescriptor);
+      expect(retained.manifestSha256).toBe(ready.manifestSha256);
+    } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+  }, 60000);
+  it("finishes a queued legacy profile as one video quality", async () => {
+    const u = await uploadSource();
+    await prisma.videoAssetVersion.update({ where: { id: u.versionId }, data: { encodingProfile: LEGACY_PROFILE } });
+    const config = videoConfig(); await runNextJob(storage, 30, undefined, storageIdentity(config), config);
+    const v = (await ownedUpload(u.id, owner)).version;
+    expect(v.status).toBe("ready");
+    expect((await storage.list(v.storagePrefix, 100)).objects.filter(o => /init-\d+\.mp4$/.test(o.key))).toHaveLength(2);
   });
   it("cancels queued processing and expires retained failed staging", async () => {
     const u = await uploadSource(); await abortUpload(u.id, owner);

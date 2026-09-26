@@ -3,6 +3,7 @@
 Phase 3 is implemented and tested locally. `VIDEO_PLAYBACK_ENABLED=false` keeps
 it off. Live CloudFront delivery, a full-length movie through a real purchase,
 physical-device qualification and production capacity remain release gates.
+Phase 4 adds [adaptive quality and creator controls](VIDEO_ADAPTIVE.md).
 See [the execution plan](ENCRYPTED_VIDEO_PLAN.md) and [evidence](plans/video/evidence/phase-3.md).
 
 ## Request flow

@@ -1,0 +1,21 @@
+{
+  "evidence": "phase4-adaptive-container",
+  "profile": "h264-aac-abr720p30-v1-experimental",
+  "uid": 1001,
+  "containerPeakBytes": 358567936,
+  "container": true,
+  "crashTemporaryDirs": 3,
+  "temporaryCleanup": true,
+  "fixtureSeconds": 21,
+  "outputObjects": 30,
+  "bytes": 67108864,
+  "objects": 43,
+  "uploadMs": 544,
+  "serverRSSKiB": [
+    213760,
+    213872
+  ],
+  "workerNodeRSSKiB": null,
+  "attempts": 2,
+  "railCalls": 18
+}

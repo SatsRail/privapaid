@@ -1,0 +1,46 @@
+{
+  "browser": "153.0.8010.53",
+  "segmentSeconds": 4,
+  "fixtureSeconds": 80,
+  "silentFixtureSeconds": 40,
+  "continuity": {
+    "waiting": [],
+    "blackFrames": 0,
+    "heights": [
+      360,
+      720
+    ],
+    "frames": 477
+  },
+  "maxBuffer": 23.999999,
+  "errors": [],
+  "states": [
+    "loading",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready"
+  ],
+  "blackFrames": 0,
+  "automaticReducedHeight": 480,
+  "decodedReducedHeight": 480,
+  "recoveredHeight": 720,
+  "verificationCounts": [
+    8,
+    3
+  ],
+  "tests": [
+    "manual switching without buffer clearing",
+    "silent video",
+    "filled audio/video gaps",
+    "repeat seeking",
+    "pause/resume",
+    "automatic bandwidth decrease/recovery",
+    "no payment cookie on media host"
+  ]
+}

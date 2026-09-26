@@ -183,6 +183,8 @@ experimental. See [setup](VIDEO_FOUNDATIONS.md) and [verification](plans/video/e
 The [paid segmented player](VIDEO_PLAYBACK.md) adds short-lived delivery cookies,
 browser decryption and renewal. Its local Chrome gate passed; live CDN, full-film,
 device and capacity gates remain open. `VIDEO_PLAYBACK_ENABLED=false` keeps it off.
+[Adaptive quality and creator controls](VIDEO_ADAPTIVE.md) add up to three
+resolutions, Auto/manual switching, upload estimates and a paginated video library.
 
 
 Future large-scale encrypted segment delivery has an

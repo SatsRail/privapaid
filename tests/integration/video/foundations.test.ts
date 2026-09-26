@@ -19,6 +19,7 @@ import { storageIdentity, videoConfig } from "@/lib/video/config";
 const auth = vi.hoisted(() => ({ status: 200 }));
 vi.mock("@/lib/auth-helpers", () => ({ requireOwnerApi: async () => auth.status === 200 ? { id: "merchant-owner", role: "owner" } : NextResponse.json({ error: "Forbidden" }, { status: auth.status }) }));
 import { GET, POST } from "@/app/api/admin/video-pipeline/route";
+import { GET as capacityGET } from "@/app/api/admin/video-pipeline/capacity/route";
 import { GET as assetsGET } from "@/app/api/admin/video-pipeline/assets/route";
 let root: string;
 const scope = "a".repeat(64);
@@ -150,6 +151,26 @@ describe("owner setup API and default-off behavior", () => {
     expect(await (await GET()).json()).toEqual({ enabled: false, ready: false, code: "VIDEO_DISABLED" });
     expect((await POST(req())).status).toBe(404); expect(await prisma.videoJob.count()).toBe(0);
     expect((await assetsGET(new NextRequest(req().url + "/assets"))).status).toBe(404);
+  });
+  it("protects capacity accounting and bounds searchable catalog pages", async () => {
+    const request = new NextRequest("https://shop.test/api/admin/video-pipeline/capacity");
+    auth.status = 403; expect((await capacityGET(request)).status).toBe(403);
+    auth.status = 200;
+    const a = await queued(); const b = await version();
+    await prisma.media.update({ where: { id: (await prisma.videoAsset.findUniqueOrThrow({ where: { id: a.assetId } })).mediaId }, data: { name: "The Aurora" } });
+    await prisma.videoAssetVersion.update({ where: { id: a.id }, data: { reservedBytes: 5000, encryptedBytes: 1200 } });
+    await prisma.videoAssetVersion.update({ where: { id: b.id }, data: { reservedBytes: 7000 } });
+    const response = await capacityGET(request), body = await response.json();
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(body).toMatchObject({ pending: 2, queued: 1, processing: 0, reservedBytes: "12000", encryptedOutputBytes: "1200", readiness: { ready: false, workerCount: 0 } });
+    const page = await (await assetsGET(new NextRequest("https://shop.test/api/admin/video-pipeline/assets?q=aurORA&limit=1"))).json();
+    expect(page.items).toHaveLength(1); expect(page.items[0].media.name).toBe("The Aurora");
+    expect(page.items[0].versions).toHaveLength(1);
+    expect(JSON.stringify(page)).not.toMatch(/wrappedRootKey|storagePrefix|encryptedDescriptor/);
+    await prisma.media.update({ where: { id: page.items[0].mediaId }, data: { deletedAt: new Date() } });
+    expect((await listAssets(25, undefined, "aurora")).items).toEqual([]);
+    expect((await assetsGET(new NextRequest(`https://shop.test/api/admin/video-pipeline/assets?q=${"a".repeat(101)}`))).status).toBe(400);
+    vi.stubEnv("VIDEO_PIPELINE_ENABLED", "false"); expect((await capacityGET(request)).status).toBe(404);
   });
   it("coalesces repeated probes and reports missing workers/keys and pagination errors", async () => {
     expect((await videoReadiness()).code).toBe("VIDEO_WORKER_MISSING");

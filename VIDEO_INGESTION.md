@@ -1,7 +1,8 @@
 # Encrypted video ingestion (Phase 2)
 
 The opt-in pipeline accepts resumable owner uploads, encrypts stored source parts,
-and creates one validated, immutable DASH rendition. It remains experimental and
+and creates validated, immutable DASH renditions. [Phase 4](VIDEO_ADAPTIVE.md) adds
+a small adaptive quality ladder and creator capacity controls. It remains experimental and
 disabled by default. Phase 3 adds paid browser/CDN playback; preparing a video
 here does not replace the existing buyer player. Physical-device and continuous
 two-hour playback qualification from Phase 0 remain release requirements.
@@ -16,11 +17,12 @@ two-hour playback qualification from Phase 0 remain release requirements.
    offset. Uploads expire 24 hours after creation; resume does not extend expiry.
 5. Watch queued/processing progress. Cancel an unfinished version, or retry a
    failed job while its source is retained. Failures preserve the previously
-   prepared version. Processing produces a ready version for Phase 3 integration.
+   prepared version. Processing publishes a ready version for the opt-in player.
 
 Accepted: MP4 with exactly one H.264/AVC `yuv420p` video track, optionally one AAC
 audio track; 16×16 through 3840×2160, up to 60 fps, up to four hours, and at most
-10 GiB (10,737,418,240 bytes). Video-only MP4 is supported. Actual container and
+10 GiB (10,737,418,240 bytes). Square-pixel sources with orthogonal rotation
+metadata and video-only MP4 are supported. Actual container and
 tracks are inspected with FFprobe; filename and MIME do not establish acceptance.
 
 Rejected examples: WebM/VP9, MKV, HEVC MP4, ProRes, 10-bit/4:2:2 H.264, extra audio
@@ -29,10 +31,10 @@ over configured duration/dimensions, or any source over 10 GiB. A quick first-pa
 `ftyp` check precedes full post-upload validation. This is deliberately a narrow
 first input profile, not a general media conversion service.
 
-Output: H.264 Main, at most 1280×720 without upscaling, 30 fps, optional stereo
-AAC 48 kHz/128 kbps. FFmpeg encodes one continuous timeline; segments start at
+Output: up to three H.264 Main qualities fitting 360p/480p/720p without
+upscaling, 30 fps, and one optional stereo AAC 48 kHz/128 kbps track. FFmpeg encodes one continuous timeline; segments start at
 regular video keyframes. Every packet and every persisted object is checked
-before publication. This is one rendition, not adaptive bitrate streaming.
+before publication. See [adaptive profiles and estimates](VIDEO_ADAPTIVE.md).
 
 ## What lives where
 
@@ -92,14 +94,14 @@ It must reach PostgreSQL, private storage and SatsRail.
 | `VIDEO_MAX_PENDING_JOBS` | 4 | Combined uploading/queued/processing versions |
 | `VIDEO_MAX_ACTIVE_TRANSFERS` | 2 | Active part requests across web replicas |
 | `VIDEO_MAX_DURATION_SECONDS` | 14400 | Input duration limit, cannot exceed 4h |
-| `VIDEO_ENCODING_THREADS` | 2 | Native encoder threads |
+| `VIDEO_ENCODING_THREADS` | 2 | Threads per native video encoder |
 | `VIDEO_ENCODING_TIMEOUT_SECONDS` | 28800 | Whole processing attempt deadline (8h) |
 | `VIDEO_STAGING_RETENTION_SECONDS` | 86400 | Retain terminal staging (24h) |
 | `VIDEO_MIN_FREE_BYTES` | 1073741824 | Local free-space reserve before part writes |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Native binaries |
 
 Source transport parts are fixed at 8 MiB, with a smaller last part. Objects
-are bounded to 32 MiB plaintext, 10,000 objects and 8 GiB per processing attempt.
+are bounded to 32 MiB plaintext, 15,000 objects and 8 GiB per processing attempt.
 Admission reserves source bytes plus encryption overhead and three 8 GiB output
 budgets before accepting content. An explicit processing retry adds one attempt
 and another 8 GiB reservation, with at most ten attempts total. Conservative

@@ -54,7 +54,7 @@ export function readCatalog(plain: Uint8Array<ArrayBuffer>, descriptor: Descript
   try {
     const data = JSON.parse(text.decode(plain));
     if (data.format !== 1 || data.asset !== descriptor.asset || data.version !== descriptor.version || data.attempt !== descriptor.attempt ||
-        !Array.isArray(data.objects) || data.objects.length < 2 || data.objects.length > 10000) throw new Error();
+        !Array.isArray(data.objects) || data.objects.length < 2 || data.objects.length > 15000) throw new Error();
     const entries = new Map<string, CatalogEntry>();
     for (const e of data.objects) {
       if (!OUTPUT_NAME.test(e.name) || e.name === "catalog.json" || entries.has(e.name) ||

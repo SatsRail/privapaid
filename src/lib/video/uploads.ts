@@ -13,6 +13,8 @@ import { boundedBytes, objectBytes } from "./streams";
 import { StorageError, type VideoStorage } from "./storage/types";
 import { cancelVersion } from "./assets";
 
+import { ADAPTIVE_PROFILE } from "./quality";
+
 const include = { version: { include: { asset: true, job: true } } } as const;
 export type Upload = Prisma.VideoUploadSessionGetPayload<{ include: typeof include }>;
 const reservation = (size: number) => BigInt(size + Math.ceil(size / PART_BYTES) * 32 + MAX_ATTEMPTS * OUTPUT_BUDGET);
@@ -28,7 +30,9 @@ export function uploadView(upload: Upload) {
   return { id: upload.id, versionId: upload.versionId, mediaId: upload.version.asset.mediaId,
     status: upload.version.status, uploadStatus: upload.status, bytes: Number(upload.expectedBytes),
     receivedBytes: Number(upload.receivedBytes), partBytes: upload.partBytes, clientFingerprint: upload.clientFingerprint,
-    segmentSeconds: upload.version.segmentSeconds, progress: upload.version.progress,
+    segmentSeconds: upload.version.segmentSeconds, encodingProfile: upload.version.encodingProfile,
+    durationSeconds: upload.version.durationMs ? Number(upload.version.durationMs) / 1000 : null,
+    encryptedBytes: upload.version.encryptedBytes.toString(), objectCount: upload.version.objectCount, progress: upload.version.progress,
     error: upload.version.job?.lastErrorCode || null, expiresAt: upload.expiresAt.toISOString(),
     canRetry: upload.version.status === "failed" && !upload.version.sourceCleanedAt && upload.status === "completed",
     published: upload.version.asset.publishedVersionId === upload.versionId };
@@ -60,7 +64,7 @@ export async function startUpload(ownerId: string, input: { mediaId: string; pro
     const id = randomUUID();
     await tx.videoAssetVersion.create({ data: { id, assetId: asset.id, generation: next.generation, provider: config.provider,
       storageIdentity: storageIdentity(config), storagePrefix: `assets/${asset.id}/versions/${id}`, wrappedRootKey: wrapped,
-      formatVersion: 1, encodingProfile: "h264-aac-720p30-v1-experimental", segmentSeconds: input.segmentSeconds,
+      formatVersion: 1, encodingProfile: ADAPTIVE_PROFILE, segmentSeconds: input.segmentSeconds,
       reservedBytes: reservation(input.bytes), upload: { create: { ownerId, expectedBytes: BigInt(input.bytes),
         idempotencyKey: input.idempotencyKey, clientFingerprint: input.clientFingerprint, ...binding,
         expiresAt: new Date(Date.now() + 24 * 3600_000) } } } });

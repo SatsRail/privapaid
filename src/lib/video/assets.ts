@@ -90,13 +90,18 @@ export async function beginVersionDeletion(versionId: string) {
     await tx.videoUploadSession.updateMany({ where: { versionId, status: "open" }, data: { status: "aborted" } });
   });
 }
-export async function listAssets(limit = 25, cursor?: string) {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (cursor && !/^[a-f0-9-]{36}$/.test(cursor))) throw new Error("VIDEO_PAGE_INVALID");
+export async function listAssets(limit = 25, cursor?: string, query = "") {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (cursor && !/^[a-f0-9-]{36}$/.test(cursor)) || query.length > 100) throw new Error("VIDEO_PAGE_INVALID");
   const rows = await prisma.videoAsset.findMany({
-    where: cursor ? { id: { gt: cursor } } : {}, take: limit + 1, orderBy: { id: "asc" },
+    where: { ...(cursor ? { id: { gt: cursor } } : {}), media: { deletedAt: null, channel: { deletedAt: null }, ...(query ? { name: { contains: query, mode: "insensitive" } } : {}) } },
+    take: limit + 1, orderBy: { id: "asc" },
     select: { id: true, mediaId: true, generation: true, publishedVersionId: true,
-      versions: { take: 1, orderBy: { generation: "desc" }, select: { id: true, status: true, progress: true, encryptedBytes: true, objectCount: true } } },
+      media: { select: { name: true, channelId: true } },
+      publishedVersion: { select: { id: true, status: true, encryptedBytes: true } },
+      versions: { take: 1, orderBy: { generation: "desc" }, select: { id: true, status: true, progress: true, encryptedBytes: true, objectCount: true, encodingProfile: true, segmentSeconds: true, durationMs: true } } },
   });
-  const items = rows.slice(0, limit).map(r => ({ ...r, versions: r.versions.map(v => ({ ...v, encryptedBytes: v.encryptedBytes.toString() })) }));
+  const items = rows.slice(0, limit).map(r => ({ ...r,
+    publishedVersion: r.publishedVersion ? { ...r.publishedVersion, encryptedBytes: r.publishedVersion.encryptedBytes.toString() } : null,
+    versions: r.versions.map(v => ({ ...v, durationMs: v.durationMs?.toString() || null, encryptedBytes: v.encryptedBytes.toString() })) }));
   return { items, cursor: rows.length > limit ? items.at(-1)!.id : null };
 }

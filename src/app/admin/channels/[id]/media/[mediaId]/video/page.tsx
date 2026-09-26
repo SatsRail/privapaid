@@ -16,8 +16,9 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
   return <div className="mx-auto max-w-2xl space-y-6">
     <Link href={`/admin/channels/${id}/media/${mediaId}/edit`} className="text-[var(--theme-link)]">Back to media</Link>
     <h1 className="text-2xl font-semibold">Prepare video · {media.name}</h1>
-    <p className="text-[var(--theme-text-secondary)]">Experimental video preparation. Accepts H.264 MP4, optional AAC audio, up to 10 GiB, 4K/60 fps and four hours. Creates one rendition up to 720p.</p>
-    <p className="rounded-xl border border-[var(--theme-border)] p-4">Customer playback for this format arrives in Phase 3. Your existing video remains available while you prepare this version.</p>
+    <p className="text-[var(--theme-text-secondary)]">Experimental video preparation. Accepts H.264 MP4, optional AAC audio, up to 10 GiB, 4K/60 fps and four hours. Creates up to three aligned qualities (360p, 480p and 720p), capped at the original size. Square-pixel sources are required.</p>
+    <p className="rounded-xl border border-[var(--theme-border)] p-4">Experimental playback remains opt-in. Preparing a replacement keeps the currently published version available until validation finishes. Quality or segment changes create a new version.</p>
+    <Link href="/admin/videos" className="block underline">Video library and capacity</Link>
     <VideoUpload mediaId={mediaId} products={products} />
   </div>;
 }

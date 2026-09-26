@@ -2,7 +2,7 @@ import { VideoSetupError } from "./config";
 export const PART_BYTES = 8 * 1024 ** 2;
 export const MAX_SOURCE_BYTES = 10 * 1024 ** 3;
 export const MAX_OBJECT_BYTES = 32 * 1024 ** 2;
-export const MAX_OBJECTS = 10000;
+export const MAX_OBJECTS = 15000;
 export const OUTPUT_BUDGET = 8 * 1024 ** 3;
 export const MAX_ATTEMPTS = 3;
 export function ingestionConfig(env: Record<string, string | undefined> = process.env) {

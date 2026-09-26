@@ -9,7 +9,10 @@ format has completed the production device/security qualification gates.
 Implementation: `src/lib/video/format.ts`, `package-job.ts`, `validation.ts`.
 PPV1 is application-layer AES-256-GCM over separate-track DASH/fMP4. It is not
 DASH CENC/DRM or native HLS. The Phase 0 Shaka proof still reads PPV0; Phase 3
-must explicitly implement PPV1 rather than silently treating them as compatible.
+implements PPV1 explicitly; the two formats are not interchangeable. Phase 4
+adds multiple video representations without changing PPV1 encryption or key
+derivation. The browser accepts up to 15,000 inventory entries in a catalog
+bounded to 4 MiB.
 
 Each immutable version has a fresh random 32-byte movie root, wrapped for operator
 recovery by the existing `CONTENT_KEK` mechanism. Object identity contains

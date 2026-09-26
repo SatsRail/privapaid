@@ -328,18 +328,23 @@ SatsRail nor the PrivaPaid web app proxies production segment bytes.
 
 **Purpose:** make the feature practical across connection speeds and devices.
 
-- [ ] **V4.1 — Quality ladder.** Produce a small tested set of renditions without
+**Local implementation complete; release exit gate remains open.** See
+[adaptive setup](VIDEO_ADAPTIVE.md) and [Phase 4 evidence](plans/video/evidence/phase-4.md).
+The checks below cover implementation/local tests, not physical-device or
+two-hour qualification. No production flag was enabled.
+
+- [x] **V4.1 — Quality ladder.** Produce a small tested set of renditions without
   upscaling; align keyframes and audio/video timestamps across renditions. Apply
   one version's selected segment-duration preset consistently across the ladder.
-- [ ] **V4.2 — Duration controls.** Expose only qualified presets with estimated
+- [x] **V4.2 — Duration controls.** Expose only qualified presets with estimated
   delivery request count, processing/storage impact and seek/startup tradeoffs.
   Explain that changing segment duration does not change SatsRail renewal calls.
   Changes create a new version; never mutate a playing version.
-- [ ] **V4.3 — Continuous playback.** Test automated bitrate adaptation, manual
+- [x] **V4.3 — Continuous playback.** Test automated bitrate adaptation, manual
   quality switches, repeated seeks, audio-only gaps in source content, silent
   movies, pause/resume and network changes. Retry ahead of the playhead; never
   implement playback as a succession of separate video elements.
-- [ ] **V4.4 — Accessible creator/viewer UI.** Show readiness, retryable failures,
+- [x] **V4.4 — Accessible creator/viewer UI.** Show readiness, retryable failures,
   processing capacity and storage consumption. Provide keyboard controls and
   sensible unsupported-device/error states; keep implementation jargon out of the
   purchase flow. Finish paginated owner catalog queries for large libraries.

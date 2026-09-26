@@ -9,7 +9,8 @@ import { ownedUpload, assertStore, readSourcePart } from "./uploads";
 import { verifyProductBinding, assertLocalBinding, bindingFrom, type Binding } from "./product-gate";
 import { privateMediaBridge } from "./bridge";
 import { probeSource, validateTimelines } from "./validation";
-import { mediaProcess, safeInputArgs } from "./process";
+import { mediaProcess } from "./process";
+import { encodingArgs } from "./encoding";
 import { encryptDescriptor } from "./format";
 import type { VideoStorage } from "./storage/types";
 
@@ -43,18 +44,7 @@ export async function packageVideo(job: Lease, storage: VideoStorage, signal: Ab
     const source = await probeSource(bridge.sourceUrl, limits, signal);
     await progress(job, 15);
     let last = 0, updating: Promise<void> | undefined, progressError: unknown;
-    const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-max_alloc", "134217728",
-      "-threads", String(limits.threads), ...safeInputArgs, "-i", bridge.sourceUrl,
-      "-map", "0:v:0", ...(source.audio ? ["-map", "0:a:0"] : []), "-map_metadata", "-1", "-map_chapters", "-1",
-      "-filter_threads", "1", "-vf", "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,fps=30",
-      "-c:v", "libx264", "-threads", String(limits.threads), "-preset", "veryfast", "-crf", "23", "-maxrate", "4M", "-bufsize", "8M",
-      "-pix_fmt", "yuv420p", "-profile:v", "main", "-level:v", "3.1", "-g", String(upload.version.segmentSeconds * 30),
-      "-keyint_min", String(upload.version.segmentSeconds * 30), "-sc_threshold", "0", "-bf", "0",
-      ...(source.audio ? ["-af", "apad", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-shortest"] : []),
-      "-t", String(source.duration), "-progress", "pipe:1", "-nostats", "-f", "dash", "-seg_duration", String(upload.version.segmentSeconds),
-      "-use_template", "1", "-use_timeline", "1", "-adaptation_sets", source.audio ? "id=0,streams=v id=1,streams=a" : "id=0,streams=v",
-      "-init_seg_name", "init-$RepresentationID$.mp4", "-media_seg_name", "segment-$RepresentationID$-$Number%05d$.m4s",
-      "-method", "PUT", "-timeout", "30", bridge.outputUrl];
+    const args = encodingArgs(source, bridge.sourceUrl, bridge.outputUrl, upload.version.segmentSeconds, limits.threads, upload.version.encodingProfile);
     await mediaProcess(limits.ffmpeg, args, { signal, line(line) {
       if (progressError) throw progressError;
       if (line.startsWith("out_time_us=") && Date.now() - last > 1000 && !updating) {
@@ -69,7 +59,7 @@ export async function packageVideo(job: Lease, storage: VideoStorage, signal: Ab
     const manifest = await bridge.finish();
     try {
       await progress(job, 90);
-      await validateTimelines(bridge, manifest.toString("utf8"), source, upload.version.segmentSeconds, limits, signal);
+      await validateTimelines(bridge, manifest.toString("utf8"), source, upload.version.segmentSeconds, limits, signal, upload.version.encodingProfile);
       const manifestObject = await bridge.persist("play.mpd", manifest);
       const catalogBytes = Buffer.from(JSON.stringify({ format: 1, asset: upload.version.assetId, version: upload.versionId,
         attempt: job.leaseToken, objects: [...bridge.objects.values()].sort((a, b) => a.name.localeCompare(b.name)) }));
@@ -106,8 +96,8 @@ export async function packageVideo(job: Lease, storage: VideoStorage, signal: Ab
           encryptedDescriptor: new Uint8Array(descriptor), objectCount: bridge.objects.size, encryptedBytes,
           durationMs: BigInt(Math.round(source.duration * 1000)), readyAt: new Date() } });
         await tx.videoAsset.update({ where: { id: asset.id }, data: { publishedVersionId: upload.versionId } });
-        // Preserve legacy MediaEnvelope.bytes/player until Phase 3 consumes the
-        // separate encrypted version descriptor through the existing DEK chain.
+        // Preserve the legacy envelope. Segmented playback uses the separate
+        // immutable version descriptor through the existing DEK chain.
         await completeJob(job, tx);
       });
     } finally { manifest.fill(0); }
