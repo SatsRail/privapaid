@@ -1,0 +1,15 @@
+{
+  "name": "privapaid-video-proof",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "fixture": "node generate.mjs",
+    "validate": "node validate.mjs",
+    "serve": "node serve.mjs",
+    "test": "node --test format.test.mjs",
+    "test:browser": "node browser-test.mjs"
+  },
+  "dependencies": { "shaka-player": "5.2.12" },
+  "devDependencies": { "playwright": "1.62.1" }
+}

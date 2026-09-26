@@ -121,7 +121,7 @@ model Channel {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  category          Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category          Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   media             Media[]
   products          Product[]
   pushSubscriptions PushSubscription[]
@@ -157,6 +157,7 @@ model Media {
 
   channel           Channel        @relation(fields: [channelId], references: [id], onDelete: Restrict)
   directSaleProduct Product?       @relation("MediaDirectSaleProduct")
+  videoAsset        VideoAsset?
   envelope          MediaEnvelope?
   mediaProducts     MediaProduct[]
   comments          Comment[]
@@ -408,4 +409,152 @@ model PushSubscription {
 
   @@unique([channelId, endpoint])
   @@index([channelId])
+}
+
+// Video pipeline v1: bounded metadata only. Content and segment catalogs live
+// in private object storage. These tables are unused when the flag is off.
+enum VideoVersionStatus {
+  uploading
+  queued
+  processing
+  ready
+  failed
+  cancelled
+  deleting
+  deleted
+}
+
+enum VideoStorageProvider {
+  local
+  s3
+}
+
+enum VideoUploadStatus {
+  open
+  completed
+  aborted
+}
+
+enum VideoJobKind {
+  storage_probe
+  package_asset
+}
+
+enum VideoJobStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+}
+
+model VideoAsset {
+  id                 String              @id @default(uuid()) @db.Uuid
+  mediaId            String              @unique
+  generation         Int                 @default(0)
+  publishedVersionId String?             @db.Uuid
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  media              Media               @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  versions           VideoAssetVersion[] @relation("AssetVersions")
+  // Composite FK prevents publishing a version belonging to another asset.
+  publishedVersion   VideoAssetVersion?  @relation("PublishedVersion", fields: [id, publishedVersionId], references: [assetId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([id, publishedVersionId])
+}
+
+model VideoAssetVersion {
+  storageIdentity     String?              @db.Char(64)
+  reservedBytes       BigInt               @default(0)
+  encryptedDescriptor Bytes?
+  sourceCleanedAt     DateTime?            @db.Timestamptz(3)
+  cleanupToken        String?              @db.Uuid
+  cleanupExpiresAt    DateTime?            @db.Timestamptz(3)
+  id                  String               @id @default(uuid()) @db.Uuid
+  assetId             String               @db.Uuid
+  generation          Int
+  status              VideoVersionStatus   @default(uploading)
+  provider            VideoStorageProvider
+  storagePrefix       String               @unique @db.VarChar(240)
+  // Wrapped under operator CONTENT_KEK, never a plaintext content key.
+  wrappedRootKey      String               @db.VarChar(256)
+  formatVersion       Int
+  encodingProfile     String               @db.VarChar(64)
+  segmentSeconds      Int
+  manifestKey         String?              @db.VarChar(512)
+  manifestSha256      String?              @db.Char(64)
+  objectCount         Int                  @default(0)
+  encryptedBytes      BigInt               @default(0)
+  durationMs          BigInt?
+  progress            Int                  @default(0)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
+  readyAt             DateTime?            @db.Timestamptz(3)
+  deletedAt           DateTime?            @db.Timestamptz(3)
+  asset               VideoAsset           @relation("AssetVersions", fields: [assetId], references: [id], onDelete: Restrict)
+  publishedBy         VideoAsset[]         @relation("PublishedVersion")
+  upload              VideoUploadSession?
+  job                 VideoJob?
+
+  @@unique([assetId, id])
+  @@unique([assetId, generation])
+  @@index([status, createdAt])
+}
+
+model VideoUploadSession {
+  idempotencyKey         String?           @unique @db.Uuid
+  clientFingerprint      String?           @db.Char(64)
+  partBytes              Int               @default(8388608)
+  productId              String?
+  productFingerprint     String?           @db.Char(64)
+  bindingFingerprint     String?           @db.Char(64)
+  envelopeId             String?
+  envelopeKeyFingerprint String?           @db.Char(64)
+  requestToken           String?           @db.Uuid
+  requestExpiresAt       DateTime?         @db.Timestamptz(3)
+  id                     String            @id @default(uuid()) @db.Uuid
+  versionId              String            @unique @db.Uuid
+  // Auth identity is a merchant ID from SatsRail, not a local Admin FK.
+  ownerId                String            @db.VarChar(128)
+  status                 VideoUploadStatus @default(open)
+  expectedBytes          BigInt
+  receivedBytes          BigInt            @default(0)
+  sourceSha256           String?           @db.Char(64)
+  providerUploadId       String?           @db.VarChar(2048)
+  expiresAt              DateTime          @db.Timestamptz(3)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @db.Timestamptz(3)
+  version                VideoAssetVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+}
+
+model VideoJob {
+  scope          String?            @db.Char(64)
+  id             String             @id @default(uuid()) @db.Uuid
+  kind           VideoJobKind
+  versionId      String?            @unique @db.Uuid
+  idempotencyKey String             @unique @db.VarChar(160)
+  status         VideoJobStatus     @default(queued)
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3)
+  availableAt    DateTime           @default(now()) @db.Timestamptz(3)
+  leaseToken     String?            @db.Uuid
+  leaseExpiresAt DateTime?          @db.Timestamptz(3)
+  lastErrorCode  String?            @db.VarChar(64)
+  createdAt      DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(3)
+  version        VideoAssetVersion? @relation(fields: [versionId], references: [id], onDelete: Restrict)
+
+  @@index([scope, status, availableAt])
+  @@index([status, availableAt])
+  @@index([status, leaseExpiresAt])
+}
+
+model VideoWorker {
+  storageIdentity String   @db.Char(64)
+  id              String   @id @db.Uuid
+  lastSeenAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([lastSeenAt])
 }

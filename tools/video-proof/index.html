@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PrivaPaid · encrypted video proof</title>
+<style>
+body{font:16px system-ui;background:#101416;color:#e9f0ee;max-width:1000px;margin:40px auto;padding:0 24px}
+h1{font-weight:600} .label{color:#91d9b9} video{width:100%;background:#000;border-radius:12px;max-height:60vh}
+button{background:#91d9b9;color:#101416;border:0;padding:12px 18px;border-radius:6px;font:inherit;cursor:pointer}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#1b2225;padding:18px;border-radius:8px;font-size:13px}
+</style>
+<p class="label">PRIVAPAID / PHASE 0</p>
+<h1>Encrypted segments, continuous playback</h1>
+<p>Synthetic test movie · public test key · local experiment only.</p>
+<video id="video" controls playsinline></video>
+<p><button id="start">Start playback</button> <span id="status">Ready to test</span></p>
+<pre id="metrics">No production payments, content, or cloud services are connected.</pre>
+<script src="/shaka.js"></script>
+<script type="module" src="/player.mjs"></script>
+</html>

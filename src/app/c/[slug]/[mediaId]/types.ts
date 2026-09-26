@@ -23,6 +23,7 @@ export interface MediaPageData {
     // The media's MediaEnvelope row id (every media has one). Not sensitive on
     // its own — the bytes are ciphertext without the DEK.
     envelope_id?: string;
+    segmented_video?: boolean;
   };
   channel: {
     name: string;

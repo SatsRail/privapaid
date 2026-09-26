@@ -1,3 +1,4 @@
+import { playbackEnabled } from "@/lib/video/delivery-config";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
@@ -107,6 +108,7 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
         select: { id: true, kind: true, externalUrl: true, position: true },
       },
       envelope: { select: { id: true } },
+      videoAsset: { select: { publishedVersion: { select: { status: true, deletedAt: true, formatVersion: true } } } },
     },
   });
   if (!media) notFound();
@@ -313,6 +315,8 @@ export default async function MediaPlayerPage({ params, searchParams }: Props) {
       // can fetch the ciphertext after unwrapping the DEK. Safe to expose — the
       // bytes are useless without the DEK.
       envelope_id: media.envelope?.id,
+      segmented_video: playbackEnabled() && media.videoAsset?.publishedVersion?.status === "ready" &&
+        media.videoAsset.publishedVersion.formatVersion === 1 && !media.videoAsset.publishedVersion.deletedAt,
     },
     channel: {
       name: channel.name,

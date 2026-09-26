@@ -71,6 +71,18 @@ describe("useMediaAccess", () => {
     });
   });
 
+  it("hands the initial video session to the player with no legacy unlock or focus heartbeat", async () => {
+    const body = { key: "K1", product_id: "prod-1", encrypted_blob: "blob-1", remaining_seconds: 60, format: 1 };
+    mockFetch((url, init) => {
+      if (url === "/api/media/media-1/playback-session" && init?.method === "POST") return { ok: true, status: 200, json: async () => body };
+    });
+    const { result } = renderHook(() => useMediaAccess({ ...baseParams, storedProductIds: ["prod-1"], segmentedVideo: true }));
+    await waitFor(() => expect(result.current.access.status).toBe("active"));
+    expect(result.current.access).toMatchObject({ videoSession: { session: body, requestedAt: expect.any(Number) } });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("transitions to 'inactive' (portal_rejected) when the unlock endpoint returns 401", async () => {
     mockFetch((url) => {
       if (url === "/api/media/media-1/unlock") {

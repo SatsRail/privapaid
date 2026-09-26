@@ -47,6 +47,7 @@ describe("SatsRailClient", () => {
           method: "POST",
           headers: {
             Authorization: `Bearer ${secretKey}`,
+            "X-SatsRail-Client": "privapaid",
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ product: { name: "Test", price_cents: 1000 } }),

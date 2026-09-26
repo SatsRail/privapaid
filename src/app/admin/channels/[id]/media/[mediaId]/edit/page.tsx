@@ -10,6 +10,9 @@ import ReEncryptButton from "./ReEncryptButton";
 import Badge from "@/components/ui/Badge";
 import { t } from "@/i18n";
 import { decryptEnvelopePayload } from "@/lib/media-envelope";
+import Link from "next/link";
+import { videoEnabled } from "@/lib/video/config";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +129,7 @@ export default async function EditMediaPage({
   params: Promise<{ id: string; mediaId: string }>;
 }) {
   const { id: channelId, mediaId } = await params;
+  const admin = await requireAdmin();
 
   const [media, channel, instanceConfig] = await Promise.all([
     prisma.media.findUnique({
@@ -209,6 +213,9 @@ export default async function EditMediaPage({
 
   return (
     <div>
+      {videoEnabled() && admin.role === "owner" && media.mediaType === "video" && <div className="mb-6">
+        <Link href={`/admin/channels/${channelId}/media/${mediaId}/video`} className="text-[var(--theme-link)]">Prepare large video (experimental)</Link>
+      </div>}
       {media.status === "error" && (
         <div className="mb-6 rounded-xl border border-red-900/50 bg-red-950/20 p-5">
           <div className="flex items-center gap-2">

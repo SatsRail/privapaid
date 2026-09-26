@@ -189,6 +189,7 @@ class SatsRailClient {
       method,
       headers: {
         Authorization: `Bearer ${secretKey}`,
+        "X-SatsRail-Client": "privapaid",
         "Content-Type": "application/json",
       },
       body: body ? JSON.stringify(body) : undefined,

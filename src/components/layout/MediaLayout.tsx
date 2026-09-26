@@ -35,9 +35,8 @@ export default function MediaLayout({
 
   // Single source of truth for "does the viewer have paid access?" All
   // sibling components (MediaHeader pill, PaymentWall paywall/content)
-  // read from this one hook. No periodic re-verification — the
-  // macaroon's own TTL is the source of truth for how long access
-  // lasts; we don't second-guess it.
+  // read from this hook. Segmented video hands its initial grant to the
+  // player; only that player schedules delivery renewal.
   const { access, claim, refresh } = useMediaAccess({
     mediaId: media._id,
     products: products.map((p) => ({
@@ -46,6 +45,7 @@ export default function MediaLayout({
       keyFingerprint: p.keyFingerprint,
     })),
     storedProductIds,
+    segmentedVideo: media.segmented_video,
   });
 
   const hasActiveAccess = access.status === "active";
@@ -82,6 +82,7 @@ export default function MediaLayout({
         thumbnailUrl={thumbSrc}
         mediaType={media.media_type}
         envelopeId={media.envelope_id}
+        segmentedVideo={media.segmented_video}
         merchantLogo={instanceConfig.theme.logo}
         merchantName={instanceConfig.name}
       />

@@ -1,0 +1,29 @@
+{
+  "browser": "153.0.8010.53",
+  "seconds": 28,
+  "frames": 840,
+  "waiting": [],
+  "maxBuffer": 23.999999,
+  "states": [
+    "loading",
+    "ready",
+    "ready",
+    "ready",
+    "ready",
+    "ready"
+  ],
+  "verificationCounts": [
+    4,
+    4
+  ],
+  "movieCookies": 8,
+  "paymentCookieLeaked": false,
+  "tests": [
+    "continuous playback",
+    "seek",
+    "renewal",
+    "two movie cookie scopes",
+    "expiry after warm read",
+    "teardown"
+  ]
+}

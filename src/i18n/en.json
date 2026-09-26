@@ -440,5 +440,14 @@
   "common.error_boundary.message": "Something went wrong loading this section.",
   "common.error_boundary.retry": "Try again ({count} left)",
   "common.error_boundary.exhausted": "This section failed to load after {count} attempts. Please reload the page.",
-  "common.error": "Something went wrong"
+  "common.error": "Something went wrong",
+
+  "viewer.video_playback.label": "Purchased video",
+  "viewer.video_playback.loading": "Preparing your video…",
+  "viewer.video_playback.retrying": "Connection interrupted. Retrying…",
+  "viewer.video_playback.expired": "Reconnecting to verify your access…",
+  "viewer.video_playback.denied": "Your access has ended. Reload this page to view access options.",
+  "viewer.video_playback.unsupported": "This browser cannot play this video. Please use a current version of Chrome, Safari, Firefox or Edge.",
+  "viewer.video_playback.error": "The video could not be loaded. Your payment is still saved. Try again.",
+  "viewer.video_playback.retry": "Try again"
 }

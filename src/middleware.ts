@@ -33,6 +33,13 @@ function buildCsp(nonce: string): string {
       ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com"
       : `script-src 'self' 'nonce-${nonce}' https://www.googletagmanager.com`;
 
+  let videoOrigin = "";
+  if (process.env.VIDEO_PLAYBACK_ENABLED === "true" && process.env.VIDEO_MEDIA_ORIGIN) {
+    try {
+      const url = new URL(process.env.VIDEO_MEDIA_ORIGIN);
+      if (["https:", "http:"].includes(url.protocol)) videoOrigin = ` ${url.origin}`;
+    } catch { /* Invalid video setup must not weaken CSP. */ }
+  }
   return [
     "default-src 'self'",
     scriptSrc,
@@ -41,7 +48,7 @@ function buildCsp(nonce: string): string {
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
     "frame-src 'self' https://satsrail.com https://*.satsrail.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.mediadelivery.net https://*.bunnycdn.com https://*.b-cdn.net https://stream.mux.com https://*.cloudflarestream.com https://videodelivery.net https://player.live-video.net",
-    "connect-src 'self' https://satsrail.com https://*.satsrail.com https://www.google-analytics.com https://www.googletagmanager.com https://*.sentry.io",
+    `connect-src 'self' https://satsrail.com https://*.satsrail.com https://www.google-analytics.com https://www.googletagmanager.com https://*.sentry.io${videoOrigin}`,
   ].join("; ");
 }
 
@@ -111,6 +118,6 @@ export const config = {
   // per-request CSP/nonce is applied site-wide. Admin/API authorization is
   // gated by pathname inside middleware(), so matching /api here is intentional.
   // Raw MP4 uploads must bypass Next middleware body cloning/buffering.
-  // This exact endpoint enforces owner auth, Origin, rate and size limits itself.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/admin/videos/?$).*)"],
+  // These exact upload endpoints enforce owner auth, Origin, quotas and bounded sizes themselves.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/admin/videos/?$|api/admin/video-pipeline/uploads/[^/]+/parts/?$).*)"],
 };
