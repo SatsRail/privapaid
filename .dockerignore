@@ -8,5 +8,10 @@ node_modules
 .claude
 scripts
 docs
+# Phase 0 development harness and generated synthetic movies are not app assets.
+tools/video-proof
 *.md
 !README.md
+
+build
+data

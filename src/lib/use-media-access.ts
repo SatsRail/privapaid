@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { PlaybackSession } from "@/lib/video/playback-contract";
 
 /**
  * Single source of truth for "does this viewer have paid access to this
@@ -21,7 +22,9 @@ import { useCallback, useEffect, useState } from "react";
  *   1. ONE check at mount via /api/media/[id]/unlock. The route is
  *      already in place, returns { key, encrypted_blob, product_id }
  *      when the cookie holds a verifiable macaroon, 401 otherwise.
- *   2. NO periodic re-verification. The macaroon TTL is the source of
+ *      Segmented video uses /playback-session instead and hands its initial
+ *      grant to the player, which alone owns renewal.
+ *   2. For legacy content, NO periodic re-verification. The macaroon TTL is the source of
  *      truth for how long access lasts; we don't second-guess it.
  *   3. Fresh payments call `claim()` to inject the access data the
  *      portal delivered in the checkout payload — no roundtrip needed
@@ -41,6 +44,7 @@ export interface MediaAccessProduct {
 }
 
 export interface ActiveAccess {
+  videoSession?: { session: PlaybackSession; requestedAt: number };
   status: "active";
   productId: string;
   key: string;
@@ -77,6 +81,7 @@ export interface LoadingAccess {
 export type MediaAccess = LoadingAccess | ActiveAccess | InactiveAccess;
 
 interface UseMediaAccessParams {
+  segmentedVideo?: boolean;
   mediaId: string;
   products: MediaAccessProduct[];
   /** Subset of product IDs that the server-rendered page found in the
@@ -109,9 +114,12 @@ interface UseMediaAccessResult {
  * hook so deps can be tracked by string identity (mediaId only) instead
  * of array references that change every render.
  */
-async function fetchAccess(mediaId: string): Promise<MediaAccess> {
+async function fetchAccess(mediaId: string, segmentedVideo = false): Promise<MediaAccess> {
   try {
-    const res = await fetch(`/api/media/${mediaId}/unlock`);
+    const requestedAt = performance.now();
+    const res = segmentedVideo
+      ? await fetch(`/api/media/${mediaId}/playback-session`, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(20000) })
+      : await fetch(`/api/media/${mediaId}/unlock`);
     if (res.status === 401) {
       // Server may have included expired_at when the cookie holds an
       // expired macaroon for one of this media's products. Pick it up so
@@ -161,6 +169,7 @@ async function fetchAccess(mediaId: string): Promise<MediaAccess> {
       key: data.key,
       encryptedBlob: data.encrypted_blob,
       remainingSeconds: data.remaining_seconds ?? 0,
+      ...(segmentedVideo ? { videoSession: { session: data as PlaybackSession, requestedAt } } : {}),
     };
   } catch {
     return { status: "inactive", reason: "transient" };
@@ -175,6 +184,7 @@ export function useMediaAccess({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   products: _products,
   storedProductIds,
+  segmentedVideo = false,
 }: UseMediaAccessParams): UseMediaAccessResult {
   // Derive a stable identity from the array so a new reference with the
   // same contents (which React parents create every render) doesn't
@@ -206,13 +216,13 @@ export function useMediaAccess({
   useEffect(() => {
     if (storedKey === "") return;
     let cancelled = false;
-    fetchAccess(mediaId).then((next) => {
+    fetchAccess(mediaId, segmentedVideo).then((next) => {
       if (!cancelled) setAccess(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [mediaId, storedKey]);
+  }, [mediaId, storedKey, segmentedVideo]);
 
   const claim = useCallback(
     ({
@@ -251,9 +261,9 @@ export function useMediaAccess({
   );
 
   const refresh = useCallback(async () => {
-    const next = await fetchAccess(mediaId);
+    const next = await fetchAccess(mediaId, segmentedVideo);
     setAccess(next);
-  }, [mediaId]);
+  }, [mediaId, segmentedVideo]);
 
   // Cross-tab access sync. Cookies are shared across same-origin tabs, but
   // each tab's hook only runs its mount-time check ONCE. Two scenarios fail
@@ -282,7 +292,7 @@ export function useMediaAccess({
 
     const doRefresh = () => {
       if (access.status === "active") return;
-      fetchAccess(mediaId).then((next) => {
+      fetchAccess(mediaId, segmentedVideo).then((next) => {
         if (!cancelled) setAccess(next);
       });
     };
@@ -312,7 +322,7 @@ export function useMediaAccess({
     };
     // `access.status` is in deps so the closure reads the current status —
     // stale closures would always think access is whatever it was at mount.
-  }, [mediaId, access.status]);
+  }, [mediaId, access.status, segmentedVideo]);
 
   return { access, claim, refresh };
 }

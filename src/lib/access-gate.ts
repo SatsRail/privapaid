@@ -40,6 +40,9 @@ export interface AccessResult {
   key?: string;
   keyFingerprint?: string;
   remainingSeconds?: number;
+  /** Local conservative deadline derived from SatsRail's authoritative bounds. */
+  verifiedUntil?: number;
+  retryAfterSeconds?: number;
 }
 
 // ── Product lookup ───────────────────────────────────────────────────
@@ -123,9 +126,10 @@ export type VerifyOutcome =
       key?: string;
       keyFingerprint?: string;
       remainingSeconds: number;
+      verifiedUntil?: number;
     }
   | { status: "invalid"; reason: "rejected_by_portal" | "product_mismatch" }
-  | { status: "transient"; reason: "non_2xx" | "network" | "bad_body"; httpStatus?: number };
+  | { status: "transient"; reason: "non_2xx" | "network" | "bad_body"; httpStatus?: number; retryAfterSeconds?: number };
 
 /**
  * Verify a single access token against SatsRail's merchant API.
@@ -153,6 +157,8 @@ export async function verifySatsrailToken(
   if (merchantKey) headers["Authorization"] = `Bearer ${merchantKey}`;
 
   let res: Response;
+  const requestedAt = Date.now();
+  const monotonicStart = performance.now();
   try {
     res = await fetch(`${satsrailApiUrl}/m/access/verify`, {
       method: "POST",
@@ -169,10 +175,13 @@ export async function verifySatsrailToken(
   }
 
   if (!res.ok) {
-    return { status: "transient", reason: "non_2xx", httpStatus: res.status };
+    const retry = res.headers?.get("Retry-After");
+    const seconds = retry && (/^\d+$/.test(retry) ? Number(retry) : (Date.parse(retry) - Date.now()) / 1000);
+    return { status: "transient", reason: "non_2xx", httpStatus: res.status,
+      ...(seconds && Number.isFinite(seconds) ? { retryAfterSeconds: Math.max(1, Math.ceil(seconds)) } : {}) };
   }
 
-  let data: { valid?: boolean; product_id?: string; remaining_seconds?: number; key?: string; key_fingerprint?: string };
+  let data: { valid?: boolean; product_id?: string; remaining_seconds?: number; key?: string; key_fingerprint?: string; server_time?: number; expires_at?: number };
   try {
     data = await res.json();
   } catch {
@@ -191,11 +200,20 @@ export async function verifySatsrailToken(
     return { status: "invalid", reason: "product_mismatch" };
   }
 
+  let verifiedUntil: number | undefined;
+  if (data.server_time !== undefined || data.expires_at !== undefined) {
+    if (!Number.isSafeInteger(data.server_time) || !Number.isSafeInteger(data.expires_at) || data.expires_at! <= data.server_time! ||
+        data.remaining_seconds > data.expires_at! - data.server_time!) return { status: "transient", reason: "bad_body", httpStatus: res.status };
+    // Anchor the server TTL at request START, never receipt. Also subtract
+    // monotonic RTT if the local wall clock moved backwards during verification.
+    verifiedUntil = Math.min(requestedAt, Date.now() - (performance.now() - monotonicStart)) + data.remaining_seconds * 1000;
+  }
   return {
     status: "valid",
     key: data.key,
     keyFingerprint: data.key_fingerprint,
     remainingSeconds: data.remaining_seconds,
+    ...(verifiedUntil === undefined ? {} : { verifiedUntil }),
   };
 }
 
@@ -274,12 +292,14 @@ export async function verifyMacaroonAccess(
         key: result.key,
         keyFingerprint: result.keyFingerprint,
         remainingSeconds: result.remainingSeconds,
+        ...(result.verifiedUntil === undefined ? {} : { verifiedUntil: result.verifiedUntil }),
       };
     }
   }
 
   if (results.some(({ result }) => result.status === "transient")) {
-    return { granted: false, reason: "unavailable" };
+    const retry = Math.max(0, ...results.map(({ result }) => result.status === "transient" ? result.retryAfterSeconds || 0 : 0));
+    return { granted: false, reason: "unavailable", ...(retry ? { retryAfterSeconds: retry } : {}) };
   }
   return { granted: false };
 }

@@ -102,6 +102,7 @@ vi.mock("@/components/ExchangeModal", () => ({
 }));
 
 import PaymentWall from "@/components/PaymentWall";
+vi.mock("@/components/SegmentedVideoPlayer", () => ({ default: () => <div data-testid="segmented-video" /> }));
 
 const defaultProducts = [
   {
@@ -475,6 +476,13 @@ describe("PaymentWall", () => {
   // Active access — content rendering
   // -------------------------------------------------------
   describe("active access (content rendering)", () => {
+    it("hands paid segmented video to its player without decrypting the legacy envelope", async () => {
+      render(<PaymentWall {...defaultProps} segmentedVideo access={ACTIVE_ACCESS} />);
+      expect(screen.getByTestId("segmented-video")).toBeInTheDocument();
+      await Promise.resolve();
+      expect(mockDecryptBlob).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
     it("renders ContentRenderer when access becomes active", async () => {
       render(<PaymentWall {...defaultProps} access={ACTIVE_ACCESS} />);
       await waitFor(() => {

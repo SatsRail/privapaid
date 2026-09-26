@@ -176,6 +176,24 @@ See [LICENSE](LICENSE) for the full text. The FSL is a [fair-source](https://fai
 
 ## Protected MP4 uploads
 
+The new [encrypted video ingestion pipeline](VIDEO_INGESTION.md) adds resumable
+uploads up to 10 GiB, private local/S3 storage, and a separate FFmpeg worker that
+produces authenticated 4- or 10-second segments. It is disabled by default and
+experimental. See [setup](VIDEO_FOUNDATIONS.md) and [verification](plans/video/evidence/phase-2.md).
+The [paid segmented player](VIDEO_PLAYBACK.md) adds short-lived delivery cookies,
+browser decryption and renewal. Its local Chrome gate passed; live CDN, full-film,
+device and capacity gates remain open. `VIDEO_PLAYBACK_ENABLED=false` keeps it off.
+[Adaptive quality and creator controls](VIDEO_ADAPTIVE.md) add up to three
+resolutions, Auto/manual switching, upload estimates and a paginated video library.
+
+
+Future large-scale encrypted segment delivery has an
+[execution plan](ENCRYPTED_VIDEO_PLAN.md) with eight ordered phases, task
+checklists, SatsRail dependencies and release gates. Phase 0 now has a standalone
+[local format/player proof](tools/video-proof/README.md) and
+[test evidence](plans/video/evidence/phase-0.md). Production integration remains
+planned; the instructions below describe the current protected MP4 feature.
+
 External video links become visible after purchase. For playback that requires
 valid paid access on every request, owners can instead use **Upload protected
 video** in the video media form. Existing external embeds remain unchanged.

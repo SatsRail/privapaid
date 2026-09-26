@@ -440,5 +440,18 @@
   "common.error_boundary.message": "Algo salió mal al cargar esta sección.",
   "common.error_boundary.retry": "Reintentar ({count} restantes)",
   "common.error_boundary.exhausted": "Esta sección no se pudo cargar tras {count} intentos. Recarga la página.",
-  "common.error": "Algo salió mal"
+  "common.error": "Algo salió mal",
+
+  "viewer.video_playback.label": "Video comprado",
+  "viewer.video_playback.loading": "Preparando tu video…",
+  "viewer.video_playback.retrying": "Conexión interrumpida. Reintentando…",
+  "viewer.video_playback.expired": "Reconectando para verificar tu acceso…",
+  "viewer.video_playback.denied": "Tu acceso ha terminado. Recarga esta página para ver las opciones de acceso.",
+  "viewer.video_playback.unsupported": "Este navegador no puede reproducir el video. Usa una versión actual de Chrome, Safari, Firefox o Edge.",
+  "viewer.video_playback.error": "No se pudo cargar el video. Tu pago sigue guardado. Inténtalo de nuevo.",
+  "viewer.video_playback.retry": "Reintentar",
+
+  "viewer.video_playback.quality": "Calidad del video",
+  "viewer.video_playback.auto": "Automática",
+  "viewer.video_playback.quality_hint": "Los cambios se aplican al terminar el video ya almacenado en el búfer."
 }

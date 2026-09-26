@@ -49,3 +49,6 @@ AGENTS.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Bundled isolated video worker
+/build/

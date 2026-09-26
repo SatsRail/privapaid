@@ -10,6 +10,7 @@ import {
 import * as Sentry from "@sentry/nextjs";
 import CheckoutOverlay from "@/components/CheckoutOverlay";
 import ContentRenderer from "@/components/ContentRenderer";
+import SegmentedVideoPlayer from "@/components/SegmentedVideoPlayer";
 import ExchangeModal from "@/components/ExchangeModal";
 import UnlockFailureCard from "@/components/UnlockFailureCard";
 import VerifyFailureCard from "@/components/VerifyFailureCard";
@@ -55,6 +56,7 @@ interface PaymentWallProps {
   mediaType: string;
   /** The media's MediaEnvelope row id (every media has exactly one). */
   envelopeId?: string;
+  segmentedVideo?: boolean;
   merchantLogo?: string;
   merchantName?: string;
 }
@@ -106,6 +108,7 @@ export default function PaymentWall({
   thumbnailUrl,
   mediaType,
   envelopeId,
+  segmentedVideo = false,
   merchantLogo,
   merchantName,
 }: PaymentWallProps) {
@@ -225,7 +228,7 @@ export default function PaymentWall({
   // clear the decrypted bytes so the paywall returns.
   useEffect(() => {
     let cancelled = false;
-    if (access.status !== "active") {
+    if (segmentedVideo || access.status !== "active") {
       setDecryptedBytes(null);
       setActiveProductId(null);
       return;
@@ -279,7 +282,7 @@ export default function PaymentWall({
     };
     // `access` is a discriminated union; if its identity changes we re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access.status, access.status === "active" ? access.productId : null, access.status === "active" ? access.key : null]);
+  }, [segmentedVideo, access.status, access.status === "active" ? access.productId : null, access.status === "active" ? access.key : null]);
 
   // Clear stale failure state once content is rendered.
   useEffect(() => {
@@ -483,6 +486,10 @@ export default function PaymentWall({
   // `&& decryptedBytes` is always true when the view is "content" (the selector
   // derives it from the same flag); it's here only to narrow the type for
   // ContentRenderer, which needs non-null bytes.
+  if (segmentedVideo && access.status === "active") {
+    return <SegmentedVideoPlayer key={mediaId} mediaId={mediaId} initial={access.videoSession} />;
+  }
+
   if (view.kind === "content" && decryptedBytes) {
     return (
       <div className="mb-6">
